@@ -1,0 +1,66 @@
+# Citation File Format 1.2.0. https://citation-file-format.github.io/
+#
+# This file describes the CODE in this repository. The released tables are a separate deposit
+# with its own DOI, and that deposit is what most users should cite; `preferred-citation` below
+# carries it, so GitHub's "Cite this repository" button and any tool that reads CFF will offer
+# the dataset rather than the pipeline.
+#
+# There is deliberately no .zenodo.json beside this file. Where both are present Zenodo reads
+# only .zenodo.json and ignores this file entirely
+# (https://help.zenodo.org/docs/github/describe-software/).
+#
+# `doi` and `date-released` for the software are absent on purpose. Both are known only once a
+# GitHub Release has been archived by Zenodo. Add the VERSION doi at that point, not the concept
+# doi: the tables a given run produces are the output of one state of this pipeline, so a
+# citation that does not name the version has not said which code built the numbers.
+cff-version: 1.2.0
+message: "If you use the data, cite the openICPSR deposit under `preferred-citation`. If you use or modify this pipeline, cite the software entry below and name the version you ran."
+type: software
+title: "KIRD build pipeline"
+abstract: >-
+  Build and analysis code for KIRD, a harmonized district-level panel of foreign residents in
+  South Korea, 2006-2025. The Ministry of Justice and the Ministry of the Interior and Safety
+  publish each year as a separate workbook whose layout, nationality names, visa codes, and
+  district names change between editions, so the same district in two different years joins on
+  nothing. This pipeline reconciles the naming across editions, carries administrative boundary
+  changes through the panel, and computes every derived measure on one basis for all years:
+  foreign share of population, nationality diversity, residential segregation against Korean
+  nationals, ethnic-enclave classification, and the number of speakers of each language implied
+  by the nationality composition. It emits the 17 tidy tables released in the deposit, in CSV
+  and labeled Stata format, alongside a bilingual data dictionary.
+authors:
+  - family-names: Yoo
+    given-names: Nari
+    orcid: "https://orcid.org/0000-0002-8467-7048"
+    email: nariyoo@umich.edu
+    affiliation: University of Michigan School of Social Work
+    website: "https://nariyoo.com"
+version: 1.1.0
+repository-code: "https://github.com/nariyoo/kird-korea-immigration"
+license: MIT
+license-url: "https://github.com/nariyoo/kird-korea-immigration/blob/main/LICENSE"
+keywords:
+  - immigration
+  - South Korea
+  - administrative data
+  - residential segregation
+  - nationality diversity
+  - language demand
+  - data harmonization
+  - reproducible pipeline
+
+preferred-citation:
+  type: data
+  title: "Spatiotemporal administrative dataset of nationality, residential diversity, and language demand among immigrants in South Korea, 2006–2024"
+  authors:
+    - family-names: Yoo
+      given-names: Nari
+      orcid: "https://orcid.org/0000-0002-8467-7048"
+      affiliation: University of Michigan School of Social Work
+  year: 2026
+  version: "1.1.0"
+  doi: "10.3886/E249944V1"
+  date-released: 2026-06-08
+  publisher:
+    name: "Inter-university Consortium for Political and Social Research (openICPSR)"
+  license: CC-BY-4.0

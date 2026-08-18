@@ -1,0 +1,12 @@
+# KIRD build environment. Versions are the ones the released data was built with
+# (Python 3.13, Anaconda); the lower bounds are what the code actually needs.
+pandas>=2.0          # 2.3.3
+numpy>=1.24          # 2.3.5
+openpyxl>=3.1        # 3.1.5   .xlsx yearbooks
+xlrd>=2.0            # 2.0.2   .xls yearbooks (2006-2016)
+pyarrow>=14.0        # 21.0.0  parquet copies of the MOIS intermediates
+geopandas>=0.14      # district boundaries -> queen contiguity
+libpysal>=4.9        # 4.14.1  spatial weights
+esda>=2.5            # 2.9.0   local Moran (LISA)
+pycountry>=23.12     # UNHCR country codes (refugee layer only)
+requests>=2.31       # 2.34.2  KEDI/KESS API client (student layer only)
