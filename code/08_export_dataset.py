@@ -10,6 +10,7 @@ import os
 
 import pandas as pd
 
+from admin_codes import add_code_columns
 from check_sigungu_en import check_geojson
 from kird import SIDO_EN
 from kird import ROOT
@@ -116,7 +117,8 @@ def export_dataset():
         if "language" in cols:
             df.insert(df.columns.get_loc("language") + 1, "language_en",
                       df["language"].map(lambda l: LANGUAGE_EN.get(l, "")))
-        return df
+        # 그 해 공식 행정구역 코드. 이름이 아니라 이 코드가 층 사이 join 키다.
+        return add_code_columns(df)
 
 
     def w(name, df):

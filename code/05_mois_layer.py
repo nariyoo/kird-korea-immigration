@@ -81,6 +81,14 @@ def canonicalize_eupmyeondong_names():
     them. The parsers in scripts_mois now emit the canonical form directly, so on a
     build that re-parses the yearbooks this pass finds nothing and rewrites nothing.
 
+    Only the 읍면동 name is touched. 시군구 names are left exactly as the edition
+    printed them (인천 남구 until the 2018 rename, a bare 마산합포구 in 2024), because
+    the levels are joined on `sigungu_code` from `admin_codes.py`, which resolves each
+    edition's own spelling against that year's 법정동코드. An earlier version of this
+    pass also rewrote 시군구, and its "attach the parent city to a bare 일반구" rule
+    matched across provinces: 광주광역시 남구 and 대구광역시 북구 became 포항시 남구 and
+    포항시 북구, which silently emptied the MOIS broad columns for those districts.
+
     A row that collides with an existing unstripped row once its district is removed is
     dropped: that is the 2014 세대수, which the auxiliary sheet 6 repeats for a 동 the
     main sheet already reported, and the main sheet is the one every other category
@@ -102,10 +110,10 @@ def canonicalize_eupmyeondong_names():
     KEY = ["year", "level", "sido", "sigungu", "eupmyeondong", "category", "sex"]
 
     def renamed(chunk):
+        chunk = chunk.copy()
         new = [_strip_gu_prefix(e, s)
                for e, s in zip(chunk["eupmyeondong"].astype(str), chunk["sigungu"].astype(str))]
         n = int((pd.Series(new, index=chunk.index) != chunk["eupmyeondong"]).sum())
-        chunk = chunk.copy()
         chunk["eupmyeondong"] = new
         return chunk, n
 
@@ -143,7 +151,8 @@ def canonicalize_eupmyeondong_names():
             print(f"  {fn:<34s} no eupmyeondong column")
             continue
         total = 0
-        for chunk in pd.read_csv(p, chunksize=400_000, usecols=["sigungu", "eupmyeondong"], **read):
+        for chunk in pd.read_csv(p, chunksize=400_000,
+                                 usecols=["sigungu", "eupmyeondong"], **read):
             total += renamed(chunk)[1]
         if not total:
             print(f"  {fn:<34s} already canonical")

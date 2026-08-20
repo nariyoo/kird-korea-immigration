@@ -18,6 +18,7 @@ import sys
 import numpy as np
 import pandas as pd
 
+from admin_codes import add_code_columns, unresolved
 from kird import RELEASE
 from kird import RELEASE as REL
 from kird import RELEASE_DATA
@@ -239,7 +240,10 @@ def finalize_release():
                 "sigungu": "창원시", "sigungu_en": "Changwon-si",
                 "visa_code": c, "n": str(n)}
                for y, codes in CW.items() for c, n in codes.items()]
-        d = pd.concat([d, pd.DataFrame(add)[d.columns.tolist()]], ignore_index=True)
+        # reindex, not [d.columns]: the restored rows carry the label columns only, and
+        # the code columns are recomputed for every row by add_admin_codes below.
+        d = pd.concat([d, pd.DataFrame(add).reindex(columns=d.columns.tolist())],
+                      ignore_index=True)
         d = d.sort_values(["year", "sido", "sigungu", "visa_code"])
         write(d, p_vs)
         print(f"visa_by_sigungu.csv: restored pre-merger 창원시 ({len(add)} rows, 2008-2009)")
@@ -389,6 +393,63 @@ def finalize_release():
     print("\n".join(report) if report else "  (nothing to change — already finalized)")
 
 
+    add_admin_codes()
+    validate_code_join()
+
+
+def add_admin_codes():
+    """sido_code / sigungu_code on every released table that names a place.
+
+    The codes are the 행정안전부 법정동코드 in force on 31 December of the row's year
+    (2-digit province, 5-digit district), resolved by admin_codes.py from the register
+    kept in 01_raw_data/행정표준코드/. They are the language-neutral join key between
+    the levels, and they survive the renames the Korean names do not: 인천 남구 and
+    미추홀구 are both 28170 up to the 2018 rename and 28177 after it, and 군위군 is
+    47720 while it sat in 경상북도 and 27720 once 대구 took it in 2023. A name the
+    register cannot resolve leaves the cell blank and is listed here; no code is
+    ever invented.
+    """
+    print("")
+    print("admin codes (that year's 법정동코드):")
+    for p in files():
+        d = read(p)
+        if "sido" not in d.columns or "year" not in d.columns:
+            continue
+        write(add_code_columns(d, os.path.basename(p)), p)
+    u = unresolved()
+    if u:
+        print("  UNRESOLVED (left blank, no code invented):")
+        for (level, year, sido, name), n in sorted(u.items()):
+            print(f"    {level} {year} {sido} {name} x{n:,}")
+    else:
+        print("  every place name resolved")
+
+
+def validate_code_join():
+    """The sub-district table has to join onto the district table on the code.
+
+    Names never guaranteed that. The two levels disagreed on 40 (year, province,
+    district) combinations: MOIS writes 남구 until the 2018 rename while the MOJ panel
+    carries 미추홀구 throughout, MOIS reports 고양시 whole in 2014 while MOJ reports its
+    three general districts, and 군위군 sits under 경상북도 in one table and
+    대구광역시 in the other. On the code the two sets have to nest.
+    """
+    emd = read(os.path.join(DATA, "summary_by_eupmyeondong.csv"))
+    sgg = read(os.path.join(DATA, "summary_by_sigungu.csv"))
+    if "sigungu_code" not in emd.columns or "sigungu_code" not in sgg.columns:
+        print("  (code join not checked: sigungu_code missing)")
+        return []
+    have = set(map(tuple, sgg[["year", "sigungu_code"]].drop_duplicates().values))
+    keys = emd[["year", "sido", "sigungu", "sigungu_code"]].drop_duplicates()
+    bad = [tuple(r) for r in keys.values if (r[0], r[3]) not in have]
+    n_name = len(set(map(tuple, emd[["year", "sido", "sigungu"]].drop_duplicates().values))
+                 - set(map(tuple, sgg[["year", "sido", "sigungu"]].drop_duplicates().values)))
+    print(f"  level join: {n_name} (year, sido, sigungu) name mismatches -> "
+          f"{len(bad)} on sigungu_code")
+    for y, sd, sg, c in sorted(bad):
+        print(f"    not in summary_by_sigungu: {y} {sd} {sg} -> {c or '(blank)'}")
+    return bad
+
 
 def build_segregation():
     """Regenerate the segregation files from the released CSVs (self-contained on ../data).
@@ -523,6 +584,14 @@ def build_data_dictionary():
     # three; eupmyeondong is MOIS-only so it omits the MOJ/index columns).
     SUMMARY_FILES = "summary_by_sido.csv / summary_by_sigungu.csv / summary_by_eupmyeondong.csv"
 
+    def files_with(col):
+        """The released files that carry `col`, as one ' / ' label for the spec."""
+        return " / ".join(os.path.basename(q) for q in sorted(glob.glob(os.path.join(DATA, "*.csv")))
+                          if col in pd.read_csv(q, encoding="utf-8-sig", nrows=0).columns)
+
+    SIDO_CODE_FILES = files_with("sido_code")
+    SIGUNGU_CODE_FILES = files_with("sigungu_code")
+
     # spec: list of (file_label, variable, type, description_en, description_ko)
     SPEC = [
         # ---------- place-level summary files ----------
@@ -532,6 +601,32 @@ def build_data_dictionary():
         (SUMMARY_FILES, "sido / sido_en", "string",
          "Province or metropolitan city (Korean + English).",
          "광역시·도(한글+영문)."),
+        (SIDO_CODE_FILES, "sido_code", "string",
+         "Official two-digit province code (행정안전부 법정동코드) in force on 31 December "
+         "of that year: the language-neutral join key at the province level, stable "
+         "under renaming. It follows the register, so 강원도 is 42 through 2022 and "
+         "강원특별자치도 51 from 2023, and 전라북도 is 45 through 2023 and 전북특별자치도 "
+         "52 from 2024. Blank where the register has no province for that year.",
+         "그 해 12월 31일 기준 공식 시도 코드 2자리(행정안전부 법정동코드). 이름과 무관한 "
+         "시도 층 조인 키다. 코드는 대장을 따르므로 강원도는 2022년까지 42, 강원특별자치도는 "
+         "2023년부터 51이고, 전라북도는 2023년까지 45, 전북특별자치도는 2024년부터 52다. "
+         "그 해 대장에 없는 시도는 공백."),
+        (SIGUNGU_CODE_FILES, "sigungu_code", "string",
+         "Official five-digit district code (행정안전부 법정동코드) in force on 31 December "
+         "of that year: the language-neutral join key between the district and "
+         "sub-district tables, and the key that survives the renames the Korean names "
+         "do not. 인천 남구 and 미추홀구 are the same district, 28170 up to the 2018 "
+         "rename and 28177 after it; 군위군 is 47720 while it sat in 경상북도 and 27720 "
+         "once 대구 took it in 2023; 창원시 마산합포구 is 48125 from the 2010 merger. The "
+         "general districts of 부천시, abolished in 2016 and re-created in 2024, carry "
+         "the 부천시 code 41190 throughout, because the release publishes 부천시 as one "
+         "district across the panel. Blank where the register cannot resolve the name.",
+         "그 해 12월 31일 기준 공식 시군구 코드 5자리(행정안전부 법정동코드). 시군구 표와 "
+         "읍면동 표를 잇는 언어중립 조인 키이고, 한글 이름이 못 견디는 개명을 견딘다. "
+         "인천 남구와 미추홀구는 같은 시군구로 2018년 개명 전 28170, 이후 28177이다. "
+         "군위군은 경상북도 시절 47720, 2023년 대구 편입 뒤 27720이다. 창원시 마산합포구는 "
+         "2010년 통합 이후 48125다. 2016년 폐지되고 2024년 다시 생긴 부천시 일반구는 공개본이 "
+         "부천시 한 칸으로 내므로 전 기간 부천시 코드 41190을 단다. 대장에서 못 푼 이름은 공백."),
         ("summary_by_sigungu.csv / summary_by_eupmyeondong.csv", "sigungu / sigungu_en", "string",
          "District: an autonomous gu, a si (city), a gun (county), or a general gu of a "
          "large city, on the MOJ-published unit (Korean + English).",
@@ -1104,6 +1199,30 @@ def audit_release():
     # ------------------------------------------------------------ 7. dropped cols
     bad_cols = [f for f, df in dfs.items() if "broad_share_pct" in df.columns]
     check(not bad_cols, "broad_share_pct absent from all files")
+
+    # ------------------------------------------- 7b. that year's official codes
+    # Every named district has to carry the code the government used that year, and
+    # the sub-district table has to nest inside the district table on it. Names do
+    # not guarantee either: they disagreed on 40 (year, province, district) pairs.
+    for f, df in dfs.items():
+        if "sigungu" not in df.columns:
+            continue
+        named = df["sigungu"].notna() & (df["sigungu"].astype(str).str.strip() != "")
+        blank = named & (df["sigungu_code"].isna()
+                         | (df["sigungu_code"].astype(str).str.strip().isin(["", "nan"])))
+        if blank.any():
+            print(df.loc[blank, ["year", "sido", "sigungu"]].drop_duplicates()
+                  .head(40).to_string())
+        check(not blank.any(), f"{f}: sigungu_code present on every named district "
+                               f"({int(blank.sum())} blank)")
+    emd, sgg = dfs["summary_by_eupmyeondong.csv"], dfs["summary_by_sigungu.csv"]
+    have = set(map(tuple, sgg[["year", "sigungu_code"]].drop_duplicates().values))
+    miss = sorted({tuple(r) for r in emd[["year", "sido", "sigungu", "sigungu_code"]]
+                   .drop_duplicates().values if (r[0], r[3]) not in have})
+    for row in miss[:40]:
+        print(f"  [detail] eupmyeondong district absent from summary_by_sigungu: {row}")
+    check(not miss, "summary_by_eupmyeondong (year, sigungu_code) nests inside "
+                    f"summary_by_sigungu ({len(miss)} outside)")
 
     # -------------------------------------------------------- 8. 2009 continent_H
     na = dfs["national_annual.csv"]
