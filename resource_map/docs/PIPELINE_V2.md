@@ -8,6 +8,8 @@
 
 ```
 0. normalize_addresses.py 명부의 모든 주소       → addr_canon.json       (카카오 → 법정동+본번-부번)
+0b. pull_ssis_facilities.py 사회복지시설 OpenAPI   → welfare/ssis_*.csv     (다문화가족지원센터 분모)
+0c. enrich_from_ssis.py   등록부 대 틀            → fixup/addr_ssis_done.csv (주소 보강과 충돌 분리)
 1. build_frame.py        명부 전부 + v1 master → frame_v2.csv          (중복 병합, 신원 해시 id)
 2. geocode_frame.py      frame_v2.csv          → frame_v2_geo.csv      (좌표 + 출처)
 3. find_websites.py --all frame_v2_geo.csv    → website_found.csv     (질의 5종, 후보 fetch, tier)

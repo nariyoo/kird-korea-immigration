@@ -604,9 +604,10 @@ def write_gap_en(orgs, summary, counts, ko):
         t, n1 = re.subn(r'(<ul class="sumlist">).*?(</ul>)',
                         lambda m: m.group(1) + NLSP + (NLSP).join(li)
                         + NLIND + m.group(2), t, count=1, flags=re.S)
-        t, n2 = re.subn(r"지원기관 [\d,]+곳 가운데 [\d,]+곳은 주소에.*?"
-                        r"계산됩니다\.(?:\s*</p>\s*<p>여기에 더해.*?됩니다\.)*",
-                        note, t, flags=re.S)
+        t, n2 = re.subn(
+            r"<p>지원기관 [\d,]+곳 가운데.*?</p>"
+            r"(?:\s*<p>여기에 더해.*?</p>)*",
+            "<p>" + note + "</p>", t, flags=re.S)
         io.open(p, "w", encoding="utf-8").write(t)
         print(f"  english prose -> {os.path.basename(p)} "
               f"(summary {n1}, note {n2})")
