@@ -18,7 +18,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-from admin_codes import add_code_columns, unresolved
+from kird import add_code_columns, unresolved
 from kird import RELEASE
 from kird import RELEASE as REL
 from kird import RELEASE_DATA
@@ -401,7 +401,7 @@ def add_admin_codes():
     """sido_code / sigungu_code on every released table that names a place.
 
     The codes are the 행정안전부 법정동코드 in force on 31 December of the row's year
-    (2-digit province, 5-digit district), resolved by admin_codes.py from the register
+    (2-digit province, 5-digit district), resolved by kird.py from the register
     kept in 01_raw_data/행정표준코드/. They are the language-neutral join key between
     the levels, and they survive the renames the Korean names do not: 인천 남구 and
     미추홀구 are both 28170 up to the 2018 rename and 28177 after it, and 군위군 is

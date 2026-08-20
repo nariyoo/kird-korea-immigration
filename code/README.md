@@ -37,13 +37,30 @@ Install with `pip install -r requirements.txt` (Python 3.10+).
 
 `kird.py` holds everything the steps import: the paths, resolved from the project
 root; the reference tables (`COUNTRY_CANONICAL`, `COUNTRY_REGION`,
-`COUNTRY_LANGUAGE`, `LANG_EN_KO`, `SIDO_EN`, `SIDO_EN_SHORT`); and the index
-formulas (`shannon`, `incl`, `cont`, `hhi`, `pielou`, `make_record`, `morans_i`).
-Every step imports the same tables and the same formulas, so a district in 2009
-and the same district in 2019 are measured identically. `SIDO_EN` and
-`SIDO_EN_SHORT` differ on purpose: the released files romanize the provinces with
-the -do suffix (Gyeonggi-do) and the dashboard uses the short English form
-(Gyeonggi).
+`COUNTRY_LANGUAGE`, `LANG_EN_KO`, `SIDO_EN`, `SIDO_EN_SHORT`); the index
+formulas (`shannon`, `incl`, `cont`, `hhi`, `pielou`, `make_record`, `morans_i`);
+and the per-year administrative-code layer. Every step imports the same tables
+and the same formulas, so a district in 2009 and the same district in 2019 are
+measured identically. `SIDO_EN` and `SIDO_EN_SHORT` differ on purpose: the
+released files romanize the provinces with the -do suffix (Gyeonggi-do) and the
+dashboard uses the short English form (Gyeonggi).
+
+The administrative-code layer is what puts `sido_code` and `sigungu_code` on the
+released tables. It reads the 행정안전부 법정동코드 register kept in
+`01_raw_data/행정표준코드/` and gives a province or district name the code the
+government used on 31 December of the row's year, following the register's own
+생성일 / 폐지일 plus a declared lineage for the successions that changed a code
+(인천 남구 to 미추홀구 in 2018, 군위군 from 경상북도 to 대구광역시 in 2023,
+청원군 into 청주시 in 2014, 진해시 into 창원시 in 2010). A name the register
+cannot resolve leaves the cell blank and is reported; no code is ever invented.
+The module also runs from the command line:
+
+```
+python kird.py                 # the resolved paths
+python kird.py --fetch-codes   # download the 법정동코드 register from code.go.kr
+python kird.py --code-table    # rebuild the year-by-year code table as JSON
+python kird.py --admin2024     # rebuild the 2024 boundary anchor table
+```
 
 ## Steps
 
@@ -59,7 +76,7 @@ functions inside a step run in the order the `__main__` block lists them.
 | `05_mois_layer.py` | The MOIS tables (행정안전부 외국인주민통계, a broader population definition than MOJ): join keys, the administrative codes on them, the cross-check against the MOJ counts, assembly, the Sejong patches, and packaging as CSV and Parquet. The parsers for the nineteen raw 행정안전부 editions are in the same file, under `python 05_mois_layer.py --reparse`; the pipeline does not call them, because their output changes only when a new edition is published. |
 | `06_build_summaries.py` | The per-level summaries on the MOJ district grain of roughly 250 districts a year, the MOIS-only sub-district summary with that year's official code, and the four MOIS CSVs. |
 | `07_build_naturalization.py` | Chapter 4 of every edition into the three nationality-processing panels, each checked against the separately published annual totals. |
-| `08_export_dataset.py` | The tidy release CSVs, then `language_demand.csv` on the released basis over the draft the export writes. |
+| `08_export_dataset.py` | The tidy release CSVs, then `language_demand.csv` on the released basis over the draft the export writes. It also audits the English district names in the boundary file before writing anything, since `sigungu_en` is copied out of that file verbatim; `python 08_export_dataset.py --check-names` runs that audit on its own. |
 | `09_finish_release.py` | The single authority for the released schema, the segregation files recomputed over all districts, the bilingual dictionary asserted against the files present, one labeled Stata `.dta` per table, and the integrity audit, which must end `AUDIT CLEAN`. |
 | `10_stage_deposit.py` | The openICPSR deposit: the two refugee files (a cumulative 1994-2024 snapshot, since MOJ publishes refugee outcomes by nationality only cumulatively), the wide summary variants with every place-keyed breakdown pivoted to one column per category, and the deposit gate over the result. |
 

@@ -9,4 +9,4 @@ geopandas>=0.14      # district boundaries -> queen contiguity
 libpysal>=4.9        # 4.14.1  spatial weights
 esda>=2.5            # 2.9.0   local Moran (LISA)
 pycountry>=23.12     # UNHCR country codes (refugee layer only)
-requests>=2.31       # 2.34.2  KEDI/KESS API client (student layer only)
+requests>=2.31       # 2.34.2  the 법정동코드 register download, kird.py --fetch-codes

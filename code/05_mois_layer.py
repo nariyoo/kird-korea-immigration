@@ -3043,28 +3043,6 @@ def reparse_mois_sources():
 
 
 # -- 레이어: 읍면동 이름 정규화, 키와 검증, 조립, 세종 보정, 패키징 ------------------------------------
-_EMD_SUFFIXES = ("동", "읍", "면", "리", "출장소")
-
-
-def _strip_gu_prefix(name, sigungu):
-    """Drop a 일반구 that the source printed in front of a 읍면동 name.
-
-    ('덕양구고양동', '고양시')       -> '고양동'   (2014 sheets: 시 only in sigungu)
-    ('덕양구고양동', '고양시 덕양구') -> '고양동'   (2015 sheets: 구 in both places)
-    ('구서1동', '금정구')            -> '구서1동'  (금정구 is a 자치구, not a 일반구)
-
-    Only a district of the row's own 시 is stripped, and only when what is left is
-    still a 읍/면/동/출장소, so a 동 whose own name opens with a 구 syllable is safe.
-    """
-    if not name or not sigungu:
-        return name
-    city = str(sigungu).split(" ")[0]
-    for gu in sorted(GU_BY_CITY.get(city, ()), key=len, reverse=True):
-        if name.startswith(gu) and len(name) > len(gu):
-            rest = name[len(gu):]
-            if rest.endswith(_EMD_SUFFIXES):
-                return rest
-    return name
 
 
 def canonicalize_eupmyeondong_names():
@@ -3086,7 +3064,7 @@ def canonicalize_eupmyeondong_names():
 
     Only the 읍면동 name is touched. 시군구 names are left exactly as the edition
     printed them (인천 남구 until the 2018 rename, a bare 마산합포구 in 2024), because
-    the levels are joined on `sigungu_code` from `admin_codes.py`, which resolves each
+    the levels are joined on `sigungu_code` from `kird.py`, which resolves each
     edition's own spelling against that year's 법정동코드. An earlier version of this
     pass also rewrote 시군구, and its "attach the parent city to a bare 일반구" rule
     matched across provinces: 광주광역시 남구 and 대구광역시 북구 became 포항시 남구 and
@@ -3114,7 +3092,7 @@ def canonicalize_eupmyeondong_names():
 
     def renamed(chunk):
         chunk = chunk.copy()
-        new = [_strip_gu_prefix(e, s)
+        new = [strip_gu_prefix(e, s)
                for e, s in zip(chunk["eupmyeondong"].astype(str), chunk["sigungu"].astype(str))]
         n = int((pd.Series(new, index=chunk.index) != chunk["eupmyeondong"]).sum())
         chunk["eupmyeondong"] = new
@@ -3132,7 +3110,7 @@ def canonicalize_eupmyeondong_names():
             if "eupmyeondong" not in df.columns:
                 print(f"  {fn:<34s} no eupmyeondong column"); continue
             keep_keys = set(map(tuple, df.loc[
-                [_strip_gu_prefix(e, s) == e for e, s in
+                [strip_gu_prefix(e, s) == e for e, s in
                  zip(df["eupmyeondong"], df["sigungu"])], KEY].values))
             out, n_renamed = renamed(df)
             dup = pd.Series([tuple(r) in keep_keys for r in out[KEY].values], index=out.index)
