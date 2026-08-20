@@ -10,6 +10,7 @@ import os
 
 import pandas as pd
 
+from check_sigungu_en import check_geojson
 from kird import SIDO_EN
 from kird import ROOT
 
@@ -76,7 +77,14 @@ def export_dataset():
         country_en = dict(dd.get("country_en", {}))
         country_en.setdefault("국제연합전문기구", "UN Specialized Agencies")
         country_en.setdefault("국적불명", "Unknown nationality")
-        geo = json.load(open(os.path.join(SITE, "korea_sigungu.json"), encoding="utf-8"))
+        geo_path = os.path.join(SITE, "korea_sigungu.json")
+        # sigungu_en is copied straight out of this file, so a wrong
+        # romanization here ships in the deposit. Stop before that happens.
+        bad = check_geojson(geo_path)
+        if bad:
+            raise SystemExit("korea_sigungu.json has %d bad English names; "
+                             "fix name_eng before exporting" % len(bad))
+        geo = json.load(open(geo_path, encoding="utf-8"))
         geo_en = {f["properties"]["match_key"]: f["properties"].get("name_eng", "")
                   for f in geo["features"]}
 
