@@ -28,7 +28,7 @@ columns are rounded and the dashboard reads the same numbers.
 import os
 
 __all__ = ["ROOT", "RAW", "CLEAN", "SITE", "SITE_DATA", "RELEASE", "RELEASE_DATA",
-           "DEPOSIT", "DEPOSIT_DATA", "CODE", "MOIS_SITE"]
+           "DEPOSIT", "DEPOSIT_DATA", "DEPOSIT_PUBLISHED", "CODE", "MOIS_SITE"]
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -63,8 +63,16 @@ RELEASE_DATA = os.path.join(RELEASE, "data")
 SITE = os.path.join(ROOT, "05_dashboard")
 SITE_DATA = os.path.join(SITE, "data")
 MOIS_SITE = os.path.join(SITE_DATA, "mois")
-DEPOSIT = os.path.join(RELEASE, "data deposit", "kird_openicpsr_deposit")
+# Staging area for the NEXT deposit version. The sibling folder
+# kird_openicpsr_deposit/ is the record of what is already published on openICPSR
+# as v1.1.0 (DOI 10.3886/E249944V1), so a rebuild must never write into it; phase 3
+# builds a fresh bundle here and that folder is replaced only once a new version is
+# actually deposited.
+DEPOSIT = os.path.join(RELEASE, "data deposit", "kird_openicpsr_deposit_staging")
 DEPOSIT_DATA = os.path.join(DEPOSIT, "data")
+# The published bundle, read-only: phase 3 seeds the curated README/LICENSE from it
+# and every comparison of a staged file is made against it.
+DEPOSIT_PUBLISHED = os.path.join(RELEASE, "data deposit", "kird_openicpsr_deposit")
 
 
 if __name__ == "__main__":

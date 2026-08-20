@@ -651,7 +651,14 @@ def build_data_dictionary():
          "모집단×국적×비자×연도 인원(2006-2025)."),
         ("age_sex_national.csv", "country / country_en", "string",
          "Nationality (Korean + English).", "국적(한글+영문)."),
-        ("age_sex_national.csv", "gender", "string", "Sex (남/여).", "성별(남/여)."),
+        ("age_sex_national.csv", "gender", "string",
+         "Sex: M, F, or T for the published total. From the 2023 edition the source "
+         "also publishes a 제3의성 (third sex) row, which is counted in T but is not "
+         "carried here, so M + F falls short of T by a few people in some countries "
+         "(14 nationwide in 2025, 9 in 2024). Use T for a total.",
+         "성별(M 남성, F 여성, T 계). 2023년판부터 원자료에 제3의성 행이 있고 그 값은 "
+         "T 에 들어 있으나 이 파일에는 따로 싣지 않으므로, 일부 국적에서 M + F 가 T 보다 "
+         "몇 명 적습니다(2025년 전국 14명, 2024년 9명). 총계는 T 를 쓰십시오."),
         ("age_sex_national.csv", "age_group", "string", "Age band.", "연령대."),
         ("age_sex_national.csv", "n", "integer",
          "MOJ registered foreigners for that nationality x age x sex x year (2009-2025).",
@@ -857,6 +864,84 @@ def build_data_dictionary():
 
 
 
+# ---------- labeled Stata export, shared with the deposit staging ----------
+# 10_stage_deposit.py imports these three so the deposit's .dta files are written
+# exactly the way the release's are: every column labeled from the data dictionary,
+# a dataset label, dictionary-driven numeric typing, Stata 14 / UTF-8. Anything that
+# writes a KIRD .dta goes through write_labeled_dta, never a bare to_stata.
+RELEASE_VERSION = "1.2.0"
+STATA_VERSION = 118      # Stata 14, UTF-8, so Korean text survives
+STATA_NAME_MAX = 32      # Stata's variable-name limit
+
+
+def load_stata_dict(dict_path):
+    """(file, variable) -> {'label': desc_en, 'numeric': bool}. The dictionary
+    groups equivalent files/variables with ' / ', so expand every combination."""
+    dd = pd.read_csv(dict_path, encoding="utf-8-sig")
+    m = {}
+    for _, r in dd.iterrows():
+        fs = [f.strip() for f in str(r["file"]).split("/")]
+        vars_ = [v.strip() for v in str(r["variable"]).split("/")]
+        typ = str(r["type"]).lower()
+        numeric = ("integer" in typ) or ("float" in typ)
+        label = "" if pd.isna(r["description_en"]) else str(r["description_en"]).strip()
+        for f in fs:
+            for v in vars_:
+                m[(f, v)] = {"label": label, "numeric": numeric}
+    return m
+
+
+def trim_label(s, n=80):
+    """Stata variable labels max 80 chars; cut at a word boundary, no ellipsis."""
+    s = " ".join(str(s).split())
+    if len(s) <= n:
+        return s
+    cut = s[:n]
+    sp = cut.rfind(" ")
+    return cut[:sp] if sp > 40 else cut
+
+
+def write_labeled_dta(csv_path, out_path, meta, dict_name=None,
+                      version=RELEASE_VERSION, stem=None):
+    """One released CSV -> one labeled .dta, with the schema taken from `meta`
+    (load_stata_dict). `dict_name` is the file name the dictionary uses, which is
+    the CSV's basename except where the deposit renames a file.
+
+    Read everything as string with blanks preserved, then coerce the numerics the
+    dictionary declares - that gives full control over missing values and avoids
+    dtype-inference surprises. Over-long variable names are a hard error: Stata
+    would truncate them, and a silently truncated column is a corrupted column.
+    """
+    fname = dict_name or os.path.basename(csv_path)
+    stem = stem or os.path.basename(csv_path)[:-4]
+    df = pd.read_csv(csv_path, encoding="utf-8-sig", dtype=str, keep_default_na=False)
+    too_long = [c for c in df.columns if len(c) > STATA_NAME_MAX]
+    if too_long:
+        raise SystemExit(f"{fname}: variable name(s) over {STATA_NAME_MAX} chars, "
+                         f"Stata would truncate them: {too_long}")
+    var_labels = {}
+    for col in df.columns:
+        info = meta.get((fname, col), {"label": "", "numeric": False})
+        if info["numeric"]:
+            v = pd.to_numeric(df[col].replace("", pd.NA), errors="coerce")
+            # keep integer-valued columns as integers when there are no missings
+            if v.notna().all() and (v == v.round()).all():
+                v = v.astype("int64")
+            df[col] = v
+        else:
+            df[col] = df[col].fillna("")  # string: blank = unreported, not "nan"
+        if info["label"]:
+            var_labels[col] = trim_label(info["label"])
+    df.to_stata(
+        out_path,
+        write_index=False,
+        version=STATA_VERSION,
+        variable_labels=var_labels,
+        data_label=trim_label(f"KIRD v{version} - {stem}"),
+    )
+    return df, var_labels
+
+
 def export_stata():
     """Export every released CSV to a labeled Stata .dta (data/stata/*.dta).
 
@@ -877,74 +962,19 @@ def export_stata():
     """
     OUT = os.path.join(DATA, "stata")
     DICT = os.path.join(REL, "data_dictionary.csv")
-    VERSION = "1.1.0"
-
-
-    def load_dict():
-        """(file, variable) -> {'label': desc_en, 'numeric': bool}. The dictionary
-        groups equivalent files/variables with ' / ', so expand every combination."""
-        dd = pd.read_csv(DICT, encoding="utf-8-sig")
-        m = {}
-        for _, r in dd.iterrows():
-            files = [f.strip() for f in str(r["file"]).split("/")]
-            vars_ = [v.strip() for v in str(r["variable"]).split("/")]
-            typ = str(r["type"]).lower()
-            numeric = ("integer" in typ) or ("float" in typ)
-            label = "" if pd.isna(r["description_en"]) else str(r["description_en"]).strip()
-            for f in files:
-                for v in vars_:
-                    m[(f, v)] = {"label": label, "numeric": numeric}
-        return m
-
-
-    def trim_label(s, n=80):
-        """Stata variable labels max 80 chars; cut at a word boundary, no ellipsis."""
-        s = " ".join(s.split())
-        if len(s) <= n:
-            return s
-        cut = s[:n]
-        sp = cut.rfind(" ")
-        return cut[:sp] if sp > 40 else cut
-
-
-    def export_one(fname, meta):
-        path = os.path.join(DATA, fname)
-        # read everything as string with blanks preserved, then coerce numerics —
-        # gives full control over missing values and avoids dtype-inference surprises.
-        df = pd.read_csv(path, encoding="utf-8-sig", dtype=str, keep_default_na=False)
-        var_labels = {}
-        for col in df.columns:
-            info = meta.get((fname, col), {"label": "", "numeric": False})
-            if info["numeric"]:
-                s = pd.to_numeric(df[col].replace("", pd.NA), errors="coerce")
-                # keep integer-valued columns as integers when there are no missings
-                if s.notna().all() and (s == s.round()).all():
-                    s = s.astype("int64")
-                df[col] = s
-            else:
-                df[col] = df[col].fillna("")  # string: blank = unreported, not "nan"
-            if info["label"]:
-                var_labels[col] = trim_label(info["label"])
-        stem = fname[:-4]
-        data_label = trim_label(f"KIRD v{VERSION} - {stem}")
-        out = os.path.join(OUT, stem + ".dta")
-        df.to_stata(
-            out,
-            write_index=False,
-            version=118,                # Stata 14, UTF-8 (handles Korean)
-            variable_labels=var_labels,
-            data_label=data_label,
-        )
-        print(f"  {stem}.dta: {len(df):>7,} rows x {len(df.columns)} cols")
-
 
     def main():
         os.makedirs(OUT, exist_ok=True)
-        meta = load_dict()
+        meta = load_stata_dict(DICT)
         csvs = sorted(f for f in os.listdir(DATA) if f.endswith(".csv"))
+        if not csvs:
+            raise SystemExit(f"no released CSVs in {DATA}: nothing to export")
         print(f"Exporting {len(csvs)} files -> {os.path.relpath(OUT, REL)}/")
         for fname in csvs:
-            export_one(fname, meta)
+            stem = fname[:-4]
+            df, _ = write_labeled_dta(os.path.join(DATA, fname),
+                                      os.path.join(OUT, stem + ".dta"), meta)
+            print(f"  {stem}.dta: {len(df):>7,} rows x {len(df.columns)} cols")
         print("done.")
 
     main()

@@ -21,6 +21,140 @@ import pandas as pd
 
 from kird import ROOT
 
+# 일반구 by parent 시, every district these twelve cities have carried 2006-2024,
+# including the ones since abolished (부천시 2019) and the ones added on a merger
+# (청주시 2014, 창원시 2010). Mirrors scripts_mois/mois_common.GU_BY_CITY, which the
+# parsers use; it is repeated here because the published bundle ships this step and
+# not the parsers, so the layer has to be able to canonicalize the keys it is handed.
+GU_BY_CITY = {
+    "고양시": ("덕양구", "일산동구", "일산서구"),
+    "부천시": ("소사구", "오정구", "원미구"),
+    "성남시": ("분당구", "수정구", "중원구"),
+    "수원시": ("권선구", "영통구", "장안구", "팔달구"),
+    "안산시": ("단원구", "상록구"),
+    "안양시": ("동안구", "만안구"),
+    "용인시": ("기흥구", "수지구", "처인구"),
+    "전주시": ("덕진구", "완산구"),
+    "창원시": ("마산합포구", "마산회원구", "성산구", "의창구", "진해구"),
+    "천안시": ("동남구", "서북구"),
+    "청주시": ("상당구", "서원구", "청원구", "흥덕구"),
+    "포항시": ("남구", "북구"),
+}
+_EMD_SUFFIXES = ("동", "읍", "면", "리", "출장소")
+
+
+def _strip_gu_prefix(name, sigungu):
+    """Drop a 일반구 that the source printed in front of a 읍면동 name.
+
+    ('덕양구고양동', '고양시')       -> '고양동'   (2014 sheets: 시 only in sigungu)
+    ('덕양구고양동', '고양시 덕양구') -> '고양동'   (2015 sheets: 구 in both places)
+    ('구서1동', '금정구')            -> '구서1동'  (금정구 is a 자치구, not a 일반구)
+
+    Only a district of the row's own 시 is stripped, and only when what is left is
+    still a 읍/면/동/출장소, so a 동 whose own name opens with a 구 syllable is safe.
+    """
+    if not name or not sigungu:
+        return name
+    city = str(sigungu).split(" ")[0]
+    for gu in sorted(GU_BY_CITY.get(city, ()), key=len, reverse=True):
+        if name.startswith(gu) and len(name) > len(gu):
+            rest = name[len(gu):]
+            if rest.endswith(_EMD_SUFFIXES):
+                return rest
+    return name
+
+
+def canonicalize_eupmyeondong_names():
+    """Put a 일반구 the 2014-2015 sources printed inside the 읍면동 name back in sigungu.
+
+    The 2014 and 2015 행정안전부 읍면동 sheets write the sub-district of a city with
+    general districts as '덕양구 고양동', and the parser's whitespace strip glues that
+    into '덕양구고양동'. In 2015 the district is also in `sigungu` ('고양시 덕양구'), so
+    the glued copy is a mislabelled but single row; in 2014 `sigungu` is the bare city,
+    so the glued name is a *second* key for a 동 that already exists, carrying only the
+    세대수 the auxiliary sheet supplies and none of the population the main 유형별 sheet
+    does. That is where the 434 value-less 2014 rows in summary_by_eupmyeondong.csv came
+    from: 창원 62, 성남 48, 수원 40, 고양 39, 부천 36, 전주 33, and the rest.
+
+    Names are canonicalized here, on the tidy tables, because this step owns the MOIS
+    join keys and because the released `04_dataset_release/mois/` CSVs are copies of
+    them. The parsers in scripts_mois now emit the canonical form directly, so on a
+    build that re-parses the yearbooks this pass finds nothing and rewrites nothing.
+
+    A row that collides with an existing unstripped row once its district is removed is
+    dropped: that is the 2014 세대수, which the auxiliary sheet 6 repeats for a 동 the
+    main sheet already reported, and the main sheet is the one every other category
+    comes from. Rows whose stripped name matches nothing (청주 강서1동, the 출장소
+    branch offices) stay, value-less, as they were.
+    """
+    DATA = Path(ROOT) / "03_cleaned_data"
+    # Every tidy MOIS table keyed by 읍면동. mois_region_keys*.csv are rebuilt from
+    # mois_population.csv by the next function, so they are not listed here.
+    FILES = [
+        "mois_population.csv",          # + the collision rule, below
+        "mois_total_pop.csv",
+        "mois_nationality.csv",
+        "mois_children_parent.csv",
+        "mois_multicultural.csv",
+        "mois_eupmyeondong_indices.csv",
+        "mois_eupmyeondong_enclaves.csv",
+    ]
+    KEY = ["year", "level", "sido", "sigungu", "eupmyeondong", "category", "sex"]
+
+    def renamed(chunk):
+        new = [_strip_gu_prefix(e, s)
+               for e, s in zip(chunk["eupmyeondong"].astype(str), chunk["sigungu"].astype(str))]
+        n = int((pd.Series(new, index=chunk.index) != chunk["eupmyeondong"]).sum())
+        chunk = chunk.copy()
+        chunk["eupmyeondong"] = new
+        return chunk, n
+
+    print("\n===== canonicalize 읍면동 names (일반구 out of eupmyeondong) =====")
+    for fn in FILES:
+        p = DATA / fn
+        if not p.exists():
+            print(f"  {fn:<34s} MISSING")
+            continue
+        read = dict(dtype=str, keep_default_na=False, encoding="utf-8-sig", low_memory=False)
+        if fn == "mois_population.csv":
+            df = pd.read_csv(p, **read)
+            if "eupmyeondong" not in df.columns:
+                print(f"  {fn:<34s} no eupmyeondong column"); continue
+            keep_keys = set(map(tuple, df.loc[
+                [_strip_gu_prefix(e, s) == e for e, s in
+                 zip(df["eupmyeondong"], df["sigungu"])], KEY].values))
+            out, n_renamed = renamed(df)
+            dup = pd.Series([tuple(r) in keep_keys for r in out[KEY].values], index=out.index)
+            dup &= pd.Series([a != b for a, b in zip(out["eupmyeondong"], df["eupmyeondong"])],
+                             index=out.index)
+            n_dropped = int(dup.sum())
+            if n_renamed == 0 and n_dropped == 0:
+                print(f"  {fn:<34s} already canonical")
+                continue
+            out[~dup].to_csv(p, index=False, encoding="utf-8-sig")
+            print(f"  {fn:<34s} {n_renamed:,} names fixed, "
+                  f"{n_dropped:,} duplicate rows dropped ({len(out) - n_dropped:,} rows)")
+            continue
+        # Everything else: count first on two columns, and only rewrite if a name really
+        # changes, so a canonical build does no IO. The rewrite streams, because the
+        # nationality table is 318 MB and does not need to be resident.
+        head = pd.read_csv(p, nrows=0, encoding="utf-8-sig")
+        if "eupmyeondong" not in head.columns:
+            print(f"  {fn:<34s} no eupmyeondong column")
+            continue
+        total = 0
+        for chunk in pd.read_csv(p, chunksize=400_000, usecols=["sigungu", "eupmyeondong"], **read):
+            total += renamed(chunk)[1]
+        if not total:
+            print(f"  {fn:<34s} already canonical")
+            continue
+        tmp = p.with_suffix(".csv.tmp")
+        with open(tmp, "w", encoding="utf-8-sig", newline="") as fh:
+            for i, chunk in enumerate(pd.read_csv(p, chunksize=400_000, **read)):
+                renamed(chunk)[0].to_csv(fh, index=False, header=(i == 0), lineterminator="\r\n")
+        os.replace(tmp, p)
+        print(f"  {fn:<34s} {total:,} names fixed")
+
 
 def region_keys_and_validation():
     """Region keys for the MOIS layer, the codes on them, and the cross-check against MOJ.
@@ -1046,6 +1180,7 @@ license: CC-BY-4.0
 
 
 if __name__ == "__main__":
+    canonicalize_eupmyeondong_names()
     region_keys_and_validation()
     build_layer()
     sejong_patches()

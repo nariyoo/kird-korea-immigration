@@ -8,26 +8,153 @@ gate: file integrity, CSV and DTA parity, cross-level sums, within-row
 identities, and comparison against the published MOJ figures.
 """
 import csv
+import importlib.util
 import json
 import os
 import re
+import shutil
 import sys
 
 import numpy as np
 import pandas as pd
 
 from kird import CLEAN
+from kird import DEPOSIT
 from kird import DEPOSIT_DATA
 from kird import DEPOSIT_DATA as DEP
+from kird import DEPOSIT_PUBLISHED
+from kird import RELEASE
 from kird import RELEASE_DATA
 from kird import ROOT
+
+_FR = None
+
+
+def _finish_release():
+    """09_finish_release.py as a module, cached. Its file name starts with a digit,
+    so it cannot be imported normally; this is the pattern build_unhcr_refugees.py
+    already uses. Imported for the labeled-Stata helpers, so a deposit .dta is
+    written exactly the way a release .dta is instead of through a bare to_stata."""
+    global _FR
+    if _FR is None:
+        here = os.path.dirname(os.path.abspath(__file__))
+        spec = importlib.util.spec_from_file_location(
+            "finish_release", os.path.join(here, "09_finish_release.py"))
+        _FR = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_FR)
+    return _FR
+
+
+# The four files the deposit keeps at the top of data/ rather than in
+# detailed_data/. attach_breakdowns() writes them itself, with the wide breakdown
+# columns attached, so stage_release() must not copy the plain release versions
+# over them. national_annual is renamed to summary_national in the deposit.
+TOP_LEVEL = {"summary_by_sido.csv", "summary_by_sigungu.csv",
+             "summary_by_eupmyeondong.csv", "national_annual.csv"}
+# Written into the deposit by add_refugee_files() / export_deposit_stata(); they
+# have no release counterpart, so they are never stale leftovers.
+DEPOSIT_ONLY = ("refugee_",)
+
+
+def stage_release():
+    """Lay the finished release out in the deposit's folder shape.
+
+    Nothing else in phase 3 moves a table. attach_breakdowns() rewrites the four
+    summary files and final_qc() only reads, so without this step a rebuilt deposit
+    keeps whatever the last upload left behind: fresh summary CSVs sitting next to
+    year-old detail tables, and .dta files that never move at all. That mismatch is
+    what final_qc() reports as CSV/DTA parity failures.
+
+        04_dataset_release/data/*.csv        -> <deposit>/data/detailed_data/
+        04_dataset_release/data/stata/*.dta  -> <deposit>/data/detailed_data/
+
+    minus the four TOP_LEVEL files, which attach_breakdowns() writes into
+    <deposit>/data/ instead.
+
+    README.md and LICENSE.txt are the deposit's own curated documents and are NOT
+    the release's copies: the deposit README describes the detailed_data/ split, the
+    wide columns and the data-only scope of the deposit, and LICENSE.txt is the full
+    CC BY text where 04_dataset_release/LICENSE is a two-line pointer. They are
+    seeded once (from the published deposit, falling back to the release) and then
+    left alone, the same rule 08_export_dataset.py applies to the README and
+    CITATION.cff it would otherwise regenerate, so an edit written for the next
+    version survives a rebuild.
+    """
+    SRC = RELEASE_DATA
+    SRC_DTA = os.path.join(RELEASE_DATA, "stata")
+    DETAIL = os.path.join(DEPOSIT_DATA, "detailed_data")
+    os.makedirs(DETAIL, exist_ok=True)
+
+    csvs = sorted(f for f in os.listdir(SRC) if f.endswith(".csv"))
+    absent = sorted(TOP_LEVEL - set(csvs))
+    if absent:
+        raise SystemExit(f"release incomplete: {SRC} has no {absent}; run phase 2 first")
+    detail = [f for f in csvs if f not in TOP_LEVEL]
+    if not detail:
+        raise SystemExit(f"no detail tables in {SRC}: nothing to stage")
+
+    print(f"staging {len(detail)} detail tables -> {DETAIL}")
+    staged, no_dta = [], []
+    for f in detail:
+        stem = f[:-4]
+        src_dta = os.path.join(SRC_DTA, stem + ".dta")
+        if not os.path.exists(src_dta):
+            no_dta.append(stem)
+            continue
+        shutil.copy2(os.path.join(SRC, f), os.path.join(DETAIL, f))
+        shutil.copy2(src_dta, os.path.join(DETAIL, stem + ".dta"))
+        staged.append(stem)
+        c_sz = os.path.getsize(os.path.join(DETAIL, f))
+        d_sz = os.path.getsize(os.path.join(DETAIL, stem + ".dta"))
+        print(f"  {stem:34s} {c_sz:>12,} B csv  {d_sz:>12,} B dta")
+    if no_dta:
+        raise SystemExit(f"no Stata file in {SRC_DTA} for {no_dta}; run phase 2 first")
+
+    # Drop anything left from an earlier release that this one no longer produces,
+    # so the deposit cannot ship a table the dictionary does not document.
+    keep = {stem + ext for stem in staged for ext in (".csv", ".dta")}
+    stale = sorted(f for f in os.listdir(DETAIL)
+                   if f not in keep and not f.startswith(DEPOSIT_ONLY))
+    for f in stale:
+        os.remove(os.path.join(DETAIL, f))
+        print(f"  removed stale {f}")
+
+    for name, sources in (
+            ("README.md", [os.path.join(DEPOSIT_PUBLISHED, "README.md"),
+                           os.path.join(RELEASE, "README.md")]),
+            ("LICENSE.txt", [os.path.join(DEPOSIT_PUBLISHED, "LICENSE.txt"),
+                             os.path.join(RELEASE, "LICENSE")])):
+        dst = os.path.join(DEPOSIT, name)
+        if os.path.exists(dst):
+            print(f"  {name} kept (curated for the deposit; not regenerated)")
+            continue
+        src = next((q for q in sources if os.path.exists(q)), None)
+        if src is None:
+            raise SystemExit(f"no source for the deposit's {name}: tried {sources}")
+        shutil.copy2(src, dst)
+        print(f"  {name} seeded from {os.path.relpath(src, ROOT)}")
+
+    # Say out loud how the staged bundle differs from the one already published, so a
+    # table that quietly appeared or vanished cannot ride along unnoticed.
+    pub = os.path.join(DEPOSIT_PUBLISHED, "data", "detailed_data")
+    if os.path.isdir(pub):
+        here = {f for f in os.listdir(DETAIL) if f.endswith((".csv", ".dta"))}
+        there = {f for f in os.listdir(pub) if f.endswith((".csv", ".dta"))}
+        print(f"  vs published deposit: only here {sorted(here - there) or 'none'}; "
+              f"only there {sorted(there - here) or 'none'}")
+    return staged
+
 
 
 def add_refugee_files():
     """Build refugee nationality + refugee language-demand release files and add them
     to the openICPSR deposit (detailed_data/), matching the deposit's conventions
     (UTF-8-BOM CSV, bilingual ko/en columns, dictionary rows -> labeled .dta via
-    build_deposit_stata.py).
+    export_deposit_stata()).
+
+    Runs AFTER attach_breakdowns(), which rewrites data_dictionary.csv from the
+    release dictionary: run before it and these seven refugee rows are silently
+    dropped, which is why the published v1.1.0 dictionary documents neither file.
 
     Grain: cumulative SNAPSHOT (not annual). MOJ publishes refugee outcomes (1994-2024
     cumulative) with a nationality breakdown only as cumulative top-10 lists; annual
@@ -49,9 +176,10 @@ def add_refugee_files():
     HERE = os.path.dirname(os.path.abspath(__file__))
     DJ = os.path.join(ROOT, "05_dashboard", "data", "data.json")
     LANG_KO_EN = os.path.join(ROOT, "03_cleaned_data", "lang_ko_en.json")
-    DEP = os.path.join(ROOT, "04_dataset_release", "data deposit", "kird_openicpsr_deposit")
-    DETAIL = os.path.join(DEP, "data", "detailed_data")
-    DICT = os.path.join(DEP, "data_dictionary.csv")
+    DETAIL = os.path.join(DEPOSIT_DATA, "detailed_data")
+    DICT = os.path.join(DEPOSIT, "data_dictionary.csv")
+    if not os.path.exists(DICT):
+        raise SystemExit(f"{DICT} missing; attach_breakdowns() writes it and runs first")
 
     STATUS_EN = {"신청": "applicant", "난민인정": "recognized",
                  "인도적체류": "humanitarian", "보호": "protected"}
@@ -432,6 +560,49 @@ def attach_breakdowns():
 
 
 
+def export_deposit_stata():
+    """Write the .dta files that exist only in the deposit.
+
+    The detail tables' Stata versions come straight from the release, but six files
+    have no release counterpart: the four summaries carry the wide breakdown columns
+    attach_breakdowns() attaches, and the two refugee tables are built here. Their
+    .dta files therefore have to be written here, from the deposit's own CSVs and its
+    own extended data_dictionary.csv. Skipping this is what leaves fresh summary CSVs
+    beside year-old summary DTAs and fails final_qc()'s parity check.
+
+    Labelling goes through 09_finish_release.write_labeled_dta, the same helper the
+    release export uses, so a deposit .dta carries a variable label on every column,
+    the KIRD dataset label, and dictionary-driven numeric typing. The wide columns are
+    labeled from the (file, variable, en/ko) rows attach_breakdowns() already wrote
+    into the deposit dictionary. Over-long variable names raise instead of being
+    truncated; the wide-column slugs are already capped at Stata's 32 characters.
+    """
+    fr = _finish_release()
+    DICT = os.path.join(DEPOSIT, "data_dictionary.csv")
+    if not os.path.exists(DICT):
+        raise SystemExit(f"{DICT} missing; attach_breakdowns() must run first")
+    meta = fr.load_stata_dict(DICT)
+
+    targets = [(os.path.join(DEPOSIT_DATA, f + ".csv"), f) for f in
+               ("summary_national", "summary_by_sido", "summary_by_sigungu",
+                "summary_by_eupmyeondong")]
+    targets += [(os.path.join(DEPOSIT_DATA, "detailed_data", f + ".csv"), f) for f in
+                ("refugee_by_nationality", "refugee_language_demand")]
+
+    absent = [f for path, f in targets if not os.path.exists(path)]
+    if absent:
+        raise SystemExit(f"deposit CSV(s) missing, cannot write their .dta: {absent}")
+
+    unlabeled = []
+    for path, stem in targets:
+        df, labels = fr.write_labeled_dta(path, path[:-4] + ".dta", meta)
+        unlabeled += [f"{stem}.{c}" for c in df.columns if c not in labels]
+        print(f"  {stem}.dta: {len(df):>7,} rows x {len(df.columns)} cols "
+              f"({len(labels)} labeled)")
+    if unlabeled:
+        raise SystemExit("no data_dictionary.csv entry for: " + ", ".join(unlabeled))
+
+
 def final_qc():
     """Final pre-publish QC for the KIRD openICPSR deposit.
     Checks: (1) file integrity + CSV/DTA parity, (2) cross-level sum consistency,
@@ -584,6 +755,13 @@ def final_qc():
 
 
 if __name__ == "__main__":
-    add_refugee_files()
+    # Order matters. stage_release lays the release out in the deposit's shape;
+    # attach_breakdowns then overwrites the four summaries with their wide variants
+    # and rewrites data_dictionary.csv from scratch, so add_refugee_files has to come
+    # after it or its dictionary rows are thrown away; export_deposit_stata needs both
+    # the finished dictionary and the finished CSVs; final_qc reads the result.
+    stage_release()
     attach_breakdowns()
+    add_refugee_files()
+    export_deposit_stata()
     final_qc()
