@@ -169,14 +169,31 @@ def fetch_curl(url, timeout=12):
 _PW = {"pw": None, "browser": None}
 
 
+# The browser is the last rung of the ladder and the only one that can take the
+# whole run down with it: a driver that dies mid-run raises
+# "Connection closed while reading from the driver", which is not an error about
+# any one page. Two full pipeline runs ended there. A failure to launch or a
+# driver that goes away now disables the rung and the run continues on requests
+# and curl_cffi, which is what the escalation ladder is for.
+_PW_DEAD = []
+
+
 def _browser():
+    if _PW_DEAD:
+        return None
     if _PW["browser"] is None:
-        from playwright.sync_api import sync_playwright
-        _PW["pw"] = sync_playwright().start()
-        _PW["browser"] = _PW["pw"].chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled",
-                  "--no-sandbox", "--disable-dev-shm-usage"])
+        try:
+            from playwright.sync_api import sync_playwright
+            _PW["pw"] = sync_playwright().start()
+            _PW["browser"] = _PW["pw"].chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled",
+                      "--no-sandbox", "--disable-dev-shm-usage"])
+        except Exception as e:
+            _PW_DEAD.append(str(e)[:160])
+            print(f"  playwright unavailable, continuing without it: {_PW_DEAD[0]}",
+                  flush=True)
+            return None
     return _PW["browser"]
 
 
@@ -191,6 +208,21 @@ def close_browser():
 
 def fetch_playwright(url, timeout=30000):
     br = _browser()
+    if br is None:
+        return None
+    try:
+        return _fetch_playwright(br, url, timeout)
+    except Exception as e:
+        # a dead driver is not a fact about this page; stop using the rung
+        if "Connection closed" in str(e) or "Target page" in str(e):
+            _PW_DEAD.append(str(e)[:160])
+            _PW["browser"] = None
+            print("  playwright driver went away, continuing without it",
+                  flush=True)
+        return None
+
+
+def _fetch_playwright(br, url, timeout=30000):
     ctx = br.new_context(user_agent=UA, locale="ko-KR",
                          viewport={"width": 1366, "height": 900},
                          ignore_https_errors=True)
@@ -228,6 +260,8 @@ def fetch(url, use_browser=True):
 
     def keep(r):
         nonlocal best
+        if r is None:      # the browser rung is unavailable this run
+            return
         tried.append(f"{r['how']}:{r['http']}:{r['state']}")
         if best is None or _RANK[r["state"]] < _RANK[best["state"]] or (
                 _RANK[r["state"]] == _RANK[best["state"]]

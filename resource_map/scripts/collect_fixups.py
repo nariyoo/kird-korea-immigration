@@ -54,7 +54,19 @@ def collect_addresses():
             })
             got += 1
         print(f"  {got:4d}/{len(d):<4d} {os.path.basename(p)}")
-    out = pd.DataFrame(rows).drop_duplicates("name_key", keep="first")
+    # Twenty organizations appear on more than one sheet, and the sheets were
+    # filled at different times. Keeping the first alphabetically let
+    # addr_01_done.csv, filled when a row simply had no address, override
+    # addr_ssis_done.csv, where a person compared two official sources and said
+    # which one is current. The later judgement wins, and PRIORITY says so
+    # rather than leaving it to a filename.
+    PRIORITY = {"addr_ssis_done.csv": 0}   # smaller wins; everything else 1
+    out = pd.DataFrame(rows)
+    if len(out):
+        out["_rank"] = [PRIORITY.get(x, 1) for x in out["source"]]
+        out = (out.sort_values("_rank", kind="stable")
+                  .drop_duplicates("name_key", keep="first")
+                  .drop(columns=["_rank"]))
     print(f"addresses collected: {len(out)} (left blank by the checker: {skipped})")
     # a checker who wrote (미확인) read it off a search snippet, not the page
     unc = int(out.note.str.contains("미확인", na=False).sum()) if len(out) else 0

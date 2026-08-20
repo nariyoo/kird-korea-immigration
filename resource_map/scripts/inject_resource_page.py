@@ -608,6 +608,13 @@ def write_gap_en(orgs, summary, counts, ko):
             r"<p>지원기관 [\d,]+곳 가운데.*?</p>"
             r"(?:\s*<p>여기에 더해.*?</p>)*",
             "<p>" + note + "</p>", t, flags=re.S)
+        # build_en translates the FIRST paragraph from its table and leaves
+        # the second in Korean, so the pair no longer matches as a pair. The
+        # orphan is replaced on its own.
+        t, n3 = re.subn(r"<p>여기에 더해.*?</p>",
+                        "<p>" + note.split("</p>")[-1].lstrip() + "</p>",
+                        t, flags=re.S)
+        n2 = n2 or n3
         io.open(p, "w", encoding="utf-8").write(t)
         print(f"  english prose -> {os.path.basename(p)} "
               f"(summary {n1}, note {n2})")

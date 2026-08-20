@@ -462,20 +462,35 @@ def apply_manual_address(allrows):
         return allrows
     led = pd.read_csv(p, dtype=str, encoding="utf-8-sig").fillna("")
     want = {(r["name_key"], r["sido"]): r for _, r in led.iterrows()}
-    hit, filled = set(), 0
+    hit, filled, replaced = set(), 0, 0
+    if "_addr_from_ledger" not in allrows.columns:
+        allrows["_addr_from_ledger"] = ""
     for i, r in allrows.iterrows():
         k = (namekey(r["name_ko"]), str(r["sido"]).strip())
         e = want.get(k)
         if e is None:
             continue
         hit.add(k)
-        if not str(r["road_address"]).strip():
-            allrows.at[i, "road_address"] = e["road_address"]
-            allrows.at[i, "notes"] = (str(r["notes"]) + " | 주소 수동 확인: "
-                                      + e["evidence"][:120]).strip(" |")
+        # The ledger began as a way to fill rows that had NO address, so it only
+        # wrote into empty ones. It now also carries verdicts: a person compared
+        # the 다누리 address with the government facility register and said which
+        # one is current. Refusing to overwrite there means the verdict never
+        # arrives, and 37 of those were silently dropped before this was found.
+        cur = str(r["road_address"]).strip()
+        new_addr = str(e["road_address"]).strip()
+        if not new_addr or new_addr == cur:
+            continue
+        allrows.at[i, "road_address"] = new_addr
+        allrows.at[i, "_addr_from_ledger"] = "1"
+        allrows.at[i, "notes"] = (str(r["notes"]) + " | 주소 수동 확인: "
+                                  + e["evidence"][:120]).strip(" |")
+        if cur:
+            replaced += 1
+        else:
             filled += 1
     miss = [f'{v["name_ko"]}({v["sido"]})' for k, v in want.items() if k not in hit]
-    print(f"manual addresses: {filled} written, {len(want)} in the ledger, "
+    print(f"manual addresses: {filled} filled, {replaced} replaced, "
+          f"{len(want)} in the ledger, "
           f"{len(miss)} matched no row")
     for m in miss[:8]:
         print(f"    unmatched: {m}")
@@ -779,12 +794,21 @@ def main():
                          "region_src"]:
             vals = [str(v).strip() for v in sub[c] if str(v).strip()]
             base[c] = vals[0] if vals else ""
-        # keep the longest address and the richest free-text fields
+        # keep the longest address and the richest free-text fields. Longest is
+        # a decent guess between two roster spellings of one address and a bad
+        # one against a verdict: 횡성로 379(횡성군종합보건복지타운 3층) is longer
+        # than 횡성로 393, 3층 (365채움관) and is the address the centre moved
+        # out of. A ledger address wins outright.
+        led = [str(v).strip() for v, m in zip(sub["road_address"],
+                                              sub.get("_addr_from_ledger", ""))
+               if str(m).strip() == "1" and str(v).strip()]
         for c in ("road_address", "services_provided", "target_population",
                   "notes", "languages_supported"):
             vals = sorted({str(v).strip() for v in sub[c] if str(v).strip()},
                           key=len, reverse=True)
             base[c] = vals[0] if vals else ""
+        if led:
+            base["road_address"] = led[0]
         # a row is closed only if every roster says so
         st = {str(v).strip() for v in sub["operational_status"] if str(v).strip()}
         base["operational_status"] = ("closed" if st == {"closed"}

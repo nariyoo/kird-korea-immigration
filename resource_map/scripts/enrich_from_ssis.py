@@ -33,6 +33,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pandas as pd  # noqa: E402
 import build_frame as bf  # noqa: E402
+# 2026 개편 이후 이름을 개편 전 17개 시도로 되돌리는 표는 pull 쪽에 있다
+from pull_ssis_facilities import back_convert  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 INTERIM = os.path.join(ROOT, "data", "interim")
@@ -79,6 +81,39 @@ def fmt_phone(d):
     return ""
 
 
+def prewrite_address(addr, sido):
+    """등록부 주소 문자열의 시도 이름을 개편 전 표기로 되돌린다.
+
+    등록부는 2026-07-01 개편 이후 이름을 쓴다. 우리 틀은 인구 분모가 개편 전
+    17개 시도 기준이므로 개편 전 이름을 유지하기로 했고, 그 결정은 시도 칼럼만이
+    아니라 주소 문자열에도 적용되어야 한다. 그러지 않으면 카드에
+    "전남광주통합특별시 광산구" 가 찍힌다.
+    """
+    a = str(addr or "").strip()
+    for pre, post in (("전남광주통합특별시", sido or "광주광역시"),
+                      ("강원특별자치도", "강원도"),
+                      ("전북특별자치도", "전라북도")):
+        if a.startswith(pre):
+            a = post + a[len(pre):]
+    return a
+
+
+def sgg_of(basic_row, listing):
+    """The 시도 and 시군구 the registry itself assigns, via fcltCd.
+
+    The basic-info operation carries only a 시군구 code; the listing operation
+    carries the readable name. Joining them is what makes a region check
+    possible, and without one the name match crosses cities: 대구광역시 북구
+    다문화가족지원센터 matched 부산광역시 북구, and 고성군 가족센터 in 강원
+    matched the one in 경남, because stripping the city prefix leaves 북구 and
+    고성군 standing for two places each.
+    """
+    r = listing.get(str(basic_row.get("fcltCd", "")).strip())
+    if r is None:
+        return "", ""
+    return back_convert(r.get("jrsdSggNm", ""))
+
+
 def main(a):
     bp = os.path.join(INTERIM, "ssis_140101_basic.csv")
     if not os.path.exists(bp):
@@ -88,6 +123,14 @@ def main(a):
                  + b.get("fcltDtl_1Addr", pd.Series([""] * len(b))).str.strip()
                  ).str.strip()
     b["addr"] = b["addr"].str.replace(r"\s+", " ", regex=True)
+    lp = os.path.join(INTERIM, "ssis_140101_raw.csv")
+    listing = {}
+    if os.path.exists(lp):
+        ld = pd.read_csv(lp, dtype=str).fillna("")
+        listing = {str(r["fcltCd"]).strip(): r for _, r in ld.iterrows()}
+        print("등록부 시군구를 붙일 수 있는 시설: %d" % len(listing))
+    else:
+        print("ssis_140101_raw.csv 없음 -- 지역 대조 없이 이름만으로 맞춘다")
     f = pd.read_csv(os.path.join(OUT, "frame_v2_geo.csv"), dtype=str).fillna("")
 
     idx, alt = {}, {}
@@ -97,7 +140,7 @@ def main(a):
     for k, v in idx.items():
         alt.setdefault(strip_region(k), []).extend(v)
 
-    fills, refines, conflicts, unmatched = [], [], [], []
+    fills, refines, conflicts, unmatched, crosscity = [], [], [], [], []
     for _, r in b.iterrows():
         k = norm(r["fcltNm"])
         got = idx.get(k) or alt.get(strip_region(k))
@@ -105,9 +148,16 @@ def main(a):
             unmatched.append(r)
             continue
         fr = got[0]
+        sd, _sg = sgg_of(r, listing)
+        if sd and str(fr["sido"]).strip() and sd != str(fr["sido"]).strip():
+            crosscity.append({"fcltNm": r["fcltNm"], "fcltCd": r.get("fcltCd", ""),
+                              "ssis_sido": sd, "frame_name": fr["name_ko"],
+                              "frame_sido": fr["sido"]})
+            continue
         cur, new = str(fr["road_address"]).strip(), r["addr"]
         rec = {"name_key": bf.namekey(fr["name_ko"]), "name_ko": fr["name_ko"],
-               "sido": fr["sido"], "road_address": new,
+               "sido": fr["sido"],
+               "road_address": prewrite_address(new, fr["sido"]),
                "frame_address": cur, "fclt_cd": r.get("fcltCd", ""),
                "evidence": "한국사회보장정보원 시설등록부, 시설코드 "
                            + str(r.get("fcltCd", "")),
@@ -132,6 +182,9 @@ def main(a):
         if not got or len(got) != 1:
             continue
         fr = got[0]
+        sd, _sg = sgg_of(r, listing)
+        if sd and str(fr["sido"]).strip() and sd != str(fr["sido"]).strip():
+            continue
         if str(fr["phone"]).strip():
             continue
         d = re.sub(r"\D", "", str(r.get("fcltTelNo", "")))
@@ -144,6 +197,7 @@ def main(a):
     print("  같은 필지, 더 상세해짐     : %d" % len(refines))
     print("  다른 필지를 가리킴(보류)   : %d" % len(conflicts))
     print("  틀에서 한 행을 특정 못 함  : %d" % len(unmatched))
+    print("  이름은 같은데 시도가 다름  : %d  <- 걷어냄" % len(crosscity))
     print("  전화를 새로 채울 수 있음   : %d" % len(tel))
 
     take = fills + refines
@@ -163,6 +217,13 @@ def main(a):
         for c in conflicts[:6]:
             print("   %-20s 틀 %s" % (c["name_ko"][:20], c["frame_address"][:40]))
             print("   %-20s 등록부 %s" % ("", c["road_address"][:40]))
+    if crosscity:
+        pd.DataFrame(crosscity).to_csv(
+            os.path.join(OUT, "review_ssis_crosscity.csv"), index=False,
+            encoding="utf-8-sig")
+        for c in crosscity:
+            print("   %-26s %s / 틀 %s" % (c["fcltNm"][:26], c["ssis_sido"],
+                                          c["frame_sido"]))
     if unmatched:
         pd.DataFrame(unmatched).to_csv(
             os.path.join(OUT, "review_ssis_unmatched.csv"), index=False,
