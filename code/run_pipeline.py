@@ -52,7 +52,8 @@ PHASE1 = [
     "04_reconcile_districts.py",
     # the MOIS sibling tables (행정안전부 외국인주민통계, a broader population
     # definition than MOJ): keys, validation, assembly, the Sejong patches,
-    # packaging. Reads 03_cleaned_data/mois_*.csv from scripts_mois/run_all.py.
+    # packaging. Reads the 03_cleaned_data/mois_*.csv that the same file's
+    # --reparse mode writes out of the raw 행정안전부 editions.
     "05_mois_layer.py",
 ]
 
