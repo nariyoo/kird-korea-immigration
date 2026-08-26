@@ -648,6 +648,80 @@ def validate_code_join():
           f"{len(bad)} on sigungu_code")
     for y, sd, sg, c in sorted(bad):
         print(f"    not in summary_by_sigungu: {y} {sd} {sg} -> {c or '(blank)'}")
+
+    # adm_code 가 제 시군구의 대역 안에 있는가.
+    #
+    # 코드는 이름으로 붙인다. 그래서 「중앙동」이나 「정자1동」처럼 여러 시군구에
+    # 있는 이름이 남의 시군구 코드를 가져갈 수 있다. sigungu_code 중첩 검사는
+    # 이것을 못 잡는다 — 시군구 코드는 멀쩡하고 동 코드만 틀리기 때문이다.
+    # 2026-08-26에 2024년 창원 성산구 중앙동이 진주시 대역(38030740)을 달고
+    # 있었다. 그 구의 다른 동은 전부 3811 로 시작한다.
+    #
+    # 한 시군구 안에서 동 코드의 앞 네 자리는 하나여야 한다. 다수와 다른 행을
+    # 알린다(2014-2015 는 원천 코드 자체가 흔들려 함께 나온다).
+    if "adm_code" in emd.columns:
+        e = emd.dropna(subset=["adm_code"]).copy()
+        e["adm_code"] = e["adm_code"].astype(str).str.strip()
+        e = e[e["adm_code"] != ""]
+        e["p4"] = e["adm_code"].str[:4]
+        mode = (e.groupby(["year", "sido", "sigungu"])["p4"]
+                 .agg(lambda v: v.mode().iloc[0]).rename("mode4").reset_index())
+        e = e.merge(mode, on=["year", "sido", "sigungu"])
+        odd = e[e["p4"] != e["mode4"]]
+        print(f"  adm_code prefix: {len(odd)} sub-district rows sit outside their "
+              f"district's code block")
+        for _, r in odd.sort_values(["year", "sido", "sigungu"]).iterrows():
+            print(f"    {r['year']} {r['sido']} {r['sigungu']} {r['eupmyeondong']} "
+                  f"-> {r['adm_code']} (district block {r['mode4']}xxxx)")
+        # 비운다. 그 동의 진짜 코드는 모르고, **틀린 코드는 빈 칸보다 나쁘다** —
+        # 경계 파일에 붙이면 남의 동 위에 그려진다. 코드는 지어내지 않는다는
+        # add_admin_codes 의 규칙을 여기에도 적용한다.
+        if len(odd):
+            key = set(zip(odd["year"], odd["sido"], odd["sigungu"],
+                          odd["eupmyeondong"]))
+            m = [t in key for t in zip(emd["year"], emd["sido"], emd["sigungu"],
+                                       emd["eupmyeondong"])]
+            emd.loc[m, "adm_code"] = ""
+            write(emd, os.path.join(DATA, "summary_by_eupmyeondong.csv"))
+            print(f"    -> blanked {int(sum(m))} of them (a wrong code is worse "
+                  f"than none)")
+            e = e[e["p4"] == e["mode4"]]
+        # 값이 하나도 없는 껍데기 행 가운데, 같은 (연도·시군구·코드)에 값을 가진
+        # 짝이 있는 것을 지운다.
+        #
+        # 2014년 MOIS 표가 같은 동을 두 표기로 싣는다(창신1동 / 창신제1동). 이름
+        # 정규화가 둘을 같은 코드에 붙이지만 행은 둘로 남고, 한쪽은 모든 값이
+        # 비어 있다. 그래서 그 해에만 코드 391개가 두 번씩 나온다 — 코드로
+        # 경계에 붙이는 사람에게는 행이 두 배로 불어나는 자리다. 짝이 없는
+        # 껍데기 15행(출장소 등)은 그대로 둔다. 값을 지우는 것이 아니라 값이
+        # 없는 중복만 지운다.
+        VALCOLS = [c for c in ("broad_total", "non_naturalized", "workers",
+                               "marriage_migrants", "students", "ethnic_koreans",
+                               "other_foreigners", "naturalized", "children")
+                   if c in emd.columns]
+        if VALCOLS:
+            num = emd[VALCOLS].apply(pd.to_numeric, errors="coerce")
+            blank = num.isna().all(axis=1)
+            code = emd["adm_code"].astype(str).str.strip()
+            has = set(zip(emd.loc[~blank, "year"], emd.loc[~blank, "sigungu"],
+                          code[~blank]))
+            drop = blank & (code != "") & [t in has for t in
+                                           zip(emd["year"], emd["sigungu"], code)]
+            if drop.any():
+                print(f"  empty duplicate rows: dropped {int(drop.sum())} "
+                      f"value-less rows that share a code with a populated twin")
+                emd = emd[~drop].reset_index(drop=True)
+                write(emd, os.path.join(DATA, "summary_by_eupmyeondong.csv"))
+                e = e.merge(emd[["year", "sido", "sigungu", "eupmyeondong"]]
+                            .drop_duplicates(),
+                            on=["year", "sido", "sigungu", "eupmyeondong"],
+                            how="inner")
+
+        dup = (e[e.duplicated(["year", "adm_code"], keep=False)]
+               .sort_values(["year", "adm_code"]))
+        n_dup_recent = int((dup["year"].astype(int) >= 2016).sum())
+        print(f"  adm_code uniqueness: {len(dup)} rows share a code with another "
+              f"row in the same year ({n_dup_recent} of them 2016+)")
     return bad
 
 

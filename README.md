@@ -40,7 +40,7 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `national_annual.csv` | a year | 2008-2024 | 17 |
 | `summary_by_sido.csv` | a province and a year | 2006-2024 | 317 |
 | `summary_by_sigungu.csv` | a district and a year | 2008-2024 | 4,240 |
-| `summary_by_eupmyeondong.csv` | a sub-district and a year | 2014-2024 | 39,017 |
+| `summary_by_eupmyeondong.csv` | a sub-district and a year | 2014-2024 | 38,619 |
 | `nationality_by_sigungu.csv` | a district, nationality and year | 2008-2024 | 173,723 |
 | `nationality_by_sido.csv` | a province, nationality and year | 2008-2024 | 24,885 |
 | `nationality_national.csv` | a population, nationality and year | 2006-2024 | 7,236 |

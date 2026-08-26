@@ -371,14 +371,28 @@ def attach_breakdowns():
 
 
     def tidy_types(df, orig_cols):
-        """Clean numeric types on the newly added wide columns: all counts as nullable
-        integers (so CSV shows 1234 and blank, not 1234.0). Language-demand values are
-        estimates and are rounded to whole persons like the other counts."""
+        """Clean numeric types so the CSV shows 1234 and blank, not 1234.0.
+
+        Two groups. The wide columns this script attaches are all integer counts.
+        The columns that came in from the release also need it: `pd.read_csv`
+        promotes any integer column that has a blank to float64, and writing that
+        back puts a `.0` on every value. The release file has `adm_code` 3203062
+        and the deposit copy had 3203062.0 — a GIS join key with a decimal point,
+        plus every MOIS count in the sub-district file (2026-08-26). Integer-valued
+        release columns are restored to nullable Int64; anything with a real
+        fraction (the *_pct rates) is left alone.
+        """
+        WIDE = ("nat_", "visa_", "childage_", "mc_", "lang_")
         for c in df.columns:
-            if c in orig_cols:
+            if c not in orig_cols:
+                if c.startswith(WIDE):
+                    df[c] = pd.to_numeric(df[c], errors="coerce").round(0).astype("Int64")
                 continue
-            if c.startswith(("nat_", "visa_", "childage_", "mc_", "lang_")):
-                df[c] = pd.to_numeric(df[c], errors="coerce").round(0).astype("Int64")
+            if not pd.api.types.is_float_dtype(df[c]):
+                continue
+            v = df[c].dropna()
+            if len(v) and (v == v.round(0)).all():
+                df[c] = df[c].astype("Int64")
         return df
 
 
