@@ -109,6 +109,13 @@ COUNTRY_CANONICAL = {
     "슬로바크": "슬로바키아",   # 2017 used 슬로바키아; others 슬로바크
     "마케도니아": "북마케도니아", # official rename 2019
     "스와질란드": "에스와티니",  # official rename 2018
+    # Zaire -> DR Congo (renamed 1997). The yearbook keeps the legacy code and
+    # publishes it beside 콩고민주공화국 (7 people a year on the stay basis).
+    # crosswalk_country already gives both the same English label, DR Congo, so
+    # the table itself says they are one country. Added 2026-08-26 after a sweep
+    # found it was the only English label with two Korean names left in the data.
+    # 동독 is NOT merged: its English label is East Germany, a different country.
+    "자이르": "콩고민주공화국",
     "미국인근섬": "미국",          # dependent territory → merge into 미국
     "미령버진아일랜드": "미국",
     "미령사모아": "미국",          # American Samoa; first appears in the 2025 4장 table

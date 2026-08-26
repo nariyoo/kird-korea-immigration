@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import re
+import unicodedata
 import shutil
 import sys
 
@@ -96,12 +97,19 @@ def stage_release():
         raise SystemExit(f"no detail tables in {SRC}: nothing to stage")
 
     print(f"staging {len(detail)} detail tables -> {DETAIL}")
-    staged, no_dta = [], []
+    staged, no_dta, stale = [], [], []
     for f in detail:
         stem = f[:-4]
         src_dta = os.path.join(SRC_DTA, stem + ".dta")
         if not os.path.exists(src_dta):
             no_dta.append(stem)
+            continue
+        # .dta 는 여기서 만들지 않고 릴리스에서 베껴 온다. 그래서 CSV 를 나중에
+        # 고치면 짝이 조용히 어긋난 채 기탁본에 실린다. 크기는 찍히므로 눈에도
+        # 안 띈다(2026-08-26에 nationality_by_sido 가 하루 묵은 .dta 를 달고
+        # 통과했다). 시각을 견주어 소리 내어 멈춘다.
+        if os.path.getmtime(src_dta) < os.path.getmtime(os.path.join(SRC, f)):
+            stale.append(stem)
             continue
         shutil.copy2(os.path.join(SRC, f), os.path.join(DETAIL, f))
         shutil.copy2(src_dta, os.path.join(DETAIL, stem + ".dta"))
@@ -111,6 +119,10 @@ def stage_release():
         print(f"  {stem:34s} {c_sz:>12,} B csv  {d_sz:>12,} B dta")
     if no_dta:
         raise SystemExit(f"no Stata file in {SRC_DTA} for {no_dta}; run phase 2 first")
+    if stale:
+        raise SystemExit(
+            f"Stata file older than its CSV for {stale}; rerun export_stata "
+            f"(09_finish_release.export_stata) before staging")
 
     # Drop anything left from an earlier release that this one no longer produces,
     # so the deposit cannot ship a table the dictionary does not document.
@@ -336,7 +348,12 @@ def attach_breakdowns():
 
 
     def slug(prefix, label, used):
-        s = re.sub(r"[^A-Za-z0-9]+", "_", str(label).strip().lower()).strip("_")
+        # 악센트를 먼저 벗긴다. 안 그러면 [^A-Za-z0-9] 가 그것을 밑줄로 바꿔
+        # `Türkiye` 가 `nat_t_rkiye` 가 된다(2026-08-26에 기탁본에서 찾음).
+        # Côte d'Ivoire 처럼 같은 함정이 걸리는 이름이 더 있다.
+        lab = unicodedata.normalize("NFKD", str(label).strip())
+        lab = "".join(ch for ch in lab if not unicodedata.combining(ch))
+        s = re.sub(r"[^A-Za-z0-9]+", "_", lab.lower()).strip("_")
         name = (prefix + s)[:32].rstrip("_")
         base, i = name, 1
         while name in used or not name:
@@ -469,6 +486,39 @@ def attach_breakdowns():
         lr2.append(("n_enclaves", ("Number of enclave (district x nationality) cases in the province that year.",
                                    "그 해 그 시도의 enclave(시군구x국적) 건수.")))
         assert len(s2) == base_n2
+
+        # 층 합 관문. wide 열은 「시군구 값을 더한 것」이라고 README 가 적는다.
+        # 시군구 패널은 세종을 2008년부터 이어서 싣고, 시도 패널은 세종이 생긴
+        # 2012년부터 싣는다. 그래서 2008-2011 에는 세종이 내려앉을 시도 줄이 없어
+        # 그만큼 조용히 사라진다(2026-08-26에 찾음; 그 해들에 열 52-56개가
+        # 어긋났고 차이는 해마다 세종 값과 사람 단위까지 같았다).
+        #
+        # 세종을 없는 해에 시도로 만들어 넣지 않는다. 세종특별자치시는 2012년
+        # 7월에 생겼고, 그 전 해에 도를 만들면 자료가 행정 사실과 어긋난다.
+        # 대신 **내려앉을 시도 줄이 없는 시군구의 몫**만 빼고 맞춰 본다. 그 밖의
+        # 누수는 멈춘다. 세종이라고 못 박지 않았으므로 다른 개편에도 그대로 쓴다.
+        wide2 = [c for c in s2.columns
+                 if c not in orig2 and c != "n_enclaves" and c in s.columns]
+        have = set(map(tuple, s2[K2].values.tolist()))
+        orphan = s[[not (r in have) for r in map(tuple, s[K2].values.tolist())]]
+        lo = s.groupby("year")[wide2].sum()
+        hi = s2.groupby("year")[wide2].sum()
+        off = (orphan.groupby("year")[wide2].sum()
+               .reindex(lo.index).fillna(0) if len(orphan) else 0)
+        leak = (lo - hi - off).abs()
+        if float(leak.max().max() if len(leak) else 0) > 0:
+            bad = leak.stack()
+            bad = bad[bad > 0].sort_values(ascending=False)
+            raise SystemExit(
+                "summary_by_sido wide columns: 시도 줄이 없는 시군구로 설명되지 "
+                "않는 차이 %d 곳, 가장 큰 것 %s"
+                % (len(bad), bad.head(3).to_dict()))
+        if len(orphan):
+            miss = sorted({(int(r["year"]), r["sido"]) for _, r in orphan.iterrows()})
+            print("summary_by_sido: wide columns exclude %s "
+                  "(no province row that year; the district rows do carry them)"
+                  % ", ".join("%d %s" % m for m in miss))
+
         s2 = tidy_types(s2, orig2)
         s2.to_csv(f"{DATA}/summary_by_sido.csv", index=False, encoding="utf-8-sig")
         for v, d in lr2:

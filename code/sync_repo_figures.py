@@ -6,8 +6,9 @@
 있었다. 같은 것을 두 벌 그리면 반드시 갈라지므로, 논문 그림을 그대로 가져다
 저장소 이름으로 놓는다. 원본은 하나다.
 
-    overview_maps.png  <- 01_data_descriptor/.../fig3_twolayer.png
-    moj_vs_mois.png    <- 01_data_descriptor/.../fig_moj_mois.png
+    overview_maps.png       <- 01_data_descriptor/.../fig3_twolayer.png
+    moj_vs_mois.png         <- 01_data_descriptor/.../fig_moj_mois.png
+    pipeline_flowchart.png  <- 01_data_descriptor/.../fig_flowchart.png
 
 `file_coverage.png` 는 배포본 CSV 에서 연도를 읽어 짓는 그림이라
 `make_coverage_figure.py` 가 따로 만든다.
@@ -35,6 +36,9 @@ TARGETS = [
 PAIRS = [
     ("fig3_twolayer.png", "overview_maps.png"),
     ("fig_moj_mois.png", "moj_vs_mois.png"),
+    # 자료를 어떻게 짓는지 보여 주는 그림. 새로 그렸는데 저장소에는 한 번도
+    # 실린 적이 없어서 README 가 걸 그림이 없었다 (2026-08-25).
+    ("fig_flowchart.png", "pipeline_flowchart.png"),
 ]
 
 

@@ -484,7 +484,54 @@ def check_cross_file(d):
               "cross-file: national_annual.foreign_total = district sum",
               "max gap %s" % (gap.max() if len(gap) else 0))
 
+    # 층 나란한 짝: 시도 표는 시군구 표를 그 도 안에서 더한 것이라고 문서가 적는다.
+    # 총합만 보면 못 잡는다. 2026-08-26에 nationality_by_sido.csv 2014 경기도에서
+    # 71명이 사라져 있었고(튀르키예 67, 벨라루스 2, 조지아 2), 그 해 총합 차이도
+    # 71뿐이라 눈에 안 띄었다. **줄 단위로** 맞춰 본다.
+    for lo, hi, keys in (("nationality_by_sigungu.csv", "nationality_by_sido.csv",
+                          ["year", "sido", "country"]),
+                         ("visa_by_sigungu.csv", "visa_by_sido.csv",
+                          ["year", "sido", "visa_code"])):
+        a_, b_ = d.get(lo), d.get(hi)
+        if a_ is None or b_ is None:
+            continue
+        a = (a_[~a_["sigungu"].isin(AGG)].groupby(keys)["n"].sum()
+             if "sigungu" in a_.columns else a_.groupby(keys)["n"].sum())
+        b = b_.groupby(keys)["n"].sum()
+        j = pd.concat([a.rename("lo"), b.rename("hi")], axis=1).fillna(0)
+        gap = (j["lo"] - j["hi"]).abs()
+        n_bad = int((gap > 0).sum())
+        check(n_bad == 0,
+              "cross-file: %s summed by %s = %s"
+              % (lo, "/".join(keys[1:]), hi),
+              "%d rows differ, worst %s at %s"
+              % (n_bad, gap.max() if len(gap) else 0,
+                 gap.idxmax() if len(gap) else ""))
 
+
+
+
+def check_country_labels(d):
+    """`country_en` 은 `country` 의 함수여야 하고, 그 반대도 그래야 한다.
+
+    한 국적이 파일 안에서 영문 이름 둘을 갖거나(age_sex_national 의 튀르키예가
+    2009-2013 Turkey · 2014-2024 Türkiye 였다), 한 영문 이름이 한글 이름 둘을
+    가리키면(자이르 · 콩고민주공화국이 둘 다 DR Congo 였다) 영문 라벨로 join 하는
+    쪽에서 조용히 행이 늘거나 준다. 2026-08-26에 둘 다 찾아 고쳤다.
+    """
+    for name, df in sorted(d.items()):
+        if name == "crosswalk_country.csv":
+            continue
+        if not {"country", "country_en"} <= set(df.columns):
+            continue
+        many_en = df.groupby("country")["country_en"].nunique()
+        many_en = many_en[many_en > 1]
+        many_ko = df.groupby("country_en")["country"].nunique()
+        many_ko = many_ko[many_ko > 1]
+        check(len(many_en) == 0 and len(many_ko) == 0,
+              "labels: %s pairs country and country_en one to one" % name,
+              "country with 2+ English %s; English with 2+ country %s"
+              % (list(many_en.index)[:3], list(many_ko.index)[:3]))
 
 
 def check_coverage_text(data, d):
@@ -540,6 +587,7 @@ def main():
     check_segregation(d)
     check_theil(d)
     check_cross_file(d)
+    check_country_labels(d)
     check_coverage_text(data, d)
     print()
     if FAILED:

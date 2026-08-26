@@ -148,10 +148,19 @@ def main():
     # nineteen files on 2026-08-17 and five pipeline steps on 2026-08-24, both
     # found by accident. Regenerate them every build; committing the two
     # repositories stays a human act.
-    print("\n===== sync public code copies =====", flush=True)
-    if subprocess.run([sys.executable,
-                       os.path.join(HERE, "sync_public_code.py")]).returncode != 0:
-        sys.exit("Pipeline FAILED at the public-code sync")
+    # 이 단계는 **작업 트리에만** 있다. 공개 번들(04_dataset_release/code 와
+    # kird-korea-immigration)에는 sync_public_code.py 를 넣지 않으므로, 번들을
+    # 받아 그대로 돌리면 여기서 「Pipeline FAILED」로 끝난다 — 앞의 마흔한 단계가
+    # 다 성공해도 그렇다. 없으면 건너뛰고 왜 건너뛰는지 적는다.
+    sync = os.path.join(HERE, "sync_public_code.py")
+    if not os.path.exists(sync):
+        print("\n===== sync public code copies: skipped =====", flush=True)
+        print("sync_public_code.py is not part of the published bundle; "
+              "it only runs in the authoring tree.", flush=True)
+    else:
+        print("\n===== sync public code copies =====", flush=True)
+        if subprocess.run([sys.executable, sync]).returncode != 0:
+            sys.exit("Pipeline FAILED at the public-code sync")
     print("\nPipeline complete: 05_dashboard/data/ and 04_dataset_release/ rebuilt.")
 
 

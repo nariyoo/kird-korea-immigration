@@ -447,12 +447,41 @@ def canonicalize_country_labels():
         d["country"] = d["country"].map(lambda c: COUNTRY_CANONICAL.get(c, c))
         before = len(d)
         if d.duplicated(subset=[k for k in key if k in d.columns]).any():
-            num = [c for c in d.columns
-                   if c not in key and pd.api.types.is_numeric_dtype(d[c])]
+            # 세는 칸만 더한다.
+            #
+            # 이 자리에 버그가 두 개 있었다(2026-08-26에 찾음).
+            #
+            #   `read` 가 dtype=str 로 읽으므로 `is_numeric_dtype` 은 어떤 칸에도
+            #   참이 아니다. 그래서 인원 칸이 문자 칸으로 분류돼 **더해지지 않고 첫
+            #   줄만 남았다.** nationality_by_sido.csv 2014 경기도에서 71명이 이렇게
+            #   사라졌다(튀르키예 67, 벨라루스 2, 조지아 2).
+            #
+            #   짝 칸(country_en)은 「첫 줄」을 골랐다. 옛 이름 줄이 앞에 있으면
+            #   튀르키예가 Turkey 로 남는다. 실제로 화성시 2014가 그랬다.
+            #
+            # 값으로 숫자를 판정하지 않고 **이름으로 세는 칸만** 고른다. lq 나
+            # dissimilarity_D 같은 지수는 더하면 안 되는 값이고, 어차피 뒤 단계가
+            # 다시 계산한다.
+            COUNT = {"n", "count"}
+            num = [c for c in d.columns if c in COUNT and c not in key]
             txt = [c for c in d.columns if c not in key and c not in num]
+            # 이미 표준 이름인 줄을 앞으로 보내, 문자 칸의 "first" 가 살아남는
+            # 이름의 값을 고르게 한다.
+            d = (d.assign(_canon=(~hit).astype(int))
+                  .sort_values("_canon", ascending=False, kind="mergesort")
+                  .drop(columns="_canon"))
+            for c in num:
+                d[c] = pd.to_numeric(d[c], errors="coerce")
+            keep = float(d[num].sum().sum()) if num else 0.0
             agg = {c: "sum" for c in num}
             agg.update({c: "first" for c in txt})
             d = d.groupby([k for k in key if k in d.columns], as_index=False).agg(agg)
+            got = float(d[num].sum().sum()) if num else 0.0
+            if num and keep != got:
+                raise SystemExit("canonicalize_country_labels: %s 합이 달라졌다 "
+                                 "%r -> %r" % (name, keep, got))
+            for c in num:
+                d[c] = d[c].astype("Int64").astype(str).replace("<NA>", "")
             d = d[[c for c in read(p).columns if c in d.columns]]
         write(d, p)
         print("canonicalize_country_labels: %s %d행 -> %d행, 고친 이름 %s"
