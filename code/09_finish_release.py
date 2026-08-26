@@ -1344,7 +1344,19 @@ def build_data_dictionary():
          "출신 대륙·권역(한글+영문). v1.1.0 까지 region 이라는 이름이었다. 값은 한국의 "
          "지역이 아니라 출신 대륙이다."),
         ("region_segregation.csv", "total", "integer",
-         "National count of foreigners from that region.", "해당 권역 전국 외국인 수."),
+         "National count of foreigners from that region **on the index basis**: "
+         "nationalities outside a year's top 19 are pooled into 기타 (Other) before "
+         "the regions are formed, so a region's total here is below its full "
+         "nationality sum in nationality_by_sigungu and 기타 is correspondingly "
+         "larger (2024: 2,501 people, 0.17% of the panel). Use "
+         "nationality_by_sigungu with crosswalk_country for full-detail regional "
+         "counts; use this column only with the D and isolation values beside it, "
+         "which are computed on the same basis.",
+         "그 권역의 전국 수 **(지수 밑변 기준)**. 그 해 상위 19개 밖 국적은 권역을 "
+         "만들기 전에 기타로 모이므로, 여기의 권역 합은 nationality_by_sigungu 의 "
+         "전체 국적 합보다 작고 기타는 그만큼 크다(2024년 2,501명, 패널의 0.17%). "
+         "전체 국적 기준 권역 수가 필요하면 nationality_by_sigungu 와 "
+         "crosswalk_country 를 쓰고, 이 칸은 옆의 D·isolation 과 함께만 쓴다."),
         ("region_segregation.csv", "dissimilarity_D", "float",
          "Index of dissimilarity (D) vs Koreans across districts.",
          "내국인 대비 비유사성 지수(D)."),
