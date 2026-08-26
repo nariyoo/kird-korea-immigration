@@ -127,7 +127,9 @@ cluster, and the share alone would flag a district with few foreign residents of
 shares from the [Ethnologue 24 Global Dataset](https://www.ethnologue.com/), so one nationality
 contributes fractionally to several languages. Korean is excluded, which is why the national total
 is well below the foreign population: nationalities whose first language is Korean, such as ethnic
-Koreans from China, contribute no demand. District rows carry the top 20 languages.
+Koreans from China, contribute no demand. District rows carry the top 20 languages. The national
+scope is computed from the published national staying-foreigners composition, the province and
+district scopes from the registered district-assigned tables, so the scopes are not nested sums.
 
 Diversity indices are computed on the top 19 nationalities plus a residual for every year. The
 yearbooks publish only the top 19 at district level before 2014 and the full detail afterwards, and

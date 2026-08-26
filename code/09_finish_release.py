@@ -1256,11 +1256,19 @@ def build_data_dictionary():
         ("language_demand.csv", "year", "integer", "Reference year (2006-2024).",
          "기준연도(2006-2024)."),
         ("language_demand.csv", "scope", "string",
-         "'national' (all languages), 'sido' (all languages per province, computed "
-         "from province nationality sums with the same recipe as national; added in "
-         "v1.2.0), or 'sigungu' (top ~20 languages per district).",
-         "'national'(전체 언어), 'sido'(시도 국적 합에 전국과 같은 방법을 적용, 전체 "
-         "언어; v1.2.0 추가), 'sigungu'(시군구당 상위 ~20개)."),
+         "'national' (all languages, computed from the published national "
+         "staying-foreigners composition, nationality_national population='stay'), "
+         "'sido' (all languages per province, computed from the registered "
+         "district-assigned sums in nationality_by_sido; added in v1.2.0), or "
+         "'sigungu' (top ~20 languages per district, from nationality_by_sigungu). "
+         "The national scope therefore sits on the broader staying-population "
+         "basis while the subnational scopes sit on the registered "
+         "district-assigned basis; the scopes are not nested sums.",
+         "'national'(전체 언어; 공표 전국 체류외국인 구성, nationality_national 의 "
+         "population='stay' 에서 계산), 'sido'(시도별 전체 언어; nationality_by_sido "
+         "의 등록·시군구 배정 합에서 계산, v1.2.0 추가), 'sigungu'(시군구당 상위 "
+         "~20개; nationality_by_sigungu 에서). 전국은 체류 기준, 시도·시군구는 "
+         "등록(시군구 배정) 기준이라 scope 간 합산 관계가 아니다."),
         ("language_demand.csv", "sido / sido_en / sigungu / sigungu_en", "string",
          "Province and district (Korean + English); blank for national-scope rows.",
          "시도·시군구(한글+영문); national 행은 공백."),
@@ -1269,9 +1277,9 @@ def build_data_dictionary():
         ("language_demand.csv", "count", "integer",
          "Estimated speakers = nationality count x that country's L1 (mother-tongue) "
          "speaker share (Ethnologue 24); rounded to whole persons. Korean excluded; "
-         "estimates below 0.5 dropped.",
+         "estimates below one person are dropped before rounding.",
          "추정 화자수 = 국적별 인원 x 해당국 L1 모어 share(Ethnologue 24); 정수로 반올림. "
-         "한국어 제외, 0.5 미만 추정치 드롭."),
+         "한국어 제외, 1명 미만 추정치는 반올림 전에 드롭."),
         ("segregation_by_nationality.csv", "year", "integer", "Reference year (2014-2024).",
          "기준연도(2014-2024)."),
         ("segregation_by_nationality.csv", "country / country_en", "string",
