@@ -344,11 +344,20 @@ def summary_eupmyeondong():
         rows = []
         for y in sorted(ep):
             g = json.load(open(emd_geo(emd_label(int(y))), encoding="utf-8"))
-            cs, cl = {}, {}
+            # 시군구까지 맞은 조회(cs)가 정본. 시군구 이름이 MOIS 와 경계 파일에서
+            # 다를 때(고양시 통째 대 세 구 등)를 위한 대체 조회(cl)는 **그 시도
+            # 안에서 동 이름이 유일할 때만** 쓴다.
+            #
+            # 전에는 `setdefault` 로 먼저 읽힌 구의 코드를 주었다. 그래서 경남에
+            # 중앙동이 여럿인데 창원 성산구 중앙동이 진주시 코드(38030740)를
+            # 받았다. 이름이 겹치면 코드를 지어내지 말고 비운다 — 틀린 코드는
+            # 빈 칸보다 나쁘다(2026-08-26).
+            cs, seen = {}, {}
             for f in g["features"]:
                 p = f["properties"]
                 cs[(p["sido"], norm(p["sg"]), norm(p["dong"]))] = p.get("code", "")
-                cl.setdefault((p["sido"], norm(p["dong"])), p.get("code", ""))
+                seen.setdefault((p["sido"], norm(p["dong"])), set()).add(p.get("code", ""))
+            cl = {k: next(iter(v)) for k, v in seen.items() if len(v) == 1}
             for sido in ep[y]:
                 for sg in ep[y][sido]:
                     for dong, r in ep[y][sido][sg].items():

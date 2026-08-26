@@ -110,6 +110,7 @@ unchanged. When MOIS catches up, raise `RELEASE_LAST_YEAR` and rebuild.
 | `check_published_totals.py` | Reads the grand-total cell printed in each yearbook and compares it with the national totals in `visa_national.csv`, year by year, for registered and for staying foreigners. This is the check behind the reconciliation figures quoted in the descriptor. It needs the raw yearbooks. |
 | `build_raw_manifest.py` | Writes the list of raw input files with size and SHA-256, so a file you download can be checked against the one used here. |
 | `crosswalks.py` | Writes the harmonization rules out as tables: which source spelling became which standard label, and why. |
+| `qc_deposit_staging.py` | Checks the deposit as a reader meets it, not as a formula: every CSV against its `.dta` cell by cell, the README's data-dependent claims against the files, `adm_code` unique within a year and inside its district's code block (so a boundary join stays one-to-one), no float tails on integer columns, and every detail table joining onto its summary with nothing left over. Takes the folder you unpacked as its argument. |
 
 ## Released filenames
 

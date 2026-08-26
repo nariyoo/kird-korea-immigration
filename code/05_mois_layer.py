@@ -3146,6 +3146,140 @@ def canonicalize_eupmyeondong_names():
         print(f"  {fn:<34s} {total:,} names fixed")
 
 
+def merge_eupmyeondong_spelling_variants():
+    """같은 동을 두 표기로 실은 줄을 하나로 모은다.
+
+    2014년 행정안전부 표는 보조 시트(세대수)와 본 시트(유형별 인원)가 같은 동을
+    다르게 쓴다. 보조는 `창신1동`, 본표는 `창신제1동` 이고, 본표 쪽이 세대수까지
+    포함해 모든 항목을 갖는다. 그래서 보조에서 온 줄은 **본표가 이미 가진 값을
+    다른 이름으로 한 번 더 싣는 순수 중복**이다.
+
+    아래 단계들이 이름을 `제N동 -> N동` 으로 눕혀 경계 코드를 붙이므로, 두 줄은
+    같은 `adm_code` 를 받는다. 그러면 배포본에서 그 해에만 코드 391개가 두 번씩
+    나오고, 코드로 경계 파일에 붙이는 사람은 행이 두 배로 불어난다. 값이 빈
+    껍데기 행 391개가 실려 나가던 자리이기도 하다.
+
+    **여기서 합친다.** 뒤에서 지우면 이미 만들어진 산출을 되돌리는 일이 되고,
+    그 산출을 읽는 다른 단계는 여전히 중복을 본다.
+
+    규칙은 위의 `canonicalize_eupmyeondong_names` 가 일반구 접두어에 쓰는 것과
+    같다. 한 (연도·시도·시군구) 안에서 이름을 눕혔을 때 겹치는 표기가 둘 이상이면,
+    **항목을 더 많이 가진 표기를 남기고**, 다른 표기의 줄 가운데 남긴 쪽이 이미
+    가진 (항목·성별) 만 버린다. 남긴 쪽에 없는 항목은 그대로 둔다 — 값을 지우는
+    것이 아니라 같은 값의 다른 이름만 버린다.
+    """
+    DATA = Path(ROOT) / "03_cleaned_data"
+    FILES = [
+        "mois_population.csv",
+        "mois_total_pop.csv",
+        "mois_nationality.csv",
+        "mois_children_parent.csv",
+        "mois_multicultural.csv",
+    ]
+    # 06_build_summaries 가 경계 코드를 붙일 때 쓰는 것과 **같은 정규화**여야
+    # 한다. 거기서 눕는데 여기서 안 눕는 표기가 있으면 두 줄이 같은 코드를 받아
+    # 중복으로 실려 나간다. 2026-08-26에 구분자만 다른 표기 26행이 그렇게 남았다
+    # (「중계2,3동」과 「중계2.3동」, 「송현1.2동」과 「송현1·2동」).
+    _SEP = re.compile(r"[\s·.,・ㆍᆞ‧･]")
+
+    def lay(s):
+        """견줄 자리를 만든다. 사람이 읽을 이름이 아니다.
+
+        `거제1동` 의 제가 동 이름의 일부인지 서수 표시인지는 글자만 보고 알 수
+        없다. 그래서 정규형을 고르지 않고, 숫자 앞의 제를 **더 지울 것이 없을
+        때까지** 지워 두 표기가 같은 자리로 눕게만 한다.
+
+            거제제1동 -> 거제1동 -> 거1동
+            거제1동             -> 거1동     같은 자리
+            창신제1동 -> 창신1동, 창신1동 -> 창신1동
+
+        한 번만 지우면 거제제1동은 거제1동, 거제1동은 거1동이 되어 서로 다른
+        자리로 눕고, 같은 동인데 안 합쳐진다(2026-08-26에 그래서 일곱 자리가
+        남았다). 서로 다른 동이 우연히 같은 자리로 눕을 수 있으므로, 합치기 전에
+        아래에서 값이 같은지 확인한다 — 그 관문이 이 규칙의 안전장치다.
+        """
+        t = _SEP.sub("", str(s))
+        while True:
+            n = re.sub(r"제([0-9])", r"\1", t)
+            if n == t:
+                return t
+            t = n
+
+    print("\n===== merge 읍면동 spelling variants (제N동 / 구분자) =====")
+    for fn_ in FILES:
+        p_ = DATA / fn_
+        if not p_.exists():
+            print(f"  {fn_:<34s} MISSING")
+            continue
+        d = pd.read_csv(p_, dtype=str, keep_default_na=False,
+                        encoding="utf-8-sig", low_memory=False)
+        if "eupmyeondong" not in d.columns:
+            print(f"  {fn_:<34s} no eupmyeondong column")
+            continue
+        d["_flat"] = [lay(e) for e in d["eupmyeondong"]]
+        grp = [c for c in ("year", "level", "sido", "sigungu") if c in d.columns]             + ["_flat"]
+        nvar = d.groupby(grp)["eupmyeondong"].transform("nunique")
+        amb = d[nvar > 1]
+        if amb.empty:
+            print(f"  {fn_:<34s} already single-spelling")
+            continue
+        # **그 파일의 열쇠를 전부 쓴다.** 한 칸이라도 빠뜨리면 다른 국적·다른
+        # 항목의 줄이 「이미 있는 값」으로 잘못 판정돼 사라진다. 2026-08-26에
+        # mois_nationality 에서 group·country 를 빠뜨려 2014년 읍면동 국적 합이
+        # 시군구 합보다 25,162명 모자라게 만든 적이 있다. 값을 담는 칸(n,
+        # total_pop)과 이름 칸만 빼고 나머지는 전부 열쇠다.
+        VALUE = {"n", "total_pop", "eupmyeondong", "_flat", "_keep"}
+        cat = [c for c in d.columns if c not in VALUE and c not in grp]
+        # 표기별 항목 수를 세어, 많은 쪽을 남긴다.
+        rich = (amb.groupby(grp + ["eupmyeondong"]).size()
+                   .rename("n").reset_index()
+                   .sort_values(grp + ["n", "eupmyeondong"],
+                                ascending=[True] * len(grp) + [False, True])
+                   .drop_duplicates(grp)[grp + ["eupmyeondong"]]
+                   .rename(columns={"eupmyeondong": "_keep"}))
+        m = d.merge(rich, on=grp, how="left")
+        keeper = m["_keep"].notna() & (m["eupmyeondong"] == m["_keep"])
+        loser = m["_keep"].notna() & (m["eupmyeondong"] != m["_keep"])
+        have = set(map(tuple, m.loc[keeper, grp + cat].astype(str).values))
+        redundant = loser & pd.Series(
+            [tuple(r) in have for r in m[grp + cat].astype(str).values],
+            index=m.index)
+        n_drop = int(redundant.sum())
+        n_kept_loser = int((loser & ~redundant).sum())
+        if not n_drop:
+            print(f"  {fn_:<34s} nothing redundant ({int(loser.sum())} variant rows)")
+            continue
+        out = m[~redundant].drop(columns=["_flat", "_keep"])
+
+        # 관문: 버린 줄은 남긴 줄이 같은 값으로 이미 갖고 있어야 한다. 열쇠를
+        # 하나라도 빠뜨리면 다른 값이 사라지므로, **버린 값과 남은 짝의 값이
+        # 같은지** 직접 대조하고 다르면 멈춘다.
+        valcol = "n" if "n" in d.columns else ("total_pop" if "total_pop" in d.columns
+                                               else None)
+        if valcol:
+            drop_rows = m[redundant]
+            keep_rows = m[keeper]
+            kk = grp + cat
+            a = (drop_rows.assign(_v=pd.to_numeric(drop_rows[valcol], errors="coerce"))
+                 .groupby(kk)["_v"].sum())
+            b = (keep_rows.assign(_v=pd.to_numeric(keep_rows[valcol], errors="coerce"))
+                 .groupby(kk)["_v"].sum())
+            j = pd.concat([a.rename("dropped"), b.rename("kept")], axis=1).dropna()
+            mismatch = j[(j["dropped"] - j["kept"]).abs() > 0.5]
+            if len(mismatch):
+                raise SystemExit(
+                    "merge_eupmyeondong_spelling_variants: %s 에서 버리려는 값이 "
+                    "남기는 값과 다르다 %d 자리, 가장 큰 것 %s — 열쇠가 모자란다"
+                    % (fn_, len(mismatch),
+                       mismatch.assign(d=(mismatch["dropped"] - mismatch["kept"]).abs())
+                       .nlargest(3, "d").to_dict("index")))
+
+        out.to_csv(p_, index=False, encoding="utf-8-sig")
+        print(f"  {fn_:<34s} dropped {n_drop:,} rows that repeat a value under a "
+              f"second spelling ({n_kept_loser:,} variant rows had no twin and stay; "
+              f"{len(out):,} rows)")
+
+
 def region_keys_and_validation():
     """Region keys for the MOIS layer, the codes on them, and the cross-check against MOJ.
 
@@ -4173,6 +4307,7 @@ if __name__ == "__main__":
         reparse_mois_sources()
     else:
         canonicalize_eupmyeondong_names()
+        merge_eupmyeondong_spelling_variants()
         region_keys_and_validation()
         build_layer()
         sejong_patches()

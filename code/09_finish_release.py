@@ -657,8 +657,13 @@ def validate_code_join():
     # 2026-08-26에 2024년 창원 성산구 중앙동이 진주시 대역(38030740)을 달고
     # 있었다. 그 구의 다른 동은 전부 3811 로 시작한다.
     #
+    # **고친 자리는 상류다.** 06_build_summaries 의 대체 조회가 시군구를 빼고
+    # (시도, 동이름) 으로 코드를 찾으면서 `setdefault` 로 먼저 읽힌 구의 것을
+    # 주고 있었다. 이제 그 이름이 시도 안에서 유일할 때만 쓴다. 여기 검사는
+    # 그것이 다시 무너지면 알리는 최후 방어선이고, 통과하는 것이 정상이다.
+    #
     # 한 시군구 안에서 동 코드의 앞 네 자리는 하나여야 한다. 다수와 다른 행을
-    # 알린다(2014-2015 는 원천 코드 자체가 흔들려 함께 나온다).
+    # 알린다.
     if "adm_code" in emd.columns:
         e = emd.dropna(subset=["adm_code"]).copy()
         e["adm_code"] = e["adm_code"].astype(str).str.strip()
@@ -686,37 +691,9 @@ def validate_code_join():
             print(f"    -> blanked {int(sum(m))} of them (a wrong code is worse "
                   f"than none)")
             e = e[e["p4"] == e["mode4"]]
-        # 값이 하나도 없는 껍데기 행 가운데, 같은 (연도·시군구·코드)에 값을 가진
-        # 짝이 있는 것을 지운다.
-        #
-        # 2014년 MOIS 표가 같은 동을 두 표기로 싣는다(창신1동 / 창신제1동). 이름
-        # 정규화가 둘을 같은 코드에 붙이지만 행은 둘로 남고, 한쪽은 모든 값이
-        # 비어 있다. 그래서 그 해에만 코드 391개가 두 번씩 나온다 — 코드로
-        # 경계에 붙이는 사람에게는 행이 두 배로 불어나는 자리다. 짝이 없는
-        # 껍데기 15행(출장소 등)은 그대로 둔다. 값을 지우는 것이 아니라 값이
-        # 없는 중복만 지운다.
-        VALCOLS = [c for c in ("broad_total", "non_naturalized", "workers",
-                               "marriage_migrants", "students", "ethnic_koreans",
-                               "other_foreigners", "naturalized", "children")
-                   if c in emd.columns]
-        if VALCOLS:
-            num = emd[VALCOLS].apply(pd.to_numeric, errors="coerce")
-            blank = num.isna().all(axis=1)
-            code = emd["adm_code"].astype(str).str.strip()
-            has = set(zip(emd.loc[~blank, "year"], emd.loc[~blank, "sigungu"],
-                          code[~blank]))
-            drop = blank & (code != "") & [t in has for t in
-                                           zip(emd["year"], emd["sigungu"], code)]
-            if drop.any():
-                print(f"  empty duplicate rows: dropped {int(drop.sum())} "
-                      f"value-less rows that share a code with a populated twin")
-                emd = emd[~drop].reset_index(drop=True)
-                write(emd, os.path.join(DATA, "summary_by_eupmyeondong.csv"))
-                e = e.merge(emd[["year", "sido", "sigungu", "eupmyeondong"]]
-                            .drop_duplicates(),
-                            on=["year", "sido", "sigungu", "eupmyeondong"],
-                            how="inner")
-
+        # (2014년 두 표기가 만들던 껍데기 중복은 05 의
+        #  merge_eupmyeondong_spelling_variants 가 상류에서 합친다. 여기서는
+        #  결과만 확인한다.)
         dup = (e[e.duplicated(["year", "adm_code"], keep=False)]
                .sort_values(["year", "adm_code"]))
         n_dup_recent = int((dup["year"].astype(int) >= 2016).sum())
