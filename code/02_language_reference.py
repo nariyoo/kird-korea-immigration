@@ -399,6 +399,18 @@ def build_language_shares():
     }
 
     KO_CC = {v: k for k, v in CC_KO.items()}
+    # 연보가 쓰는 표기가 CC_KO 의 표준 표기와 달라 못 만나던 이름들. 자료에는 이
+    # 표기만 나오고 표준 표기는 안 나온다(2026-08-26 확인: 겹치는 해 0). 한 나라의
+    # 두 표기가 자료에 공존하는 것이 아니므로 합치지 않고 별칭으로 잇는다.
+    KO_CC.update({
+        "마샬군도": "MH", "미이크로네시아": "FM",
+        "보스니아-헤르체고비나": "BA", "세인트크리스토퍼네비스": "KN",
+        "솔로몬군도": "SB", "크리스마스": "CX",
+        # 자료에 있는데 CC_KO 에 아예 없던 나라·속령
+        "팔레스타인": "PS", "리히텐슈타인": "LI", "모나코": "MC",
+        "안도라": "AD", "산마리노": "SM", "지브롤터": "GI",
+        "버뮤다": "BM", "마르티니크": "MQ", "괌": "GU", "스발바르": "SJ",
+    })
 
 
     def map_lang_ethno(name):
@@ -557,15 +569,21 @@ def build_language_shares():
             "기타": [{"language": "기타", "share": 1.0}],
         }
 
+        # 모든 나라를 내보낸다. 전에는 이 고리가 COUNTRY_LANGUAGE(104개) 위를
+        # 돌아서, Ethnologue 몫이 계산된 나라라도 그 표에 없으면 통째로
+        # 버려졌다 — 대체용 표가 관문이 되어 있었다. 르완다·부룬디·라이베리아 등
+        # 94개 국적 7,044명(2024 체류 기준, 0.27%)이 언어 수요에서 소리 없이
+        # 빠졌다(2026-08-26에 찾음). Ethnologue 몫이 있으면 그것을, 없으면
+        # 단일언어 대체를 쓴다.
         out = {}
-        for ko, single_lang in COUNTRY_LANGUAGE.items():
+        for ko in sorted(set(by_country) | set(COUNTRY_LANGUAGE)):
             if ko in by_country:
                 sh = by_country[ko]
                 out[ko] = sorted(
                     ({"language": k, "share": round(v, 4)} for k, v in sh.items()),
                     key=lambda d: -d["share"])
             else:
-                out[ko] = [{"language": single_lang, "share": 1.0}]
+                out[ko] = [{"language": COUNTRY_LANGUAGE[ko], "share": 1.0}]
 
         for k, v in SPECIAL.items():
             out[k] = v

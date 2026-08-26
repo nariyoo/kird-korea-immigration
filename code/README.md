@@ -9,11 +9,11 @@ outputs are the CSVs deposited on openICPSR.
 ## Layout
 
 Ten steps, numbered in run order, in three phases. Phase 1 (`01`-`05`) turns the
-raw yearbooks into the harmonized panel; phase 2 (`06`-`09`) turns that into the
-released tables; phase 3 (`10`) stages the openICPSR deposit and runs on demand.
+raw yearbooks into the harmonized panel; phase 2 (`06`-`09` plus the two figure
+steps) turns that into the released tables and the repository figures; phase 3 (`10`) stages the openICPSR deposit and runs on demand.
 The steps read and write the intermediate JSON and CSV in place, so the order is
-the number in the filename. The only unnumbered files are the shared module, the
-runner, and `requirements.txt`.
+the number in the filename. The unnumbered files are the shared module, the runner, the checkers and helpers the sections
+below describe, and `requirements.txt`.
 
 ```
 python run_pipeline.py              # phases 1 and 2
@@ -130,8 +130,7 @@ columns are folded into the `summary_by_*` files, one row per place and year.
 This bundle holds the code that produces the deposited data. The working copy
 also carries scripts that write only into the dashboard, among them the KEDI
 international-student series, the refugee dashboard panel, the sub-district
-boundary joins with their geocoder, the coverage figure, and the script that
-writes this bundle. None of those produces a deposited file, so none is published
+boundary joins with their geocoder, and the script that writes this bundle. None of those produces a deposited file, so none is published
 here.
 
 ## Inputs

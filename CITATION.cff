@@ -26,7 +26,7 @@ abstract: >-
   changes through the panel, and computes every derived measure on one basis for all years:
   foreign share of population, nationality diversity, residential segregation against Korean
   nationals, ethnic-enclave classification, and the number of speakers of each language implied
-  by the nationality composition. It emits the 17 tidy tables released in the deposit, in CSV
+  by the nationality composition. It emits the 27 tidy tables released in the deposit, in CSV
   and labeled Stata format, alongside a bilingual data dictionary.
 authors:
   - family-names: Yoo
@@ -60,7 +60,7 @@ preferred-citation:
   year: 2026
   version: "1.1.0"
   doi: "10.3886/E249944V1"
-  date-released: 2026-06-08
+  date-released: 2026-06-16
   publisher:
     name: "Inter-university Consortium for Political and Social Research (openICPSR)"
   license: CC-BY-4.0

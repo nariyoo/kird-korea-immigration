@@ -88,7 +88,10 @@ def country_crosswalk(data=None):
         rows.append(row(src, canon, "source label variant"))
         seen.add(canon)
     for canon in sorted(set(COUNTRY_REGION) | set(en)):
-        if canon not in seen:
+        # 원천 라벨로 이미 실린 이름은 「unchanged」로 다시 싣지 않는다. 자이르가
+        # COUNTRY_REGION 의 보호용 항목에 남아 있어 두 줄이 되었고, source_label
+        # 유일성 관문이 그것을 잡았다(2026-08-26).
+        if canon not in seen and canon not in COUNTRY_CANONICAL:
             rows.append(row(canon, canon, "unchanged"))
     blank = [r[1] for r in rows if not r[2]]
     if blank:

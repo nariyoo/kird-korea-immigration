@@ -215,6 +215,12 @@ COUNTRY_REGION = {
 # the language chosen is the one Korean agencies are most likely to need
 # (lingua franca, or the language Danuri supports).
 COUNTRY_LANGUAGE = {
+    # 사라진 나라들. Ethnologue 에 국가 코드가 없어 단일언어 대체만 가능하다.
+    # (동독 2009-2010 3명, 유고슬라비아 1명, 세르비아몬테네그로 1명 — 연보의
+    # 옛 코드가 남은 것. 실재 국적이라 합치지 않고 그 나라 말을 준다.)
+    "동독": "독일어", "유고슬라비아": "세르비아어", "세르비아몬테네그로": "세르비아어",
+    # Ethnologue LICs 표에 국가 코드 행이 없는 곳들
+    "코소보": "알바니아어", "스발바르": "노르웨이어",
     "한국계중국인": "중국어", "중국": "중국어", "타이완": "중국어", "홍콩": "중국어", "마카오": "중국어",
     "베트남": "베트남어",
     "타이": "태국어",

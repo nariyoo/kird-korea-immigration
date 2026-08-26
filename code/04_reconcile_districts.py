@@ -358,7 +358,14 @@ def recompute_from_reconciled():
             if y not in region:
                 continue
             recs = {(r["sido"], r["sigungu"]): r for r in idx["by_sigungu"][y]}
-            natpop = idx["summary"][y]["national_total_pop"]
+            # 전국 인구는 요약 칸을 읽지 않고 시군구를 직접 더한다. 요약의
+            # national_total_pop 은 한 단계 뒤의 recompute_summary 가 같은 합으로
+            # 바로잡는 값이라, 여기서 읽으면 고치기 전 수(다른 시군구 집합에서 온
+            # 것)로 LQ 를 계산하게 된다. 2013년 아산 한국계중국인(lq 2.0021)이
+            # 그 낡은 분모에서는 2 아래로 밀려 집거 목록에서 빠졌다(2026-08-26).
+            natpop = (sum(r["total_pop"] for r in idx["by_sigungu"][y]
+                          if r.get("total_pop"))
+                      or idx["summary"][y]["national_total_pop"])
             # national total per nationality (consolidated)
             X = {}
             for sido, sigs in region[y].items():

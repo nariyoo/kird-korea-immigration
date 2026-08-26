@@ -2683,33 +2683,45 @@ REFUGEE_DATA = {
 # Source: 통일부 정착지원과 + Wikipedia (Korean) compiled from 통일부 official figures.
 # Cumulative entries through end-2024: ~34,314.
 DEFECTOR_DATA = {
+    # 통일부 「북한이탈주민 입국 현황」 2025년 12월 말 기준(잠정). 표 그대로다.
+    # 통일부는 1998년까지를 「~'98」(947명), 1999-2001년을 「~'01」(1,043명)로
+    # 묶어 싣고 2002년부터 해마다 싣는다. 묶음 둘과 연도 값의 합이 누적
+    # 34,537명과 사람 단위까지 같고, 남(9,593)·여(24,944) 합도 같다.
+    #
+    # 옛 판은 1998년 71명과 1999-2001년을 낱해로 싣고 「1998년 이전 947명 별도」
+    # 라고 적었는데, 그 947은 1998년「까지」의 묶음이라 이중집계였고, 성별 합
+    # (34,410)과 누적(34,314)이 서로 어긋났다(2026-08-26에 통일부 표와 대조).
+    "as_of": "2025년 12월 말 (잠정)",
     "annual": {
-        1998: 71, 1999: 148, 2000: 310, 2001: 586, 2002: 1142,
-        2003: 1285, 2004: 1898, 2005: 1384, 2006: 2028, 2007: 2554,
-        2008: 2803, 2009: 2914, 2010: 2402, 2011: 2706, 2012: 1502,
-        2013: 1514, 2014: 1397, 2015: 1275, 2016: 1418, 2017: 1127,
-        2018: 1137, 2019: 1047, 2020: 229, 2021: 63, 2022: 67,
-        2023: 196, 2024: 236,
+        2002: 1142, 2003: 1285, 2004: 1898, 2005: 1384, 2006: 2028,
+        2007: 2554, 2008: 2803, 2009: 2914, 2010: 2402, 2011: 2706,
+        2012: 1502, 2013: 1514, 2014: 1397, 2015: 1275, 2016: 1418,
+        2017: 1127, 2018: 1137, 2019: 1047, 2020: 229, 2021: 63,
+        2022: 67, 2023: 196, 2024: 236, 2025: 223,
+    },
+    "early": {
+        "through_1998": {"total": 947, "male": 831, "female": 116},
+        "y1999_2001": {"total": 1043, "male": 565, "female": 478},
     },
     "cumulative": {
-        "total_through_2024": 34314,
-        "male_total": 9576,
-        "female_total": 24834,
+        "total": 34537,
+        "male_total": 9593,
+        "female_total": 24944,
         "female_share_pct": 72.2,
         "peak_year": 2009,
         "peak_count": 2914,
     },
     "notes_ko": [
-        "1998년부터 통계 기준 (1998년 이전 947명 별도 누계)",
-        "2002년부터 여성 입국자가 남성을 초과; 누적 여성 비율 ~72%",
-        "2020년 코로나19로 급감 후 2024년 부분 회복",
-        "2009년 최고치 2,914명 → 2012년 김정은 체제 이후 1천 명대로 감소",
+        "통일부 표 기준(2025년 12월 말, 2025년 값은 잠정)",
+        "1998년까지 947명과 1999~2001년 1,043명은 통일부 표의 묶음 그대로이며 누적에 포함",
+        "2002년부터 여성 입국자가 남성을 초과; 누적 여성 비율 72.2%",
+        "2020년 국경 통제로 급감한 뒤 2023년부터 일부 회복",
     ],
     "notes_en": [
-        "Statistics from 1998 onwards (947 entrants before 1998 tracked separately)",
-        "Since 2002, female entries exceed male; cumulative female share ~72%",
-        "COVID-19 collapse in 2020; partial recovery by 2024",
-        "Peak 2,914 in 2009 → dropped to ~1,000s after Kim Jong Un era began (2012)",
+        "Ministry of Unification table (as of Dec 2025; 2025 provisional)",
+        "947 entrants through 1998 and 1,043 in 1999-2001 are the table's own brackets, included in the cumulative total",
+        "Female entries exceed male every year since 2002; cumulative female share 72.2%",
+        "Border closures cut arrivals from 2020; partial recovery from 2023",
     ],
 }
 

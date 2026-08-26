@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
 KIRD is a harmonized panel of foreign residents in South Korea, built from the annual
-statistical yearbooks of two ministries and released as 17 tidy tables. It reports how many
+statistical yearbooks of two ministries and released as 27 tidy tables. It reports how many
 foreign residents lived in each district each year, which nationalities they held, which visas
 they were on, and a set of derived measures: the foreign share of the population, nationality
 diversity, residential segregation against Korean nationals, ethnic-enclave districts, and the
@@ -30,8 +30,8 @@ released tables nor the raw ministry workbooks are in it, so start from the depo
 
 ## 2. Released tables
 
-Four summary tables give one row per place per year, with the counts and every derived index side by
-side. The other seventeen hold the breakdowns those summaries aggregate; from v1.2.0 the nationality
+Four summary tables give one row per place per year; the province and district tables carry the
+derived indices beside the counts, and the sub-district table carries the MOIS counts alone. The other twenty-three hold the breakdowns those summaries aggregate; from v1.2.0 the nationality
 and visa breakdowns exist at all three levels (district, province, national), and `language_demand`
 carries a `sido` scope, so no level has to be reconstructed from another.
 
@@ -43,13 +43,13 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `summary_by_eupmyeondong.csv` | a sub-district and a year | 2014-2024 | 39,017 |
 | `nationality_by_sigungu.csv` | a district, nationality and year | 2008-2024 | 173,723 |
 | `nationality_by_sido.csv` | a province, nationality and year | 2008-2024 | 24,885 |
-| `nationality_national.csv` | a population, nationality and year | 2006-2024 | 7,255 |
+| `nationality_national.csv` | a population, nationality and year | 2006-2024 | 7,236 |
 | `visa_by_sigungu.csv` | a district, visa status and year | 2008-2024 | 75,989 |
 | `visa_by_sido.csv` | a province, visa status and year | 2008-2024 | 7,083 |
 | `visa_national.csv` | a population, visa status and year | 2006-2024 | 1,240 |
-| `visa_by_nationality.csv` | a population, nationality, visa and year | 2006-2024 | 237,057 |
-| `age_sex_national.csv` | a nationality, age band, sex and year | 2009-2024 | 101,194 |
-| `language_demand.csv` | a language, scope, place and year | 2006-2024 | 202,318 |
+| `visa_by_nationality.csv` | a population, nationality, visa and year | 2006-2024 | 236,379 |
+| `age_sex_national.csv` | a nationality, age band, sex and year | 2009-2024 | 100,828 |
+| `language_demand.csv` | a language, scope, place and year | 2006-2024 | 208,849 |
 | `ethnic_enclaves.csv` | an enclave district, nationality and year | 2008-2024 | 739 |
 | `segregation_by_nationality.csv` | a nationality and year | 2014-2024 | 1,062 |
 | `region_segregation.csv` | a continent of origin and year | 2014-2024 | 118 |
@@ -113,8 +113,8 @@ v1.2.0 every breakdown also exists at all three levels: `nationality_by_sigungu`
 named `continent`.
 
 `dissimilarity_D` in the segregation files is the index of dissimilarity of one nationality against
-Korean nationals across districts, `0.5 * sum |x_i/X - k_i/K|`, with `isolation` and
-`interaction_korean` the two exposure measures. `theil_segregation_H` in `national_annual.csv` is
+Korean nationals across districts, `0.5 * sum |x_i/X - k_i/K|`, with `isolation` the exposure measure
+(`segregation_by_nationality` adds `interaction_korean`, exposure to Korean residents). `theil_segregation_H` in `national_annual.csv` is
 the multigroup entropy index over Korean nationals plus each nationality. `morans_I_share` is
 Moran's I of the district foreign share on queen contiguity, the spatial clustering dimension.
 
@@ -137,12 +137,13 @@ in the population.
 ## 5. Pipeline
 
 `code/run_pipeline.py` is the complete step list in dependency order: ten numbered steps in three
-phases, plus `kird.py`, the one module they all import.
+phases, `kird.py`, the one module they all import, and the unnumbered checkers and helpers the
+tables below describe.
 
 | Phase | Steps | What it does |
 |---|---|---|
 | 1 | `01_parse_yearbooks` `02_language_reference` `03_extend_panel` `04_reconcile_districts` `05_mois_layer` | reads the raw ministry workbooks and writes the harmonized panel |
-| 2 | `06_build_summaries` `07_build_naturalization` `08_export_dataset` `09_finish_release` | turns the panel into the released tables; ends on an integrity audit that must print `AUDIT CLEAN` |
+| 2 | `06_build_summaries` `07_build_naturalization` `08_export_dataset` `09_finish_release` `make_coverage_figure` `sync_repo_figures` | turns the panel into the released tables (`09` must print `AUDIT CLEAN`) and rebuilds the repository figures |
 | 3 | `10_stage_deposit` | stages the openICPSR deposit (wide summaries, `.dta` pairs, its own gate) |
 
 ![From the two ministry sources to the released tables](figures/pipeline_flowchart.png)
@@ -181,9 +182,9 @@ never altered; only the label a row carries.
   are one 부천시, because the district level exists for only part of the series.
 - **경상남도 마산시, 진해시 → 창원시**, merged July 2010. 2008 and 2009 keep their own city rows,
   since the post-merger district rows do not exist yet; 진해시 is carried onto 창원시 진해구.
-- **충청남도 연기군 → 세종특별자치시**, city created July 2012. The district series runs continuously
-  from 2008 on the predecessor 연기군. At province level Sejong is counted inside 충청남도 until
-  2011, following the source.
+- **세종특별자치시**, created July 2012. The district panel carries 세종시 as one continuous unit
+  from 2008; there is no separate 연기군 row. At province level Sejong is counted inside 충청남도
+  until 2011, following the source.
 - **충청북도 청원군 → 청주시 청원구**, absorbed by Cheongju 2014. Values before 2014 are carried onto
   청주시 청원구.
 - **경기도 여주군 → 여주시** (promoted 2013) and **충청남도 당진군 → 당진시** (promoted 2012), county
@@ -218,8 +219,11 @@ MOJ counts against empty broad-definition columns.
 
 The naturalization panels are assembled from every yearbook edition, since each one publishes only
 its own year at country and age level. They reconcile to the separately published annual totals
-within five cases a year, except 2017, where that edition's own country rows exceed its printed
-continent subtotals by 1,357. The figures are published as issued.
+within five
+cases a year in most years. Joining the tables on space-normalized type labels, seven
+year-type cells exceed that: 2017 국적선택 -10 and 국적판정 -7, 2018 국적상실 -8,
+2019 국적상실 +7 and 국적취득(재취득) +18, 2024 국적취득(인지) +8 and 국적취득(재취득) +16.
+The 2017 edition's own country rows also exceed its printed continent subtotals by 1,357. The figures are published as issued.
 
 ## 8. Sources
 

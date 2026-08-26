@@ -440,11 +440,46 @@ def canonicalize_country_labels():
         d = read(p)
         if "country" not in d.columns:
             continue
+        # 영문 짝을 크로스워크 하나에 맞춘다. 옛 이름이 남았는지와 무관하게 늘
+        # 확인한다 — 이름은 이미 표준인데 영문만 그 해 연보의 표기(Turkey)로 남는
+        # 일이 있었고(화성시 2014), 그때 아래의 「옛 이름이 있을 때만」 조건은
+        # 발화하지 않는다(2026-08-26).
+        cwp = os.path.join(DATA, "crosswalk_country.csv")
+        if "country_en" in d.columns and os.path.exists(cwp):
+            cw = pd.read_csv(cwp, encoding="utf-8-sig")
+            enmap = dict(zip(cw["country"], cw["country_en"]))
+            want = d["country"].map(enmap)
+            bad = want.notna() & (want != d["country_en"].fillna(""))
+            if bad.any():
+                pairs = sorted({(a, b, c) for a, b, c in
+                                zip(d.loc[bad, "country"],
+                                    d.loc[bad, "country_en"], want[bad])})
+                d.loc[bad, "country_en"] = want[bad]
+                write(d, p)
+                d = read(p)
+                print("canonicalize_country_labels: %s 영문 이름 %d행 고침 %s"
+                      % (name, int(bad.sum()), pairs[:3]))
         hit = d["country"].isin(COUNTRY_CANONICAL)
         if not hit.any():
             continue
         old_names = sorted(d.loc[hit, "country"].unique())
         d["country"] = d["country"].map(lambda c: COUNTRY_CANONICAL.get(c, c))
+        # 이름을 바꾼 줄은 영문 짝도 그 이름의 것으로 바꾼다. 안 바꾸면 합치기가
+        # 일어나지 않는 파일(시군구표는 열쇠에 시군구가 있어 안 겹친다)에 옛
+        # 영문이 남아, 같은 국적이 영문 이름 둘을 갖는다 — 화성시 2014 튀르키예가
+        # Turkey 로 남았다(2026-08-26). 영문은 같은 파일의 표준 이름 줄에서 얻고,
+        # 파일 안에 없으면 크로스워크에서 얻는다.
+        if "country_en" in d.columns:
+            en = (d.loc[~hit].dropna(subset=["country_en"])
+                   .drop_duplicates("country").set_index("country")["country_en"]
+                   .to_dict())
+            cwp = os.path.join(DATA, "crosswalk_country.csv")
+            if os.path.exists(cwp):
+                cw = pd.read_csv(cwp, encoding="utf-8-sig")
+                for k, v in zip(cw["country"], cw["country_en"]):
+                    en.setdefault(k, v)
+            d.loc[hit, "country_en"] = d.loc[hit, "country"].map(en).fillna(
+                d.loc[hit, "country_en"])
         before = len(d)
         if d.duplicated(subset=[k for k in key if k in d.columns]).any():
             # 세는 칸만 더한다.

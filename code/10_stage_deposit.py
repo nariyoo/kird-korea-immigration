@@ -615,7 +615,16 @@ def attach_breakdowns():
             print(f"national_annual: {len(na)} rows, {len(na.columns)} cols (+{len(lrn)})")
 
         # ---- extend the data dictionary (idempotent: pristine long dict + wide defs) ----
-        typ = lambda v: "integer"  # all attached wide columns are integer counts
+        # 덧붙는 열이 전부 wide 정수 카운트는 아니다. national_annual 은 여기서
+        # 정착 블록도 받는다 — settlement_type 은 문자, *_pct 는 실수다. 전부
+        # integer 로 찍으면 Stata 작성기가 그 타입으로 강제해 문자값이 통째로
+        # 결측이 된다(national_annual.dta 의 settlement_type 17행, 2026-08-26).
+        def typ(v):
+            if v == "settlement_type":
+                return "string"
+            if v.endswith("_pct"):
+                return "float"
+            return "integer"
         add = pd.DataFrame([(f, v, typ(v), d[0], d[1]) for f, v, d in rows],
                            columns=["file", "variable", "type", "description_en", "description_ko"])
         bad = [v for v in add["variable"] if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", v) or len(v) > 32]
