@@ -1620,7 +1620,7 @@ def audit_release():
 
     Re-checkable any time before a Zenodo upload. Validates, against the released
     files only (no pipeline reruns):
-      1.  file inventory (exactly the 17 documented CSVs)
+      1.  file inventory (exactly the documented CSVs)
       2.  data_dictionary.csv coverage in both directions (grouped rows expanded),
           bilingual descriptions all filled
       3.  no '*' masking, no whitespace-padded labels
@@ -1647,6 +1647,10 @@ def audit_release():
     EXPECTED = {
         "age_sex_national.csv":        ["year", "country", "gender", "age_group"],
         "children_by_age.csv":         ["year", "sido", "sigungu", "age"],
+        # 재외동포 거소신고. 2026-08-28에 기탁본에 넣고도 이 목록에 등록하지
+        # 않아, 감사가 「25개를 기대했는데 26개」로 실패했다. 파일을 더하는
+        # 자리는 셋이다 — 목록, 자료 사전, 그리고 단계 목록(run_pipeline).
+        "diaspora_residence_by_sido.csv": ["year", "sido", "country"],
         # 조화 규칙 표. 자료가 아니라 자료를 만든 규칙이라 다른 검사는 건너뛴다
         "crosswalk_country.csv":       ["source_label"],
         "crosswalk_region.csv":        None,   # 규칙 표라 유일 열쇠가 없다
