@@ -70,6 +70,7 @@ FILES = {
     "summary_by_sido.csv": ["year", "sido"],
     "summary_by_sigungu.csv": ["year", "sido", "sigungu"],
     "visa_by_nationality.csv": ["year", "population", "country", "visa_code"],
+    "diaspora_residence_by_sido.csv": ["year", "sido", "country"],
     "visa_by_sido.csv": ["year", "sido", "visa_code"],
     "visa_by_sigungu.csv": ["year", "sido", "sigungu", "visa_code"],
     "visa_national.csv": ["year", "population", "visa_code"],
@@ -567,6 +568,37 @@ def check_coverage_text(data, d):
     check(not bad, "coverage: no prose cites a year past %d" % last,
           "%d places: %s" % (len(bad), " | ".join(bad[:3])))
 
+def check_visa_basis(data, d):
+    """The subnational visa tables are registered-basis, so F-4 is zero in them.
+
+    That zero looks like missing data and is not: holders of the F-4
+    overseas-Korean status file a place-of-residence report under the Overseas
+    Koreans Act rather than a foreign-resident registration, so they never enter
+    the registered basis. Nationally they are the largest single status on the
+    staying basis. The check holds the fact and its explanation together, so
+    neither can drift away from the other without failing.
+    """
+    g = d.get("visa_by_sigungu.csv")
+    n = d.get("visa_national.csv")
+    if g is not None:
+        f4 = float(g.loc[g["visa_code"] == "F4", "n"].sum())
+        check(f4 == 0,
+              "visa basis: F-4 absent from visa_by_sigungu, as the registered basis requires",
+              "district tables now carry %g F-4, so the basis changed" % f4)
+    if g is not None and n is not None and "population" in n.columns:
+        reg = float(n[(n["population"] == "registered") & (n["year"] == 2024)]["n"].sum())
+        dis = float(g[g["year"] == 2024]["n"].sum())
+        gap = abs(reg - dis) / reg * 100 if reg else 0.0
+        check(gap < 5,
+              "visa basis: 2024 district sum reconciles with the registered national total",
+              "%.1f%% apart (%g against %g)" % (gap, dis, reg))
+    rd = os.path.join(os.path.dirname(os.path.abspath(data.rstrip("/\\"))), "README.md")
+    txt = io.open(rd, encoding="utf-8").read() if os.path.exists(rd) else ""
+    check("F-4" in txt and "거소신고" in txt,
+          "visa basis: README explains why F-4 is absent from the district tables",
+          "the zero is left to look like missing data")
+
+
 def main():
     data = sys.argv[1] if len(sys.argv) > 1 else \
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -589,6 +621,7 @@ def main():
     check_cross_file(d)
     check_country_labels(d)
     check_coverage_text(data, d)
+    check_visa_basis(data, d)
     print()
     if FAILED:
         print("%d of %d checks FAILED:" % (len(FAILED), CHECKED))

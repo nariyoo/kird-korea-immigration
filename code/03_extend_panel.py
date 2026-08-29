@@ -441,13 +441,21 @@ def build_undocumented():
                 "유럽": "Europe", "아프리카": "Africa", "오세아니아": "Oceania", "기타": "Other"}
 
     def vcode(col):
-        """Extract a normalized visa code like B1, C3, E9 from a column header."""
+        """Extract a normalized visa code like B1, C3, E9 from a column header.
+
+        The residual column (기타 / Others) carries no code and was dropped, so
+        by_visa summed 6,466 short of its own total in 2024 and similarly in
+        every year from 2020. It is returned as ETC, the code the rest of the
+        project already uses for a residual status.
+        """
         s = str(col)
         m = re.search(r"([A-H])\s*-?\s*(\d{1,2})", s)
         if m:
             return m.group(1) + m.group(2)
         if "소계" in s or "합계" in s or "총" in s:
             return None
+        if re.match(r"\s*(기타|others?)", s, re.I):
+            return "ETC"
         return None
 
     def find_files():

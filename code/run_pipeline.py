@@ -66,6 +66,12 @@ PHASE2 = [
     "07_build_naturalization.py",
     # the tidy release CSVs, then language_demand.csv on the released basis
     "08_export_dataset.py",
+    # 재외동포 거소신고. 등록외국인 시트에는 F-4 가 없어 시군구·시도 자격표가
+    # 모든 해에 0을 적는다 — 없어서가 아니라 다른 장부에 있기 때문이다. 연보는
+    # 따로 낸 장에서 시도·국적별로 내내 공표해 왔다. 2026-08-28에 원본을 released
+    # 파일과 맞춰 보다 찾았고, 여기 등록되지 않아 **공개 코드에 실리지도 않고
+    # 파이프라인이 부르지도 않았다**(2026-08-29). 09 의 감사보다 앞서야 한다.
+    "build_diaspora_residence.py",
     # (the working-name rename runs here, in code below)
     # the released schema, segregation, the dictionary, Stata, and the audit,
     # which must end AUDIT CLEAN before anything is uploaded
