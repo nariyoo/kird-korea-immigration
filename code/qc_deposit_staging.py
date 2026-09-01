@@ -74,11 +74,39 @@ def inventory():
     csvs = [f for f in files if f.endswith(".csv") and f != "data_dictionary.csv"]
     dtas = [f for f in files if f.endswith(".dta")]
     docs = sorted(f for f in files if not f.endswith((".csv", ".dta")))
-    check(len(csvs) == 27, "CSV 27개", len(csvs))
-    check(len(dtas) == 27, "DTA 27개", len(dtas))
+    check(len(csvs) == 28, "CSV 28개", len(csvs))
+    check(len(dtas) == 28, "DTA 28개", len(dtas))
+    # **개수만 세면 어느 표가 빠졌는지 모른다.** 2026-08-31 에
+    # diaspora_residence_by_sido 가 스테이징에서 빠진 채로 이 검사를 통과했다.
+    # 릴리스가 8-29 에 그 표를 새로 냈는데 스테이징을 다시 돌리지 않았고,
+    # 기대 개수가 27 로 박혀 있어 27 개인 것이 맞다고 답했다. 작업 트리에서
+    # 돌릴 때는 릴리스 폴더와 이름을 맞대어 본다. 받은 사람이 기탁본만 가지고
+    # 돌릴 때는 그 폴더가 없으므로 이 검사는 건너뛴다.
+    rel = os.path.join(ROOT, "04_dataset_release", "data")
+    if os.path.isdir(rel):
+        want = {f for f in os.listdir(rel) if f.endswith(".csv")}
+        have = {os.path.basename(f) for f in csvs}
+        missing = sorted(want - have)
+        extra = sorted(have - want)
+        check(not missing, "릴리스의 표가 모두 스테이징에 있다", missing)
+        # 기탁에만 있는 표(난민 둘)는 릴리스 data/ 에 없다. 이름을 적어 둔다.
+        check(set(extra) <= {"refugee_by_nationality.csv",
+                             "refugee_language_demand.csv"},
+              "스테이징에만 있는 표는 난민 표 둘뿐", extra)
     check(docs == ["LICENSE.txt", "README.md"], "문서는 README 와 LICENSE 뿐", docs)
     check(os.path.exists(os.path.join(STG, "data_dictionary.csv")),
           "data_dictionary.csv 있음")
+    # **문서에 없는 파일이 기탁물에 들어가면 안 된다.** 2026-08-31 에 다섯
+    # 개(크로스워크 셋, language_weights, diaspora)가 README 의 표에 한 번도
+    # 안 나온 채로 스테이징에 있었다. 개수 검사도, CSV-DTA 짝 검사도 그것을
+    # 못 본다.
+    import re as _re
+    _md = io.open(os.path.join(STG, "README.md"), encoding="utf-8").read()
+    _in_readme = set(_re.findall(r"\|\s*([a-z0-9_]+)\.csv\s*\|", _md))
+    _undocumented = sorted({os.path.basename(f)[:-4] for f in csvs}
+                           - _in_readme)
+    check(not _undocumented, "모든 표가 README 의 표에 있다", _undocumented)
+
     pairs = {f[:-4] for f in csvs} ^ {f[:-4] for f in dtas}
     check(not pairs, "모든 CSV 에 .dta 짝", sorted(pairs))
 
