@@ -26,11 +26,13 @@ sys.path.insert(0, HERE)
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-from kird import CLEAN, RELEASE_DATA          # noqa: E402
+from kird import CLEAN, RAW, RELEASE_DATA, RELEASE_LAST_YEAR   # noqa: E402
 
 # 2006-2010년판에는 국적×체류자격으로 짠 체류외국인 표가 없다. 대신 2장 첫머리의
 # 「체류외국인 현황」이 그 해 총계를 찍어 두었으므로, 합성한 값을 이것과 맞댄다.
-RAWYB = os.path.join(os.path.dirname(HERE), "01_raw_data", "출입국통계연보")
+# 2026-09-26: 이 경로가 code/ 의 부모(04_dataset_release)에서 01_raw_data 를 찾아
+# 늘 「원자료 없음」이었다. kird.RAW 를 쓴다.
+RAWYB = os.path.join(RAW, "출입국통계연보")
 HEADLINE_STAY = {
     2006: os.path.join(RAWYB, "2006_출입국통계연보", "2장", "2-체류외국인현황.xls"),
     2007: os.path.join(RAWYB, "2007_출입국통계연보", "2-Ⅱ.체류외국인현황.xls"),
@@ -152,6 +154,20 @@ def main():
                             for _, r in miss.iterrows()))
         print()
     print("wrote", out)
+
+    # 2026-09-26 관문. 국적×체류자격 표를 그대로 읽는 해(등록 2006-, 체류 2011-)는
+    # 배포본 합이 인쇄 총계와 **같아야** 한다. 무국적·기타 줄을 버리던 동안은
+    # 해마다 106-337명 모자랐고, 그것을 「0.05% 안」이라고만 적었다. 2006-2010 체류는
+    # 세 표를 합친 값이라 겹침만큼 다르므로 보고만 한다.
+    direct = df[(df["year"] <= RELEASE_LAST_YEAR) & df["printed"].notna()
+                & ~((df["series"] == "staying") & df["year"].isin(list(HEADLINE_STAY)))]
+    off = direct[direct["released"] != direct["printed"]]
+    if len(off):
+        print("FAIL: released national total differs from the printed grand total:")
+        print(off[["series", "year", "printed", "released"]].to_string(index=False))
+        return 1
+    print("GATE OK: every directly read year equals the printed grand total "
+          "(%d series-years)" % len(direct))
     return 0
 
 

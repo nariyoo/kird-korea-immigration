@@ -27,6 +27,65 @@ from kird import RELEASE_DATA
 from kird import SITE_DATA
 
 
+AGE_BANDS = ["0-9", "10-19", "20-29", "30-39", "40-49", "50-59",
+             "60-69", "70-79", "80-89", "90+"]
+
+# the 총계 row each parsed table prints, keyed by (file name, kind); filled by parse()
+PRINTED_TOTALS = {}
+
+# 2026-09-26: the panels start with the 2011 edition. The 2009 and 2010 editions'
+# by-country and by-age tables are cumulative, 1991 to the edition year: their
+# 총계 rows (363,131 and 405,170) equal the 총계(Total) line under each edition's
+# own 연도별 추이 table, while that table's single-year rows read 49,820 (2009) and
+# 42,039 (2010). Until this date the release carried them as if they were annual.
+# The gate in build_panel() compares every edition's detail total with the
+# single-year row of its own trend table and stops on a cumulative table.
+PANEL_FIRST_YEAR = 2011
+
+
+def age_band_from_label(label):
+    """The ten-year band a chapter-4 age row belongs to, read from its own label.
+
+    The editions print the same ten bands five ways:
+      0~10세Years, 11~20, 21~30 ... 91세이상   (2009-2011, 2017, 2020 as 0-10세, 11~20 ...)
+      0~10Years, 10~20, 20~30 ... 80~90, 91세이상   (2012-2013)
+      10, 20, 30 ... 90, 99   (2014-2016, 2018-2019, 2023-2024): the upper bound
+      0세~9세, 10세~19세 ... 90세이상   (2021-2022, 2025)
+    Returns one of AGE_BANDS, or raises ValueError on a label it cannot place.
+    """
+    s = re.sub(r"\s+", "", str(label))
+    s = re.sub(r"(Years?&?over|Years?|&over)$", "", s, flags=re.I)
+
+    def band(lo):
+        if lo >= 90:
+            return "90+"
+        if lo % 10 or not 0 <= lo <= 80:
+            raise ValueError(f"age label {label!r}: lower bound {lo}")
+        return f"{lo}-{lo + 9}"
+
+    m = re.fullmatch(r"(\d+)세?이상", s)
+    if m and int(m.group(1)) in (90, 91):
+        return "90+"
+    m = re.fullmatch(r"(\d+)세~(\d+)세", s)                 # 0세~9세: both bounds exact
+    if m and int(m.group(2)) - int(m.group(1)) == 9:
+        return band(int(m.group(1)))
+    m = re.fullmatch(r"(\d+)(?:세)?[~-](\d+)(?:세)?", s)     # 0~10세, 11~20, 10~20, 0-10세
+    if m:
+        lo, hi = int(m.group(1)), int(m.group(2))
+        if lo % 10 == 1 and hi - lo == 9:                  # 11~20 -> 10-19
+            return band(lo - 1)
+        if lo % 10 == 0 and hi - lo == 10:                 # 0~10, 10~20 -> 0-9, 10-19
+            return band(lo)
+    m = re.fullmatch(r"(\d+)", s)                         # bare upper bound: 10 -> 0-9
+    if m:
+        n = int(m.group(1))
+        if n == 99:
+            return "90+"
+        if n % 10 == 0 and 10 <= n <= 90:
+            return band(n - 10)
+    raise ValueError(f"age label {label!r} matches no known convention")
+
+
 def build_panel():
     """Nationality-processing (국적처리) panel from every yearbook edition.
 
@@ -41,9 +100,16 @@ def build_panel():
                  starts at 총합계.
       2020, 2025  two label columns (대륙, 국적), both filled on every row in 2025.
 
-    Age bands are labelled four different ways (0~10세 / 0~10 / a bare 10 / 0세~9세)
-    but every edition publishes the same eleven ten-year bins in the same order, so
-    they are harmonized by position and the canonical label is written out.
+    Age bands are labelled five different ways (0~10세 / 0~10 / 0-10세 / a bare 10 /
+    0세~9세), but every edition publishes the same ten bins, youngest first. Each
+    row's band is read from its own printed label by `age_band_from_label`, and the
+    build stops if that band is not the one the row's position implies or if an
+    edition does not print exactly ten bands. A bare numeral is the band's upper
+    bound (10 = 0-9, ..., 90 = 80-89, 99 = 90 and over): the 2021, 2022 and 2025
+    editions print the same table with explicit 0세~9세 labels, and 수반취득
+    (acquisition by a parent's naturalization, i.e. minors) sits in the bare-10
+    row of 2014-2019 and 2023-2024 exactly as it sits in the 0세~9세 row of those
+    editions.
 
     Output (long, one row per year x unit x processing type):
       03_cleaned_data/naturalization_by_country_long.csv
@@ -53,11 +119,8 @@ def build_panel():
     same totals independently.
     """
     YB = os.path.join(RAW, "출입국통계연보")
-    YEARS = range(2009, LAST_YEAR + 1)
+    YEARS = range(PANEL_FIRST_YEAR, LAST_YEAR + 1)
 
-    # canonical ten-year bins, in publication order
-    AGE_BANDS = ["0-9", "10-19", "20-29", "30-39", "40-49", "50-59",
-                 "60-69", "70-79", "80-89", "90+"]
 
     TOTAL_LABELS = {"총계", "총합계", "합계", "계", "소계", "총  계", "연  령", "연령", "Age",
                     "국가", "국적명", "국적", "대륙", "국적･지역", "국적(지역)", "구분", "nan", ""}
@@ -108,6 +171,24 @@ def build_panel():
             return None
 
 
+    def trend_total(year):
+        """The single-year 총계 the edition's own 연도별 추이 table prints for `year`."""
+        for f in sorted(glob.glob(os.path.join(YB, f"{year}_출입국통계연보", "*"))):
+            b = os.path.basename(f)
+            if (not b.endswith((".xls", ".xlsx")) or "4장" not in b or "불허" in b
+                    or not ("추이" in b or "연도별" in b)):
+                continue
+            df = pd.read_excel(f, header=None)
+            for r in range(df.shape[0]):
+                cells = [str(v).strip() for v in df.iloc[r].tolist()]
+                for c in range(min(3, len(cells))):
+                    if cells[c] in (str(year), f"{year}.0", f"{year}년"):
+                        nums = [num(v) for v in cells[c + 1:]]
+                        nums = [n for n in nums if n is not None]
+                        if nums:
+                            return nums[0]
+        return None
+
     def find_file(year, kind):
         """The chapter-4 by-country or by-age workbook for one edition."""
         want, avoid = ("연령", "국적") if kind == "age" else ("국적", "연령")
@@ -155,13 +236,24 @@ def build_panel():
         rows, band, folded = [], 0, set()
         for i, (labels, vals) in enumerate(recs):
             if kind == "age":
-                # bands come in publication order; the source labels them four
-                # different ways, so position is the only stable key
                 if any(is_total(l) for l in labels):
                     continue
-                if band >= len(AGE_BANDS):
-                    continue
-                unit = AGE_BANDS[band]
+                # 2026-09-26: the band is read from the row's own label, and the
+                # position is only a cross-check. An audit read the bare numerals
+                # (10, 20, ... 99) as lower bounds and took the panel for shifted;
+                # this makes the reading explicit and stops the build if a future
+                # edition drops or adds a band.
+                label = next((l for l in labels if l), "")
+                if not label and not any(vals.values()):
+                    continue        # 2024: an unlabelled trailing row holding a lone 0
+                try:
+                    unit = age_band_from_label(label)
+                except ValueError as e:
+                    raise SystemExit(f"{os.path.basename(path)}: {e} (row values {vals})")
+                if band >= len(AGE_BANDS) or unit != AGE_BANDS[band]:
+                    raise SystemExit(f"{os.path.basename(path)}: age row {band + 1} is "
+                                     f"labelled {label!r} -> {unit}, expected "
+                                     f"{AGE_BANDS[band] if band < len(AGE_BANDS) else 'no more rows'}")
                 band += 1
             else:
                 # the rightmost filled label is the row's own: 2019 and 2024 repeat
@@ -200,14 +292,30 @@ def build_panel():
                     rows.append((unit, t, v))
         # take the 한국계 subgroup back out of a parent printed "한국계 포함", so 중국
         # means China excluding Korean-Chinese in every edition
+        if kind == "age" and band != len(AGE_BANDS):
+            raise SystemExit(f"{os.path.basename(path)}: {band} age bands, expected "
+                             f"{len(AGE_BANDS)}")
+        # the edition's own 총계 row, per type: the units must add up to it
+        tot = next((vals for labels, vals in recs if any(is_total(l) for l in labels)), {})
         for parent in folded:
             child = KOREAN_SUB.get(parent)
             sub = {t: v for u, t, v in rows if u == child}
             if sub:
                 rows = [(u, t, v - sub.get(t, 0)) if u == parent else (u, t, v)
                         for u, t, v in rows]
+        PRINTED_TOTALS[(os.path.basename(path), kind)] = {
+            t: v for t, v in tot.items() if v is not None}
         return rows
 
+
+    # 판 안의 어긋남: 연령표 칸들의 합이 그 표가 찍은 총계와 다른 곳. 원자료 그대로다.
+    # (year, kind, type, panel - printed)
+    # Both read in the raw files: 2014's country rows for 일반귀화 add to 299 against a
+    # printed 계 of 298 (the 아시아주 소계 prints 291 over rows that sum to 292), and
+    # 2017's continent subtotals for 간이귀화 add to 6,745 against a printed 총계 of
+    # 6,742.
+    EDITION_RESIDUAL = {(2014, "country", "일반귀화", 1), (2017, "country", "간이귀화", 3)}
+    edition_off = []
 
     def main():
         out_c, out_a, report = [], [], []
@@ -218,6 +326,20 @@ def build_panel():
                     report.append((y, kind, "FILE NOT FOUND", 0, 0))
                     continue
                 rows = parse(f, kind)
+                # 관문: 이 표가 한 해 치인가. 2009·2010년판 상세표는 1991년부터의
+                # 누계였다(위 PANEL_FIRST_YEAR). 같은 판 추이표의 그 해 행과 댄다.
+                printed_all = next((v for t, v in PRINTED_TOTALS.get(
+                    (os.path.basename(f), kind), {}).items()
+                    if t in ("총계", "총합계", "합계", "계")), None)
+                single = trend_total(y)
+                if printed_all is None or single is None:
+                    raise SystemExit(f"{y} {kind}: no 총계 row ({printed_all}) or no "
+                                     f"single-year trend row ({single}) to check against")
+                if printed_all > 1.5 * single:
+                    raise SystemExit(f"{y} {kind}: the table's 총계 {printed_all:,} is "
+                                     f"{printed_all / single:.1f}x the edition's own "
+                                     f"{y} trend row {single:,}; a cumulative table, "
+                                     f"not one year")
                 agg = {}
                 for unit, t, v in rows:
                     agg[(unit, t)] = agg.get((unit, t), 0) + v
@@ -242,6 +364,15 @@ def build_panel():
                 for (unit, t), v in sorted(agg.items()):
                     sink.append({"year": y, ("country" if kind == "country" else "age"): unit,
                                  "type": t, "n": v})
+                # 2026-09-26 관문: 단위들의 합이 그 판이 스스로 찍은 총계 행과 같아야
+                # 한다(유형마다). 파서가 행을 빠뜨리거나 두 번 세면 여기서 멈춘다.
+                printed = PRINTED_TOTALS.get((os.path.basename(f), kind), {})
+                for t, v in printed.items():
+                    if t in ("총계", "총합계", "합계", "계"):
+                        continue
+                    got = sum(n for (u, tt), n in agg.items() if tt == t)
+                    if got != v and (y, kind, t, got - v) not in EDITION_RESIDUAL:
+                        edition_off.append((y, kind, t, got, v))
                 natz = (sum(v for (u, t), v in agg.items() if t == "귀화소계")
                         or sum(v for (u, t), v in agg.items() if t == "귀화"))
                 report.append((y, kind, os.path.basename(f)[:36], len(units), natz))
@@ -262,6 +393,11 @@ def build_panel():
         ann = json.load(open(os.path.join(SITE_DATA, "data.json"), encoding="utf-8")) \
             ["naturalization_data"]["annual"]
         cdf, adf = pd.DataFrame(out_c), pd.DataFrame(out_a)
+
+        if edition_off:
+            raise SystemExit(f"a parsed table does not add up to the 총계 row its own "
+                             f"edition prints (year, kind, type, parsed, printed): "
+                             f"{edition_off}")
 
         # 원자료 자체의 어긋남. 2012년판 연령표의 칸 합이 제 총계보다 1 적다.
         AGE_RAW_RESIDUAL = {(2012, -1)}
@@ -291,6 +427,48 @@ def build_panel():
         if off:
             raise SystemExit(f"naturalization panels do not reconcile to the annual "
                              f"귀화 series: {off}")
+
+        # 2026-09-26: every other processing type too. The annual series is the
+        # newest edition's 연도별 추이 table, which MOJ revises; the panels are each
+        # edition's own detail tables. The cells below differ for that reason, each
+        # one read in the raw files: the 2018 edition's detail tables print
+        # 국적보유 86 / 국적상실 26,608 / 국적선택 1,714 / 인지 504, the 2025 trend
+        # table 89 / 26,607 / 1,719 / 506 (and the 2018 edition's own trend table a
+        # third set, 0 / 26,608 / 1,702 / 506); the 2012 age table prints 국적상실
+        # 17,642 in its own 총계 row against 17,641 everywhere else; and the 2013
+        # detail tables' 국적취득 column holds re-acquisition only (419), leaving
+        # out the 343 acquisitions by recognition the trend table prints.
+        # Anything not listed here stops the build. (year, kind, annual type, diff)
+        TYPE_TO_ANNUAL = {"국적회복": "회복", "국적판정": "국적판정", "국적상실": "국적상실",
+                          "국적이탈": "국적이탈", "국적취득(인지)": "국적취득 (인지)",
+                          "국적취득(재취득)": "국적취득 (재취득)", "국적선택": "국적선택",
+                          "국적보유": "국적보유", "국적취득": "국적취득"}
+        KNOWN_REVISIONS = {
+            (2012, "age", "국적상실", 1),
+            (2013, "country", "국적취득", -343), (2013, "age", "국적취득", -343),
+        } | {(2018, k, t, d) for k in ("country", "age") for t, d in
+             (("국적보유", -3), ("국적상실", 1), ("국적선택", -5), ("국적취득 (인지)", -2))}
+        type_off = []
+        for y in YEARS:
+            yd = ann.get(str(y)) or {}
+            if not yd:
+                continue
+            ref = dict(yd)
+            ref["국적취득"] = (yd.get("국적취득 (인지)") or 0) + (yd.get("국적취득 (재취득)") or 0)
+            for kind, df in (("country", cdf), ("age", adf)):
+                sub = df[df.year == y]
+                for t, at in TYPE_TO_ANNUAL.items():
+                    got = sub[sub.type == t].n
+                    if got.empty or at not in ref:
+                        continue
+                    d = int(got.sum()) - int(ref[at])
+                    if d and (y, kind, at, d) not in KNOWN_REVISIONS:
+                        type_off.append((y, kind, at, d))
+        if type_off:
+            raise SystemExit(f"naturalization panels differ from the annual series in "
+                             f"cells not traced to the raw files: {type_off}")
+        print("  every other processing type equals the annual series except the "
+              f"{len(KNOWN_REVISIONS)} cells traced to the raw editions")
 
     main()
 

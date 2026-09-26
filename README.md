@@ -169,7 +169,7 @@ repository lists those inputs with their sizes and SHA-256 hashes (it holds no r
 | Phase | Steps | What it does |
 |---|---|---|
 | 1 | `01_parse_yearbooks` `02_language_reference` `03_extend_panel` `04_reconcile_districts` `05_mois_layer --reparse` `05_mois_layer` | reads the raw ministry workbooks and writes the harmonized panel |
-| 2 | `06_build_summaries` `07_build_naturalization` `08_export_dataset` `build_diaspora_residence` `09_finish_release` `make_coverage_figure` `sync_repo_figures` | turns the panel into the released tables (`09` must print `AUDIT CLEAN`) and rebuilds the repository figures |
+| 2 | `06_build_summaries` `07_build_naturalization` `08_export_dataset` `build_diaspora_residence` `09_finish_release` `check_published_totals` `make_coverage_figure` `make_repo_figures` | turns the panel into the released tables (`09` must print `AUDIT CLEAN`; the national totals must equal the totals the yearbooks print) and draws the four repository figures |
 | 3 | `10_stage_deposit` | stages the openICPSR deposit (wide summaries, `.dta` pairs, its own gate) |
 
 ![From the two ministry sources to the released tables](figures/pipeline_flowchart.png)
@@ -191,9 +191,14 @@ python code/run_pipeline.py --from 08_export_dataset.py    # resume at a step
 **The raw ministry workbooks are not in this repository**, so a bare checkout documents the build
 rather than reproducing it: run it as-is and phase 1 stops at the first missing workbook, phase 2 at
 the first missing intermediate. That is the expected result, not a broken checkout. To rebuild from
-scratch, download the yearbooks from the agencies in section 8 into `01_raw_data/` under the layout
-that `code/README.md` describes, then run the whole pipeline (phase 2 alone cannot run without the
-phase 1 output). `code/migrate_v1_2_0_nationality_columns.py` is a one-time v1.1.0 -> v1.2.0 repair
+scratch, put every file `raw_input_manifest.csv` lists where its `location` column says:
+`01_raw_data/` for the ministry workbooks and the Ethnologue dataset (from the agencies in section 8)
+and `05_dashboard/data/` for the boundary files (from vuski/admdongkor). Check each against its
+SHA-256, then run the whole pipeline (phase 2 alone cannot run without the phase 1 output). Nothing
+else is read and no font needs installing: the figures use the Pretendard files in `code/fonts/`
+(SIL Open Font License). A build done this way on 2026-09-26, in an empty directory holding only
+`code/` and the listed files, reproduced every released CSV, the dictionary and the figures byte for
+byte. `code/migrate_v1_2_0_nationality_columns.py` is a one-time v1.1.0 -> v1.2.0 repair
 kept for provenance; a fresh build does not need it.
 
 ## 6. Administrative boundary changes
@@ -227,13 +232,15 @@ the county became a city, and a Sejong row whose district cell holds a literal 0
 
 District-level nationality detail begins in 2008 and district-level indices in 2009.
 
-A district-level sum is slightly below the published national total, by about 0.2 per cent, because
-the yearbook's district table does not place every registered foreigner in a district.
+A district-level sum is slightly below the published national total (0.2 per cent in 2024), because
+the yearbook's district table does not place every registered foreigner in a district and the national
+tables also carry the yearbook's non-nationality lines (무국적, 기타), which no district table has.
 `national_annual.foreign_total` is documented as the district sum, so the two agree within the data
 even though the national total in the yearbook is marginally higher.
 
 `summary_by_sido.registered_foreigners` carries the yearbook's own province rows, so it differs from
-a sum of the districts by 903 to 6,828 people a year nationally (2008-2024). Both figures are the
+a sum of the districts in both directions: above it by 903 to 6,828 people a year nationally in
+2008-2014, below it by 2,096 to 3,583 in 2015-2024. Both figures are the
 publisher's. The province nationality and visa tables and every other province count are district
 sums.
 

@@ -2,12 +2,16 @@
 
 The build and analysis code behind KIRD, for the "Code availability" section. It
 documents the harmonization, the index computation, and the export. The raw
-government source files and the intermediate products are not redistributed here,
-so the scripts do not run end to end from a bare checkout; the authoritative
-outputs are the CSVs deposited on openICPSR. With the raw inputs in place
-(`raw_input_manifest.csv` lists every file with its size and SHA-256),
-`run_pipeline.py` followed by `run_pipeline.py --phase 3` regenerates every
-deposited file.
+government source files are not redistributed here, so the scripts do not run end
+to end from a bare checkout; the authoritative outputs are the CSVs deposited on
+ICPSR (study 249944). With the raw inputs in place, `run_pipeline.py` rebuilds the
+released tables, the data dictionary and the four repository figures.
+`raw_input_manifest.csv` lists every input with its size and SHA-256 and the folder
+it goes in: `01_raw_data/` for the ministry files and the Ethnologue dataset, and
+`05_dashboard/data/` for the district and sub-district boundary files. Nothing else
+is read. On 2026-09-26 a copy of this folder and of exactly those files, in an empty
+directory with `KIRD_ROOT` pointing at it, rebuilt every released CSV, the
+dictionary and the figures byte for byte identical to the release.
 
 **Where the code lives.** This folder (`04_dataset_release/code/` in the author's
 working tree) is the canonical copy. The public repository's `code/` and the
@@ -19,8 +23,8 @@ itself published.
 Ten numbered steps plus one unnumbered builder, in three phases. Phase 1 (`01`-`05`,
 with `05` run twice: `--reparse` reads the nineteen raw MOIS editions, the plain
 run assembles the layer) turns the raw yearbooks into the harmonized panel; phase 2
-(`06`-`08`, `build_diaspora_residence`, `09`, plus the two figure steps) turns that
-into the released tables and the repository figures; phase 3 (`10`) stages the
+(`06`-`08`, `build_diaspora_residence`, `09`, `check_published_totals`, plus the
+two figure steps) turns that into the released tables and the repository figures; phase 3 (`10`) stages the
 openICPSR deposit and runs on demand.
 The steps read and write the intermediate JSON and CSV in place, so the order is
 the number in the filename. The unnumbered files are the shared module, the runner, the checkers and helpers the sections
@@ -119,7 +123,7 @@ unchanged. When MOIS catches up, raise `RELEASE_LAST_YEAR` and rebuild.
 | script | what it does |
 |---|---|
 | `validate_release.py` | Re-derives every published index from the published counts, using the deposited CSVs alone. It reads either layout: the flat release folder, or the deposit's `data/` plus `data/detailed_data/`. Point it at the folder you downloaded. |
-| `check_published_totals.py` | Reads the grand-total cell printed in each yearbook and compares it with the national totals in `visa_national.csv`, year by year, for registered and for staying foreigners. This is the check behind the reconciliation figures quoted in the descriptor. It needs the raw yearbooks. |
+| `check_published_totals.py` | Reads the grand-total cell printed in each yearbook and compares it with the national totals in `visa_national.csv`, year by year, for registered and for staying foreigners. Since 2026-09-26 it is a pipeline step and a gate: every year read directly from a nationality x status table must equal the printed total to the person (the national tables carry the yearbook's own 무국적 / 기타 lines for that reason); the 2006-2010 staying totals, composed from three tables, are reported only. It needs the raw yearbooks. |
 | `build_raw_manifest.py` | Writes the list of raw input files with size and SHA-256, so a file you download can be checked against the one used here. |
 | `crosswalks.py` | Writes the harmonization rules out as tables: which source spelling became which standard label, and why. |
 | `qc_deposit_staging.py` | Checks the deposit as a reader meets it, not as a formula: every CSV against its `.dta` cell by cell, the README's data-dependent claims against the files, `adm_code` unique within a year and inside its district's code block (so a boundary join stays one-to-one), no float tails on integer columns, and every detail table joining onto its summary with nothing left over. Takes the folder you unpacked as its argument. |
@@ -158,13 +162,23 @@ Public source files. They are not redistributed here.
 - Ministry of the Interior and Safety, Local Government Foreign Resident Status (2006-2024)
 - Ministry of the Interior and Safety, Resident Registration Population (the denominator)
 - The 행정안전부 법정동코드 register (`kird.py --fetch-codes`)
-- District and sub-district boundaries: the dashboard's `korea_sigungu.json` (the
-  district adjacency behind `lisa` and `morans_I_share`) and the vuski/admdongkor
-  yearly sub-district snapshots
+- District and sub-district boundaries, kept in `05_dashboard/data/`:
+  `korea_sigungu.json` (the district adjacency behind `lisa` and `morans_I_share`),
+  `korea_emd.json` (2024) and `emd_years/korea_emd_<year>.json` (2014-2023), the
+  vuski/admdongkor yearly sub-district snapshots
 - SIL Global, Ethnologue 24 Global Dataset (first-language shares by country), used
   by `language_demand`, `language_weights` and the refugee language table; licensed
   by SIL and not redistributed
 
 `requirements.txt` pins every package to the version the release was built with.
-`make_coverage_figure.py` takes its colours and type from `figstyle.py` in this
-folder.
+
+## Figures and type
+
+`make_coverage_figure.py` draws `file_coverage.png` and `make_repo_figures.py`
+draws `overview_maps.png`, `moj_vs_mois.png` and `pipeline_flowchart.png`, all
+from what the same run has just built. Both take their colours and type from
+`figstyle.py`, which loads the typeface from `fonts/` (Pretendard Regular and Bold,
+SIL Open Font License 1.1, licence text in `fonts/OFL.txt`), so the figures come
+out the same on any machine and no font has to be installed. If `fonts/` is
+removed, an installed Pretendard is used, and failing that matplotlib's default
+sans-serif with a printed warning; the build does not stop over a font.

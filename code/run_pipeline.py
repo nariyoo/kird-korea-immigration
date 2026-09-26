@@ -33,7 +33,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from kird import ROOT, RELEASE_DATA  # noqa: E402
+from kird import CLEAN, MOIS_SITE, ROOT, RELEASE_DATA, SITE_DATA  # noqa: E402
 
 # ── Phase 1: raw yearbooks → dashboard JSON ──────────────────────────────────
 PHASE1 = [
@@ -81,10 +81,16 @@ PHASE2 = [
     # the released schema, segregation, the dictionary, Stata, and the audit,
     # which must end AUDIT CLEAN before anything is uploaded
     "09_finish_release.py",
+    # 전국 합계가 연감이 인쇄한 총계와 같은가(2026-09-26부터 관문). 무국적·기타
+    # 줄을 버리던 것을 이것이 잡는다.
+    "check_published_totals.py",
     # 저장소가 싣는 그림 셋. 손으로 돌리던 것이라 두 장이 2026-06 판 그대로
     # 남아 있었다. 자료를 지을 때마다 함께 짓게 해서 다시 갈라지지 않게 한다.
     "make_coverage_figure.py",
-    "sync_repo_figures.py",
+    # 2026-09-26: 나머지 셋도 여기서 짓는다. 전에는 sync_repo_figures.py 가
+    # 06_paper 의 논문 그림을 베꼈고, 그 폴더가 없는 기계에서는 아무것도 안 하고
+    # 0 으로 끝났다.
+    "make_repo_figures.py",
 ]
 
 # ── Phase 3: the openICPSR deposit ───────────────────────────────────────────
@@ -154,6 +160,11 @@ def main():
         sys.exit(f"step scripts missing from {HERE}: {missing}")
 
     print(f"KIRD build root: {ROOT}")
+    # A fresh checkout has none of the output folders; the steps assume they exist.
+    # Found on 2026-09-26 by building in an empty directory: 06 stopped on a missing
+    # 04_dataset_release/data/.
+    for d in (CLEAN, RELEASE_DATA, os.path.join(RELEASE_DATA, "stata"), SITE_DATA, MOIS_SITE):
+        os.makedirs(d, exist_ok=True)
     for i, script in enumerate(steps, 1):
         print(f"\n===== [{i}/{len(steps)}] {script} =====", flush=True)
         argv = script.split()

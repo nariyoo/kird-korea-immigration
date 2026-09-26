@@ -170,7 +170,19 @@ DROP_NAMES = {
     # Footnote / header leakage from legacy files
     "체류자격국적", "체류자격",
     "미상", "미등록국가",
+    "한국",
 }
+
+# The yearbook's nationality x status tables print lines that hold people but name
+# no nationality: 무국적 (Stateless, 2006-2013 and 2019), 미등록국가 and 미상 (2019),
+# and a single 기타 line in the years that print no stateless split (2014-2018,
+# 2020-). Until 2026-09-26 they were dropped with the continent subtotals, so the
+# national tables fell short of the printed grand total by 106-337 people a year.
+# The two status-table loaders now keep them as their own rows; export_json takes
+# them back out, so the dashboard's country lists and every index stay on
+# nationalities alone. The district tables are a different source and are untouched.
+RESIDUAL_LINES = {"무국적", "기타", "미등록국가", "미상", "한국"}
+VISA_DROP = DROP_NAMES - RESIDUAL_LINES
 
 
 # Substring patterns to drop (footnotes etc. that aren't real countries)
@@ -286,9 +298,11 @@ def is_total_gender(g):
 
 
 # Country names to drop entirely (data noise, not real foreign-resident entries)
-COUNTRY_DROP = {
-    "한국",  # Korea shouldn't appear in foreign-resident stats (data entry slip)
-}
+# 한국 used to be dropped here, inside clean_country. The status tables print it as
+# a line of their own (3 staying persons in 2012) and count it in the grand total,
+# so it now sits in DROP_NAMES, which every other table still applies, and in
+# RESIDUAL_LINES, which the status-table loaders keep. 2026-09-26.
+COUNTRY_DROP = set()
 
 
 def clean_country(name):
@@ -438,7 +452,7 @@ def load_legacy(year, path):
     # Clean country names
     body["_country"] = body[name_col].apply(clean_country)
     body = body[body["_country"].notna()]
-    body = body[~body["_country"].isin(DROP_NAMES)]
+    body = body[~body["_country"].isin(VISA_DROP)]
     # Also drop rows where the cleaned name contains '계' as last char (continent totals like 아시아주계)
     body = body[~body["_country"].str.endswith("계")]
     # Drop the global 총계 / Grand-Total row (sometimes ends with English name)
@@ -546,7 +560,9 @@ def load_modern(year, path):
         # Continent totals: col0='아시아주', col1='총계', col2='총계'.
         country_col = 1
         gender_col = 2
-        keep_gender = {"남성", "여성"}
+        # 2026-09-26: the stay table also prints a 제3의성 row (one person, under
+        # 오스트레일리아), counted in the grand total; M + F alone fell one short.
+        keep_gender = {"남성", "여성", "제3의성"}
     else:
         # 2020+: col0=대륙, col1=국적, col2=성별, col3=총합계.
         # Per-country rows have a 총계 row; continent totals have col1=NaN.
@@ -572,17 +588,29 @@ def load_modern(year, path):
         )].tolist()
         # The continent row itself is at idx; gender breakout is at idx+1, idx+2.
         # We'll drop continent row + 2 following rows.
+        # Drop the continent row and every gender row under it, up to the next row
+        # that names a country. It used to drop exactly two, which left a third
+        # gender row (제3의성 under 오세아니아주) to be forward-filled onto the
+        # country above.
         drop_idx = set()
         for ci in cont_idx:
-            for off in range(0, 3):
-                if ci + off < len(body):
-                    drop_idx.add(ci + off)
+            drop_idx.add(ci)
+            k = ci + 1
+            while (k < len(body) and pd.isna(body.at[k, country_col])
+                   and pd.isna(body.at[k, 0])):
+                drop_idx.add(k)
+                k += 1
         body = body.drop(index=list(drop_idx)).reset_index(drop=True)
         # Also drop the agg rows (col1='총계') if any remain
         body = body[~body[country_col].astype(str).str.strip().isin({"총계", "총합계", "소계"})]
         body = body.reset_index(drop=True)
     elif year >= 2020:
         # 2020+: Continent totals look like: col0='아시아주' (non-NaN), col1=NaN.
+        # The 기타 / 기타계 line looks the same but has no rows under it: it is the
+        # residual line itself (see RESIDUAL_LINES), so it takes a country name.
+        resid = (body[country_col].isna() & body[0].astype(str)
+                 .str.replace(r"\s", "", regex=True).isin({"기타", "기타계", "기타총계"}))
+        body.loc[resid, country_col] = "기타"
         agg_mask = body[country_col].isna() & body[0].notna()
         body = body[~agg_mask].reset_index(drop=True)
     # 2014-2018: country name is in col 0 directly; continent rows have col0
@@ -600,7 +628,7 @@ def load_modern(year, path):
     # Clean country names & drop continent/total rows
     body["_country"] = body[country_col].apply(clean_country)
     body = body[body["_country"].notna()]
-    body = body[~body["_country"].isin(DROP_NAMES)]
+    body = body[~body["_country"].isin(VISA_DROP)]
 
     # GATE: every header right of the total column must be a status the parser
     # reads, and a row's statuses must add up to its total (col 3: 소계 / 총합계).
@@ -3499,7 +3527,9 @@ def export_region_age_json(region_df, age_df, out_dir):
 
 
 print("\nExporting data.json for static site...")
-export_json(stay_long, reg_long, os.path.join(OUT_SITE_DATA, "data.json"))
+export_json(stay_long[~stay_long["country"].isin(RESIDUAL_LINES)],
+            reg_long[~reg_long["country"].isin(RESIDUAL_LINES)],
+            os.path.join(OUT_SITE_DATA, "data.json"))
 print("\nExporting region.json + age.json...")
 export_region_age_json(region_long, age_long, OUT_SITE_DATA)
 

@@ -646,6 +646,16 @@ def attach_breakdowns():
             return "integer"
         add = pd.DataFrame([(f, v, typ(v), d[0], d[1]) for f, v, d in rows],
                            columns=["file", "variable", "type", "description_en", "description_ko"])
+        # Two wide columns were renamed between v1.1.0 and v1.2.0: the old slug()
+        # dropped the accented letter, so v1.1.0 shipped nat_t_rkiye and lang_t_y.
+        # Say so on the rows, as index_base_k's row does for n_nationalities.
+        # 2026-09-26.
+        RENAMED = {"nat_turkiye": "nat_t_rkiye", "lang_tay": "lang_t_y"}
+        for v_new, v_old in RENAMED.items():
+            m = add["variable"] == v_new
+            add.loc[m, "description_en"] += (" This column carried the name %s through "
+                                             "v1.1.0." % v_old)
+            add.loc[m, "description_ko"] += " v1.1.0 까지 이름은 %s 였다." % v_old
         bad = [v for v in add["variable"] if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", v) or len(v) > 32]
         print(f"\nnew column defs: {len(add)} | invalid/over-32 Stata names:", bad if bad else "none")
         base_dict = pd.read_csv(os.path.join(ROOT, "04_dataset_release", "data_dictionary.csv"), encoding="utf-8-sig")

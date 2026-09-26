@@ -187,13 +187,18 @@ def readme_claims():
     lo, hi = min(emd_pct.values()), max(emd_pct.values())
     # README 가 적은 하한·상한이 실측을 담는가. 문장 꼴이 바뀌어도 읽히도록
     # 백분율 둘을 찾아 견준다.
+    # 2026-09-26: README 는 이제 2014·2015 를 해마다, 그 뒤는 하한만 적는다
+    # (「96.3% in 2014, 97.9% in 2015, and 99.7% or more in every later year」).
     rx = __import__("re")
-    m = rx.search(r"Between ([\d.]+)% \([0-9]{4}\) and ([\d.]+)%", txt)
+    m = rx.search(r"([\d.]+)% in 2014, ([\d.]+)% in 2015, and ([\d.]+)% or more in "
+                  r"every later year", txt)
     if m:
-        said_lo, said_hi = float(m.group(1)), float(m.group(2))
-        check(abs(said_lo - lo) < 0.06 and abs(said_hi - hi) < 0.06,
-              "adm_code 하한·상한 서술이 실측(%.1f-%.1f%%)과 같다" % (lo, hi),
-              m.group(0))
+        later = min(v for y, v in emd_pct.items() if y >= 2016)
+        ok = (abs(float(m.group(1)) - emd_pct[2014]) < 0.06
+              and abs(float(m.group(2)) - emd_pct[2015]) < 0.06
+              and float(m.group(3)) <= later + 1e-9 and later - float(m.group(3)) < 0.1)
+        check(ok, "adm_code 붙임율 서술이 실측(2014 %.1f, 2015 %.1f, 이후 최저 %.2f%%)과 같다"
+              % (emd_pct[2014], emd_pct[2015], later), m.group(0))
     else:
         check(False, "adm_code 서술을 README 에서 못 찾았다 (실측 %.1f-%.1f%%)"
               % (lo, hi))

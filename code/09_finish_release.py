@@ -69,7 +69,7 @@ COUNTRY_EN_FILL = {
     "앤티카바부다": "Antigua and Barbuda", "영국외지민": "British Overseas Citizen",
     "터키": "Turkey", "홍콩거주난민": "Hong Kong refugee", "러시아": "Russia",
     "미등록국가": "Unregistered country", "미상": "Unknown",
-    "기타": "Other",
+    "기타": "Other", "한국": "Republic of Korea",
 }
 
 # Bare cities / counties / gu in the MOIS sub-district files (not in the MOJ-unit lut).
@@ -469,6 +469,7 @@ def finalize_release():
     canonicalize_country_labels()
     recount_observed_nationalities()
     add_admin_codes()
+    harmonize_district_labels()
     add_emd_code_to_multicultural()
     validate_code_join()
 
@@ -686,6 +687,57 @@ def add_admin_codes():
             print(f"    {level} {year} {sido} {name} x{n:,}")
     else:
         print("  every place name resolved")
+
+
+def harmonize_district_labels():
+    """One district name per (year, sigungu_code), the name the district files use.
+
+    The MOJ district files carry one continuous label per district (미추홀구 through
+    the whole panel, 부천시 as one unit, the post-merger names for 청원군 and the
+    rest). The MOIS files copied whatever each edition printed: 남구 until 2017;
+    수원시, 성남시 and the other general-district cities undivided in 2014 although
+    each dong already carried its gu's code; 청원군 in 2011-2014; and Bucheon's dongs
+    under 원미구/소사구/오정구 in 2015 and 2024 but under 부천시 in the other years.
+    A filter or join on the sigungu text therefore dropped or split rows the code
+    kept together (the audit of 2026-09-26 found Bucheon missing from 2015 and
+    2024). The code is already right, so the name is taken from the district files
+    for that code and year; the rows themselves do not change.
+    """
+    sgg = read(os.path.join(DATA, "summary_by_sigungu.csv"))
+    if "sigungu_code" not in sgg.columns:
+        return
+    lab = (sgg.dropna(subset=["sigungu_code"])
+              .groupby(["year", "sigungu_code"])[["sigungu", "sigungu_en"]]
+              .agg(lambda v: sorted(set(v))))
+    amb = lab[lab["sigungu"].map(len) > 1]
+    if len(amb):
+        raise SystemExit(f"summary_by_sigungu gives one code two names: {amb.head()}")
+    name = {k: (r["sigungu"][0], r["sigungu_en"][0]) for k, r in lab.iterrows()}
+    keys = {"summary_by_eupmyeondong.csv": ["year", "sido", "sigungu", "eupmyeondong"],
+            "multicultural_households.csv": ["year", "sido", "sigungu", "eupmyeondong",
+                                             "category"],
+            "children_by_age.csv": ["year", "sido", "sigungu", "age"]}
+    print("")
+    print("district names harmonized onto the district files' label per code:")
+    for p in files():
+        fn = os.path.basename(p)
+        d = read(p)
+        if not {"year", "sigungu", "sigungu_code"} <= set(d.columns):
+            continue
+        new = [name.get((y, c)) for y, c in zip(d["year"], d["sigungu_code"])]
+        m = [bool(n) and n[0] != s_ for n, s_ in zip(new, d["sigungu"])]
+        if not any(m):
+            continue
+        changed = sorted({(d.at[i, "sigungu"], new[i][0]) for i in range(len(d)) if m[i]})
+        d.loc[m, "sigungu"] = [new[i][0] for i in range(len(d)) if m[i]]
+        if "sigungu_en" in d.columns:
+            d.loc[m, "sigungu_en"] = [new[i][1] for i in range(len(d)) if m[i]]
+        k = [c for c in keys.get(fn, ["year", "sido", "sigungu"]) if c in d.columns]
+        if fn in keys and d.duplicated(k).any():
+            raise SystemExit(f"{fn}: {int(d.duplicated(k).sum())} duplicate {k} after "
+                             f"the relabel")
+        write(d, p)
+        print(f"  {fn}: {sum(m):,} rows, {len(changed)} name pairs, e.g. {changed[:4]}")
 
 
 def validate_code_join():
@@ -917,7 +969,19 @@ def build_segregation():
     reg = pd.read_csv(os.path.join(DATA, "region_segregation.csv"), encoding="utf-8-sig")
     na = pd.read_csv(os.path.join(DATA, "national_annual.csv"), encoding="utf-8-sig")
 
-    C2REGION = dict(seg[["country", "continent"]].dropna().drop_duplicates().values)
+    # 2026-09-26: the region of a nationality comes from kird.COUNTRY_REGION, the map
+    # behind continent_H and crosswalk_country. It used to come from
+    # segregation_by_nationality, which lists only nationalities of 100 or more, so
+    # every smaller one fell into 기타: 2,483 people in 2024 where crosswalk_country
+    # puts 58 there (국적불명, 국제연합, 국제연합전문기구), and every other region
+    # was short by what it lost. The two maps must agree where both speak.
+    from kird import COUNTRY_REGION, OTHER_REGION
+    _seg_map = dict(seg[["country", "continent"]].dropna().drop_duplicates().values)
+    _disagree = {c: (r, COUNTRY_REGION.get(c, OTHER_REGION)) for c, r in _seg_map.items()
+                 if COUNTRY_REGION.get(c, OTHER_REGION) != r}
+    if _disagree:
+        raise SystemExit(f"segregation_by_nationality and COUNTRY_REGION disagree: {_disagree}")
+    C2REGION = {c: COUNTRY_REGION.get(c, OTHER_REGION) for c in nat["country"].unique()}
     C2REGEN = dict(seg[["continent", "continent_en"]].dropna().drop_duplicates().values)
 
 
@@ -1009,6 +1073,82 @@ def build_segregation():
 
 
 
+def dictionary_facts(data):
+    """The data-dependent numbers the dictionary prose quotes, read from `data`.
+
+    validate_release.check_dictionary_numbers re-derives the same numbers from a
+    downloaded deposit, so the two must stay in step.
+    """
+    def rd(name, **kw):
+        return pd.read_csv(os.path.join(data, name), encoding="utf-8-sig", **kw)
+
+    def pct(x):
+        return "%.1f%%" % x
+
+    def years_text(ys):
+        ys = sorted(int(y) for y in ys)
+        if not ys:
+            return "no year"
+        runs, a = [], ys[0]
+        for p, q in zip(ys, ys[1:] + [None]):
+            if q != p + 1:
+                runs.append(str(a) if a == p else "%d-%d" % (a, p))
+                a = q
+        return ", ".join(runs[:-1]) + (" and " if len(runs) > 1 else "") + runs[-1]
+
+    F = {}
+    emd = rd("summary_by_eupmyeondong.csv", dtype={"adm_code": str})
+    b = emd["adm_code"].isna() | (emd["adm_code"].astype(str).str.strip() == "")
+    rate = b.groupby(emd["year"]).mean() * 100
+    F["adm_2014"], F["adm_2015"] = pct(rate.get(2014, 0)), pct(rate.get(2015, 0))
+    F["adm_later_max"] = pct(rate[rate.index >= 2016].max())
+
+    sg = rd("summary_by_sigungu.csv")
+    F["last"] = last = int(sg["year"].max())
+    n_class = sg.dropna(subset=["lisa"]).groupby("year").size()
+    F["lisa_n"] = int(round(n_class.mean()))
+    F["lisa_chance"] = int(round(0.05 * F["lisa_n"]))
+    L = sg[sg["year"] == last]
+    sig = {"HH", "LL", "HL", "LH"}
+    F["unc_sig"] = int(L["lisa"].isin(sig).sum())
+    F["unc_hh"] = int((L["lisa"] == "HH").sum())
+    F["fdr_sig"] = int(L["lisa_fdr"].isin(sig).sum())
+    F["fdr_hh"] = int((L["lisa_fdr"] == "HH").sum())
+
+    vbn = rd("visa_by_nationality.csv")
+    reg = vbn[vbn["population"] == "registered"]
+    F["stateless_years"] = years_text(reg.loc[reg["country"] == "무국적", "year"].unique())
+    F["unreg_years"] = years_text(reg.loc[reg["country"].isin(["미등록국가", "미상"]),
+                                          "year"].unique())
+    F["other_years"] = years_text(reg.loc[reg["country"] == "기타", "year"].unique())
+    F["korea_years"] = years_text(vbn.loc[vbn["country"] == "한국", "year"].unique())
+    x00 = vbn[(vbn["visa_code"] == "X00") & (vbn["population"] == "stay")]["n"].sum()
+    F["x00"] = format(int(x00), ",")
+
+    F["age_bands"] = int(rd("age_sex_national.csv")["age_group"].nunique())
+
+    ann = rd("naturalization_annual.csv")
+    F["nat_annual_span"] = "%d-%d" % (ann["year"].min(), ann["year"].max())
+    pc = rd("naturalization_by_country.csv")
+    F["nat_panel_span"] = "%d-%d" % (pc["year"].min(), pc["year"].max())
+    F["nat_revised_cells"] = 11     # the KNOWN_REVISIONS of 07_build_naturalization
+
+    rs = rd("region_segregation.csv")
+    F["region_other"] = format(int(rs.loc[(rs["year"] == last) & (rs["continent"] == "기타"),
+                                          "total"].sum()), ",")
+
+    dia = rd("diaspora_residence_by_sido.csv")
+    k = dia[dia["country"] != "기타"].groupby("year")["country"].nunique()
+    F["diaspora_names"] = (int(k.min()), int(k.max()), int(k.min()), int(k.idxmin()),
+                           int(k.max()), int(k.idxmax()))
+    vn = rd("visa_national.csv")
+    f4 = vn[(vn["population"] == "stay") & (vn["visa_code"] == "F4")].groupby("year")["n"].sum()
+    dt = dia.groupby("year")["n"].sum()
+    j = pd.concat([dt, f4], axis=1, keys=["d", "f"]).dropna()
+    F["diaspora_f4_gap"] = pct(float(((j["d"] - j["f"]).abs() / j["f"] * 100).max()))
+    return F
+
+
 def build_data_dictionary():
     """../data_dictionary.csv, from a curated bilingual column spec.
 
@@ -1033,6 +1173,13 @@ def build_data_dictionary():
 
     SIDO_CODE_FILES = files_with("sido_code")
     SIGUNGU_CODE_FILES = files_with("sigungu_code")
+
+    # ---- the numbers the prose quotes, read from the files (2026-09-26) ----
+    # Until this date they were typed in and went stale: lisa_fdr said "52 and 16
+    # uncorrected" where the file gave 51 and 14, region_segregation said 2,501 where
+    # it held 2,483, adm_code said "~1%" where 2014 was 3.7%. validate_release.py
+    # re-derives each of them from the deposited files and fails on a mismatch.
+    F = dictionary_facts(DATA)
 
     # spec: list of (file_label, variable, type, description_en, description_ko)
     SPEC = [
@@ -1100,11 +1247,15 @@ def build_data_dictionary():
          "Official administrative-dong code for that year, as the year's boundary "
          "snapshot carries it (source: vuski/admdongkor): 7-digit for 2014/2015/2017, "
          "10-digit standard code for 2016 and 2018-2023, 8-digit statistical (SGIS) code "
-         "for 2024. Join to the boundary file of the same year. Blank for the ~1% of "
-         "dong names with no boundary match that year.",
+         "for 2024. Join to the boundary file of the same year. Blank where the dong "
+         "name has no boundary match that year: %s of rows in 2014, %s in 2015, "
+         "and at most %s in any later year." % (F["adm_2014"], F["adm_2015"],
+                                                F["adm_later_max"]),
          "그 해 경계 스냅숏(vuski/admdongkor)이 싣는 행정동코드. 2014/2015/2017=7자리, "
          "2016·2018-2023=10자리 표준코드, 2024=8자리 통계(SGIS) 코드. 같은 해의 경계 "
-         "파일에 붙이십시오. 경계 미매칭 약 1%는 공백."),
+         "파일에 붙이십시오. 그 해 경계와 이름이 맞지 않는 동은 공백: 2014년 %s, "
+         "2015년 %s, 그 뒤로는 해마다 %s 이하." % (F["adm_2014"], F["adm_2015"],
+                                                  F["adm_later_max"])),
         ("summary_by_sido.csv / summary_by_sigungu.csv", "registered_foreigners", "integer",
          "MOJ registered foreigners (long-term, >90 days). Not published at the "
          "eup/myeon/dong level. District (sigungu) values begin in 2008.",
@@ -1181,28 +1332,31 @@ def build_data_dictionary():
         ("summary_by_sigungu.csv", "lisa", "string",
          "Local Moran cluster class of the district's foreign share: HH / LL / HL / LH "
          "(99,999-permutation conditional randomization, p<0.05, no multiple-comparison "
-         "correction) or ns. Roughly 242 districts are tested each year, so about 12 "
+         "correction) or ns. About %d districts carry a class each year, so about %d "
          "reach p<0.05 by chance; use lisa_fdr for a corrected reading. Island "
          "districts with no contiguous neighbor are ns, since the statistic is not "
          "defined there. Every year of the panel is computed, including the years "
          "before 2014: the statistic needs only the foreign share, which this file "
-         "carries from 2008. Sigungu only.",
+         "carries from 2008. Sigungu only." % (F["lisa_n"], F["lisa_chance"]),
          "시군구 외국인비율의 국지적 Moran 군집 분류: HH/LL/HL/LH(99,999회 순열, p<0.05, "
-         "다중비교 보정 없음) 또는 ns. 해마다 약 242곳을 검정하므로 우연히 12곳가량이 "
+         "다중비교 보정 없음) 또는 ns. 해마다 약 %d곳에 분류가 붙으므로 우연히 %d곳가량이 "
          "p<0.05 에 걸린다. 보정된 판정은 lisa_fdr 을 쓰십시오. 인접 이웃이 없는 도서 "
          "시군구는 ns(통계가 정의되지 않음). 2014년 이전을 포함해 모든 해를 계산합니다. "
-         "이 통계에 필요한 것은 외국인 비율뿐이고 이 파일이 2008년부터 담습니다. 시군구 전용."),
+         "이 통계에 필요한 것은 외국인 비율뿐이고 이 파일이 2008년부터 담습니다. 시군구 전용."
+         % (F["lisa_n"], F["lisa_chance"])),
         ("summary_by_sigungu.csv", "lisa_fdr", "string",
          "The same local Moran classes after a Benjamini-Hochberg false-discovery-rate "
          "correction at q=0.05 across the districts tested that year, or ns. Far fewer "
-         "districts survive: in 2024 two do and none of them is high-high, against 52 "
-         "and 16 uncorrected. The 99,999 permutations exist so that this correction is "
-         "possible at all; with 999 the smallest attainable p exceeds the first "
-         "Benjamini-Hochberg threshold and nothing can pass.",
+         "districts survive: in %d, %d do (%d of them high-high), against %d (%d "
+         "high-high) uncorrected. The 99,999 permutations exist so that this correction "
+         "is possible at all; with 999 the smallest attainable p exceeds the first "
+         "Benjamini-Hochberg threshold and nothing can pass."
+         % (F["last"], F["fdr_sig"], F["fdr_hh"], F["unc_sig"], F["unc_hh"]),
          "같은 분류에 Benjamini-Hochberg 위발견율 보정(q=0.05)을 걸어 남은 것, 아니면 ns. "
-         "훨씬 적게 남는다. 2024년은 2곳이고 그중 고-고는 없다(보정 전 52곳, 고-고 16곳). "
+         "훨씬 적게 남는다. %d년은 %d곳이고 그중 고-고는 %d곳이다(보정 전 %d곳, 고-고 %d곳). "
          "순열을 99,999회로 둔 것이 이 보정을 가능하게 하려는 것이다. 999회면 최소 p 가 "
-         "BH 의 첫 문턱보다 커서 아무것도 통과하지 못한다."),
+         "BH 의 첫 문턱보다 커서 아무것도 통과하지 못한다."
+         % (F["last"], F["fdr_sig"], F["fdr_hh"], F["unc_sig"], F["unc_hh"])),
         # ---------- MOJ breakdowns ----------
         ("nationality_by_sigungu.csv / visa_by_sigungu.csv / visa_by_nationality.csv / "
          "age_sex_national.csv / children_by_age.csv / multicultural_households.csv",
@@ -1225,7 +1379,19 @@ def build_data_dictionary():
          "Population base (values: registered / stay): staying foreigners (체류) or registered foreigners (등록).",
          "모집단: 체류외국인 또는 등록외국인."),
         ("visa_by_nationality.csv", "country / country_en", "string",
-         "Nationality (Korean + English).", "국적(한글+영문)."),
+         "Nationality (Korean + English), plus the lines the yearbook prints that name "
+         "no nationality: 무국적 (Stateless) in %s, 미등록국가 (Unregistered country) "
+         "and 미상 (Unknown) in %s, a single 기타 (Other) line in %s, when the "
+         "yearbook prints no stateless line, and 한국 (Republic of Korea) in %s. They "
+         "are carried so that each year adds "
+         "up to the yearbook's printed grand total; no index, crosswalk region or "
+         "district table uses them." % (F["stateless_years"], F["unreg_years"],
+                                        F["other_years"], F["korea_years"]),
+         "국적(한글+영문). 연보가 국적이 아닌 줄로 싣는 것도 함께 싣습니다: 무국적 "
+         "(%s), 미등록국가·미상(%s), 무국적을 따로 싣지 않는 해의 기타 한 줄(%s), 한국(%s). 해마다 "
+         "연보가 인쇄한 총계와 맞도록 싣는 것이며, 어떤 지수나 권역, 시군구 표도 이 줄을 "
+         "쓰지 않습니다." % (F["stateless_years"], F["unreg_years"], F["other_years"],
+                              F["korea_years"])),
         ("visa_by_nationality.csv", "visa_code", "string",
          "Visa/status-of-stay code, written without hyphens (E9, F4 = the source's "
          "E-9, F-4).", "체류자격(비자) 코드, 하이픈 없이 표기(E9, F4 = 원자료의 E-9, F-4)."),
@@ -1235,11 +1401,11 @@ def build_data_dictionary():
          "연수취업 (trainee employment) status the 2006-2009 editions print as E-8; "
          "E8 from 2021 on is 계절근로 (seasonal worker), a different status that reused "
          "the code, and no edition prints E-8 from 2010 to 2020. X00 is 자격없음 (0-0), "
-         "people the 2014 stay table records with no status (434).",
+         "people the 2014 stay table records with no status (%s)." % F["x00"],
          "비자 분류 라벨(한글+영문). 2006-2011 일부 옛 코드는 원자료에 설명 라벨이 없어 코드를 "
          "그대로 둠(예 M1). E8T 는 2006-2009년판이 E-8 로 싣는 연수취업이고, 2021년판부터의 "
          "E8 은 같은 코드를 다시 쓴 다른 자격인 계절근로다. 2010-2020년판에는 E-8 칸이 없다. "
-         "X00 은 2014년 체류외국인 표의 자격없음(0-0), 434명."),
+         "X00 은 2014년 체류외국인 표의 자격없음(0-0), %s명." % F["x00"]),
         ("visa_by_nationality.csv", "n", "integer",
          "Count for that population x nationality x visa x year (2006-2024).",
          "모집단×국적×비자×연도 인원(2006-2024)."),
@@ -1250,13 +1416,17 @@ def build_data_dictionary():
          "the registered population and comes from 국적(지역) 및 연령별 체류외국인 현황, "
          "which the yearbook first publishes in its 2011 edition. The two are different populations: "
          "filter to one before summing or comparing years, and never splice one onto "
-         "the other. Each matches nationality_national.csv for the same population.",
+         "the other. Each matches nationality_national.csv for the same population, "
+         "nationality by nationality; nationality_national also carries the "
+         "yearbook's non-nationality lines (무국적, 기타, 미등록국가, 미상, 한국), which this "
+         "table does not.",
          "모집단(값: registered / stay). registered = 등록외국인, 연보 「국적(지역) 및 "
          "연령별 등록외국인 현황」, 2009-2024. stay = 체류외국인(등록 + 단기체류 + "
          "재외동포 거소신고), 「국적(지역) 및 연령별 체류외국인 현황」, 2011-2024(연보가 "
          "2011년판부터 싣습니다). 서로 다른 모집단이므로 합하거나 연도를 견주기 전에 "
          "하나로 거르고, 한 계열을 다른 계열에 잇지 마십시오. 각 계열은 같은 모집단의 "
-         "nationality_national.csv 와 맞습니다."),
+         "nationality_national.csv 와 국적마다 맞습니다. nationality_national 은 연보의 "
+         "국적 아닌 줄(무국적·기타·미등록국가·미상·한국)도 싣지만 이 표는 싣지 않습니다."),
         ("age_sex_national.csv", "country / country_en", "string",
          "Nationality (Korean + English).", "국적(한글+영문)."),
         ("age_sex_national.csv", "gender", "string",
@@ -1270,7 +1440,7 @@ def build_data_dictionary():
          "보다 몇 명 적습니다(전국 2022년 3명, 2023년 7명, 2024년 9명). 등록외국인 표에는 "
          "그 행이 없습니다. 총계는 T 를 쓰십시오."),
         ("age_sex_national.csv", "age_group", "string",
-         "Age band: 0-4, 5-9, ... 55-59, 60+ (13 bands in every year).",
+         "Age band: 0-4, 5-9, ... 55-59, 60+ (%d bands in every year)." % F["age_bands"],
          "연령대: 0-4, 5-9, ... 55-59, 60+ (모든 해 13구간)."),
         ("age_sex_national.csv", "n", "integer",
          "MOJ count for that population x nationality x age x sex x year: registered "
@@ -1328,9 +1498,16 @@ def build_data_dictionary():
         # ---------- naturalization ----------
         ("naturalization_annual.csv / naturalization_by_country.csv / naturalization_by_age.csv",
          "year", "integer",
-         "Reference year. The annual series runs 2011-2024; the by-country and by-age "
-         "panels run 2009-2024, one year per yearbook edition.",
-         "기준연도. 연도별 시계열 2011-2024, 국적별·연령별 패널 2009-2024(연보 1권당 1개 연도)."),
+         "Reference year. The annual series runs %s; the by-country and by-age "
+         "panels run %s, one year per yearbook edition. They start with the 2011 "
+         "edition because the 2009 and 2010 editions print these two tables "
+         "cumulatively, from 1991 to the edition year (363,131 and 405,170 cases "
+         "against 49,820 and 42,039 in the year itself); those two editions are not "
+         "used." % (F["nat_annual_span"], F["nat_panel_span"]),
+         "기준연도. 연도별 시계열 %s, 국적별·연령별 패널 %s(연보 1권당 1개 연도). "
+         "2009·2010년판의 이 두 표는 1991년부터 그 해까지의 누계(363,131건과 405,170건. "
+         "그 해만은 49,820건과 42,039건)라 쓰지 않고, 패널은 2011년판부터다."
+         % (F["nat_annual_span"], F["nat_panel_span"])),
         ("naturalization_by_country.csv", "country / country_en", "string",
          "Former nationality (Korean + English). Three labels are not nationalities "
          "of crosswalk_country.csv. 한국 (Republic of Korea) appears only under the "
@@ -1347,9 +1524,24 @@ def build_data_dictionary():
          "않고 중국·러시아에 넣어 싣기 때문에 합친 단위로 따로 둡니다. 다른 해의 중국에는 "
          "한국계중국인이 들어 있지 않습니다."),
         ("naturalization_by_age.csv", "age", "string",
-         "Ten-year age band, harmonized across editions by publication order because the "
-         "source labels the same bins four different ways (0~10세 / 0~10 / a bare 10 / 0세~9세).",
-         "10세 단위 연령대. 연보마다 표기가 달라(0~10세 / 0~10 / 10 / 0세~9세) 게재 순서로 통일."),
+         "Ten-year age band (0-9, 10-19, ..., 80-89, 90+), read from each row's own "
+         "label. The editions print the same ten bands five ways: 0~10세 / 11~20 / ... "
+         "/ 91세이상 (2011, 2017), 0-10세 / 11~20 (2020), 0~10 / 10~20 / ... / 80~90 "
+         "(2012-2013), 0세~9세 / 10세~19세 / ... / 90세이상 (2021-2022), and bare "
+         "numerals 10, 20, ... 90, 99 (2014-2016, 2018-2019, 2023-2024). A bare numeral "
+         "is the band's upper bound (10 = 0-9, 90 = 80-89, 99 = 90 and over): the "
+         "editions with explicit labels print the same table, and acquisition by a "
+         "parent's naturalization (수반취득, minors) sits in the bare-10 row exactly as "
+         "it sits in the 0세~9세 row. The build stops if an edition's labels do not "
+         "give ten bands in this order.",
+         "10세 단위 연령대(0-9, 10-19, ..., 80-89, 90+). 행마다 제 라벨에서 읽는다. 연보는 "
+         "같은 열 칸을 다섯 가지로 적는다: 0~10세/11~20/…/91세이상(2011, 2017), "
+         "0-10세/11~20(2020), 0~10/10~20/…/80~90(2012-2013), 0세~9세/…/90세이상"
+         "(2021-2022), 숫자만 10, 20, …, 90, 99(2014-2016, 2018-2019, 2023-2024). 숫자만 "
+         "적은 것은 그 칸의 위 끝이다(10 = 0-9세, 90 = 80-89세, 99 = 90세 이상). 라벨을 "
+         "다 적은 판이 같은 표를 싣고, 부모의 귀화에 따른 수반취득(미성년)이 그 판의 "
+         "0세~9세 칸에 있듯 숫자 10 칸에 있다. 한 판의 라벨이 이 순서의 열 칸을 주지 "
+         "않으면 빌드가 멈춘다."),
         ("naturalization_annual.csv / naturalization_by_country.csv / naturalization_by_age.csv",
          "type / type_en", "string",
          "Nationality-processing route (Korean + English). Editions before 2014 publish a "
@@ -1358,14 +1550,28 @@ def build_data_dictionary():
          "what the annual table calls 귀화. In naturalization_by_age the 2014 edition "
          "prints 귀화소계 without the four routes, which start in 2015. Summed over "
          "countries or ages, 귀화소계 (귀화 before 2014) equals naturalization_annual's "
-         "귀화 in every year from 2011, except naturalization_by_age 2012, whose own "
-         "age cells sum 1 short of its printed total.",
+         "귀화 in every year, except naturalization_by_age 2012 (10,539 against "
+         "10,540). 국적회복, 국적판정 and 국적이탈 equal the annual series in every "
+         "year in both panels. The other types differ in %d cells, each read in the "
+         "raw editions: the annual series is the newest edition's trend table, which "
+         "MOJ revises, while each panel year is that year's edition. 2018 in both "
+         "panels: 국적보유 86 (annual 89), 국적상실 26,608 (26,607), 국적선택 1,714 "
+         "(1,719), 국적취득 (인지) 504 (506). 2012 naturalization_by_age: 국적상실 "
+         "17,642 (17,641), and 귀화 above. 2013 in both panels: the edition's 국적취득 "
+         "column holds re-acquisition only (419), without the 343 acquisitions by "
+         "recognition the annual series adds." % F["nat_revised_cells"],
          "국적처리 유형(한글+영문). 2014년 이전 연보는 귀화 단일 컬럼, 이후는 일반·간이·특별귀화와 "
          "수반취득으로 분리되며 귀화소계는 그 합(연도별 표의 귀화와 동일 정의). "
          "naturalization_by_age 의 2014년판은 귀화소계만 싣고 네 경로는 2015년부터다. 국적이나 "
-         "연령을 더한 귀화소계(2014년 전은 귀화)는 2011년부터 해마다 naturalization_annual 의 "
-         "귀화와 같다. 예외는 naturalization_by_age 2012년으로, 원자료의 연령 칸 합이 제 "
-         "총계보다 1 적다."),
+         "연령을 더한 귀화소계(2014년 전은 귀화)는 해마다 naturalization_annual 의 "
+         "귀화와 같고, 예외는 naturalization_by_age 2012년(10,539 대 10,540)이다. "
+         "국적회복·국적판정·국적이탈은 두 패널 모두 해마다 같다. 나머지 유형은 %d칸이 "
+         "다르며 모두 원자료에서 확인했다. 연도별 표는 법무부가 고치는 최신판의 추이표이고 "
+         "패널의 각 해는 그 해의 판이기 때문이다. 2018년 두 패널: 국적보유 86(연도별 89), "
+         "국적상실 26,608(26,607), 국적선택 1,714(1,719), 국적취득(인지) 504(506). "
+         "2012년 연령별: 국적상실 17,642(17,641)와 위의 귀화. 2013년 두 패널: 그 판의 "
+         "국적취득 칸은 재취득(419)만 담고 연도별 표가 더하는 인지 343건이 없다."
+         % F["nat_revised_cells"]),
         ("naturalization_annual.csv / naturalization_by_country.csv / naturalization_by_age.csv",
          "n", "integer", "Count of cases.", "건수."),
         # ---------- derived ----------
@@ -1449,7 +1655,8 @@ def build_data_dictionary():
          "기준연도(2006-2024)."),
         ("language_demand.csv", "scope", "string",
          "'national' (all languages, computed from the published national "
-         "staying-foreigners composition, nationality_national population='stay'), "
+         "staying-foreigners composition, the nationalities of nationality_national "
+         "population='stay'), "
          "'sido' (all languages per province, computed from the registered "
          "district-assigned sums in nationality_by_sido; added in v1.2.0), or "
          "'sigungu' (top ~20 languages per district, from nationality_by_sigungu). "
@@ -1500,9 +1707,14 @@ def build_data_dictionary():
         ("nationality_national.csv",
          "year / population / country / country_en / n", "mixed",
          "visa_by_nationality summed over visa_code, 2006-2024: the published "
-         "national count of that nationality, for both population bases.",
+         "national count of that nationality, for both population bases, with the "
+         "yearbook's non-nationality lines (see visa_by_nationality.country). Each "
+         "year sums to the grand total the yearbook prints, on both bases (staying "
+         "basis from 2011; 2006-2010 is composed from three tables).",
          "visa_by_nationality 를 자격에 대해 더한 것(2006-2024). 그 국적의 공표 전국 "
-         "수이며 두 인구 기준을 모두 싣는다."),
+         "수이며 두 인구 기준을 모두 싣고, 연보의 국적 아닌 줄도 싣는다"
+         "(visa_by_nationality.country 참조). 해마다 두 기준 모두 연보가 인쇄한 총계와 "
+         "같다(체류 기준은 2011년부터, 2006-2010은 세 표를 합친 값)."),
         ("visa_by_sido.csv", "year / sido / sido_en / visa_code / n", "mixed",
          "visa_by_sigungu summed within the province, 2008-2024. Allocated basis, "
          "as nationality_by_sido.",
@@ -1536,19 +1748,20 @@ def build_data_dictionary():
          "출신 대륙·권역(한글+영문). v1.1.0 까지 region 이라는 이름이었다. 값은 한국의 "
          "지역이 아니라 출신 대륙이다."),
         ("region_segregation.csv", "total", "integer",
-         "National count of foreigners from that region **on the index basis**: "
-         "nationalities outside a year's top 19 are pooled into 기타 (Other) before "
-         "the regions are formed, so a region's total here is below its full "
-         "nationality sum in nationality_by_sigungu and 기타 is correspondingly "
-         "larger (2024: 2,501 people, 0.17% of the panel). Use "
-         "nationality_by_sigungu with crosswalk_country for full-detail regional "
-         "counts; use this column only with the D and isolation values beside it, "
-         "which are computed on the same basis.",
-         "그 권역의 전국 수 **(지수 밑변 기준)**. 그 해 상위 19개 밖 국적은 권역을 "
-         "만들기 전에 기타로 모이므로, 여기의 권역 합은 nationality_by_sigungu 의 "
-         "전체 국적 합보다 작고 기타는 그만큼 크다(2024년 2,501명, 패널의 0.17%). "
-         "전체 국적 기준 권역 수가 필요하면 nationality_by_sigungu 와 "
-         "crosswalk_country 를 쓰고, 이 칸은 옆의 D·isolation 과 함께만 쓴다."),
+         "National count of registered foreigners from that region: every nationality "
+         "in nationality_by_sigungu, summed by the continent crosswalk_country assigns "
+         "it (the same map continent_H uses), so it equals that sum exactly. 기타 "
+         "(Other) holds only the labels that name no country (국적불명, 국제연합, "
+         "국제연합전문기구): %s people in %d. Until the 2026-09-26 build the regions were "
+         "formed from segregation_by_nationality, which lists nationalities of 100 or "
+         "more, and every smaller nationality fell into 기타 (2,483 people in 2024)."
+         % (F["region_other"], F["last"]),
+         "그 권역의 전국 등록외국인 수. nationality_by_sigungu 의 모든 국적을 "
+         "crosswalk_country 의 대륙(continent_H 와 같은 대응표)으로 더한 것이라 그 합과 "
+         "정확히 같다. 기타에는 나라가 아닌 이름(국적불명, 국제연합, 국제연합전문기구)만 "
+         "들어가며 %d년 %s명이다. 2026-09-26 빌드 전에는 권역을 "
+         "segregation_by_nationality(100명 이상 국적만 실음)에서 만들어, 그보다 작은 "
+         "국적이 모두 기타로 들어갔다(2024년 2,483명)." % (F["last"], F["region_other"])),
         ("region_segregation.csv", "dissimilarity_D", "float",
          "Index of dissimilarity (D) vs Koreans across districts.",
          "내국인 대비 비유사성 지수(D)."),
@@ -1596,26 +1809,35 @@ def build_data_dictionary():
          "the rest of the panel uses.",
          "광역시·도(한글+영문). 다른 파일과 같은 고정 이름 집합을 씁니다."),
         ("diaspora_residence_by_sido.csv", "country / country_en", "string",
-         "Nationality of the overseas Korean, as the yearbook prints it, with its English "
-         "name. The yearbook names 11 to 13 nationalities in the early years and up to "
-         "94 from 2017. The residual 기타 is not read from the source but computed as the "
-         "province total minus the named nationalities, because the 2011 sheet's own "
-         "residual cell is inconsistent with its province rows.",
-         "재외동포의 국적(한글+영문). 한글은 연보가 인쇄한 그대로입니다. 초기에는 11~13개, "
-         "2017년부터는 최대 94개를 적습니다. 잔여 항목 「기타」는 원본에서 읽지 않고 시도 "
+         "Nationality of the overseas Korean, with its English name. The yearbook names "
+         "between %d and %d nationalities a year (%d in %d, %d in %d). Everyone in "
+         "the table is ethnic Korean, so its China and Russia columns are the "
+         "Korean-Chinese and Korean-Russian populations; the editions head them 중국 "
+         "and 러시아 through 2017 and 한국계 중국인 and 한국계 러시아인 later (Russia "
+         "already in 2014-2015), and the file writes 한국계중국인 and 한국계러시아인 in "
+         "every year so each series runs unbroken. The residual 기타 is not read from "
+         "the source but computed as the province total minus the named "
+         "nationalities, because the 2011 sheet's own residual cell is inconsistent "
+         "with its province rows." % F["diaspora_names"],
+         "재외동포의 국적(한글+영문). 연보는 해마다 %d~%d개 국적을 적습니다(%d개 %d년, "
+         "%d개 %d년). 표의 모든 사람이 동포이므로 중국·러시아 칸은 한국계중국인·"
+         "한국계러시아인입니다. 연보는 2017년까지 중국·러시아, 그 뒤로 한국계 중국인·"
+         "한국계 러시아인이라 적고(러시아는 2014-2015년에도), 이 파일은 계열이 끊기지 "
+         "않도록 모든 해에 한국계중국인·한국계러시아인으로 씁니다. "
+         "잔여 항목 「기타」는 원본에서 읽지 않고 시도 "
          "총계에서 명시된 국적의 합을 뺀 값으로 계산합니다. 2011년 시트의 기타 칸이 그 시도 "
-         "행들과 어긋나 있기 때문입니다."),
+         "행들과 어긋나 있기 때문입니다." % F["diaspora_names"]),
         ("diaspora_residence_by_sido.csv", "n", "integer",
          "Number of overseas-Korean residence reports (거소신고). These are holders of the "
          "F-4 status, who file a place-of-residence report under the Overseas Koreans Act "
          "instead of a foreign-resident registration, and therefore never appear in "
-         "visa_by_sigungu or visa_by_sido. The yearly totals sit within 1.2% of the F-4 "
+         "visa_by_sigungu or visa_by_sido. The yearly totals sit within %s of the F-4 "
          "count in visa_national on the staying basis. The source publishes this at "
-         "province level only, so there is no district file.",
+         "province level only, so there is no district file." % F["diaspora_f4_gap"],
          "외국적동포 거소신고 인원. F-4 자격자로, 재외동포법에 따라 외국인등록이 아니라 "
          "거소신고를 하므로 visa_by_sigungu 와 visa_by_sido 에는 나오지 않습니다. 연도별 "
-         "합계는 visa_national 의 체류 기준 F-4 와 1.2% 안에서 일치합니다. 원본이 시도 "
-         "단위로만 공표하므로 시군구 파일은 없습니다."),
+         "합계는 visa_national 의 체류 기준 F-4 와 %s 안에서 일치합니다. 원본이 시도 "
+         "단위로만 공표하므로 시군구 파일은 없습니다." % F["diaspora_f4_gap"]),
         # ---------- cross-file note ----------
         ("(all files)", "*_en columns", "string",
          "Every Korean categorical column has an English partner (sido_en, sigungu_en, "
@@ -1741,9 +1963,15 @@ def write_labeled_dta(csv_path, out_path, meta, dict_name=None,
             df[col] = df[col].fillna("")  # string: blank = unreported, not "nan"
         if info["label"]:
             var_labels[col] = trim_label(info["label"])
+    # Stata stamps each file with its write time, so two builds of the same data
+    # differed in one header byte and a rebuild could never be shown identical.
+    # A fixed stamp (the date of the v1.2.0 build) makes the .dta reproducible.
+    # 2026-09-26.
+    import datetime as _dt
     df.to_stata(
         out_path,
         write_index=False,
+        time_stamp=_dt.datetime(2026, 9, 26, 0, 0),
         version=STATA_VERSION,
         variable_labels=var_labels,
         data_label=trim_label(f"KIRD v{version} - {stem}"),
@@ -2115,6 +2343,37 @@ def reconcile_indices():
                             rmoved += 1
                         row[a] = v
         print("  region_seg: %d칸을 맞췄다" % rmoved)
+
+    # --- 관측 국적 수 (2026-09-26) ---
+    # recount_observed_nationalities 가 이름을 합친 뒤 배포본에서 다시 센다. 그
+    # 값이 지표 파일로 돌아가지 않아, 화면은 2014년 전국 193(배포본 190), 경기도
+    # 153(150)을 싣고 있었다. 배포본의 해만 옮기고 그 뒤의 해는 01 의 값을 둔다.
+    omoved = 0
+    for name, block, key in (("national_annual.csv", "summary", None),
+                             ("summary_by_sido.csv", "by_sido", ("sido",)),
+                             ("summary_by_sigungu.csv", "by_sigungu", ("sido", "sigungu"))):
+        p = os.path.join(DATA, name)
+        if not os.path.exists(p):
+            continue
+        t = pd.read_csv(p, encoding="utf-8-sig")
+        if "n_nationalities_observed" not in t.columns:
+            continue
+        for r in t.dropna(subset=["n_nationalities_observed"]).itertuples():
+            y = str(int(r.year))
+            v = int(r.n_nationalities_observed)
+            blk = d.get(block, {}).get(y)
+            if blk is None:
+                continue
+            if key is None:
+                targets = [blk] if isinstance(blk, dict) else []
+            else:
+                want = tuple(getattr(r, k) for k in key)
+                targets = [e for e in blk if tuple(e.get(k) for k in key) == want]
+            for e in targets:
+                if e.get("n_nationalities_observed") != v:
+                    omoved += 1
+                e["n_nationalities_observed"] = v
+    print("  n_nationalities_observed: %d칸을 배포본 값으로 맞췄다" % omoved)
 
     # --- 전국 Theil ---
     na = pd.read_csv(os.path.join(DATA, "national_annual.csv"))

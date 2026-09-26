@@ -19,7 +19,26 @@ import os
 import re
 import sys
 
-from kird import RAW, RELEASE, RELEASE_LAST_YEAR as LAST_YEAR
+# LAST_YEAR, not RELEASE_LAST_YEAR: the build reads the newest yearbook (the 2025
+# edition supplies the naturalization trend table and the 2025 dashboard year), so
+# the manifest has to list it. Until 2026-09-26 this imported RELEASE_LAST_YEAR
+# under the name LAST_YEAR and left the 35 files of the 2025 edition out.
+from kird import RAW, RELEASE, LAST_YEAR, ROOT, SITE_DATA
+
+# Inputs the build reads from outside 01_raw_data: the district and sub-district
+# boundary files, kept with the dashboard. Found on 2026-09-26 by logging every file
+# the pipeline opens; a build from the manifest alone stopped without them.
+AUX = {
+    "05_dashboard/data": (
+        SITE_DATA,
+        lambda rel: rel == "korea_sigungu.json" or rel == "korea_emd.json"
+        or (rel.startswith("emd_years/") and rel.endswith(".json")),
+        ("District (sigungu) and sub-district (eup/myeon/dong) boundaries, GeoJSON; "
+         "sub-district vintages 2014-2024 from the vuski/admdongkor snapshots of "
+         "Statistics Korea SGIS boundaries",
+         "Statistics Korea (SGIS); Ministry of the Interior and Safety",
+         "https://github.com/vuski/admdongkor")),
+}
 
 YEARBOOK = "출입국통계연보"
 
@@ -56,6 +75,14 @@ SOURCES = {
         "Refugee status determination statistics",
         "Ministry of Justice, Korea Immigration Service",
         "https://www.immigration.go.kr/immigration/1570/subview.do"),
+    "공공데이터포털": (
+        "MOJ undocumented foreign residents by year (법무부_불법체류 외국인 현황, dataset 15112636)",
+        "Ministry of Justice, via the Public Data Portal",
+        "https://www.data.go.kr/data/15112636/fileData.do"),
+    "kosis": (
+        "KOSIS regional statistics tables (dashboard context layers only; no released file uses them)",
+        "Statistics Korea",
+        "https://kosis.kr/"),
     "서울_등록외국인_동별": (
         "Registered foreigners by sub-district, Seoul",
         "Seoul Open Data Plaza",
@@ -99,11 +126,20 @@ def main():
                 skipped.append(rel)
                 continue
             name, pub, url = SOURCES.get(top, ("", "", ""))
-            rows.append([rel, name, pub, url, os.path.getsize(p), sha256(p)])
+            rows.append(["01_raw_data", rel, name, pub, url, os.path.getsize(p), sha256(p)])
+    for loc, (base, keep, (name, pub, url)) in AUX.items():
+        for root, dirs, files in os.walk(base):
+            for f in sorted(files):
+                p = os.path.join(root, f)
+                rel = os.path.relpath(p, base).replace(os.sep, "/")
+                if keep(rel):
+                    rows.append([loc, rel, name, pub, url, os.path.getsize(p), sha256(p)])
     out = os.path.join(RELEASE, "raw_input_manifest.csv")
     with io.open(out, "w", encoding="utf-8-sig", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["path", "source", "publisher", "download_page", "bytes", "sha256"])
+        # location: the folder under the project root; path: relative to it
+        w.writerow(["location", "path", "source", "publisher", "download_page", "bytes",
+                    "sha256"])
         w.writerows(rows)
     print("raw_input_manifest.csv: %d개 파일" % len(rows))
     if skipped:
@@ -111,7 +147,8 @@ def main():
 
     by_top = {}
     for r in rows:
-        by_top.setdefault(r[0].split("/", 1)[0], []).append(r)
+        key = r[1].split("/", 1)[0] if r[0] == "01_raw_data" else r[0]
+        by_top.setdefault(key, []).append(r)
     md = [
         "# Raw input manifest",
         "",
@@ -119,23 +156,25 @@ def main():
         "manifest lists every file the pipeline reads, with its size and SHA-256, so a",
         "reproducer can confirm they have the same files. Download pages are the",
         "publisher's own; the yearbook editions are the per-year archives on the KIS",
-        "statistics page.",
+        "statistics page. Each row gives the folder under the project root",
+        "(`location`: `01_raw_data`, or `05_dashboard/data` for the boundary files) and",
+        "the path inside it; `run_pipeline.py` expects them there.",
         "",
         "| folder | source | publisher | files | download |",
         "|---|---|---|---|---|",
     ]
     for top in sorted(by_top):
-        name, pub, url = SOURCES.get(top, ("", "", ""))
+        name, pub, url = SOURCES.get(top) or (AUX[top][2] if top in AUX else ("", "", ""))
         md.append("| `%s` | %s | %s | %d | %s |"
                   % (top, name or "(undocumented)", pub, len(by_top[top]),
                      ("<%s>" % url) if url else ""))
     md += ["",
            "Total: %d files, %.0f MB. Per-file checksums are in"
-           % (len(rows), sum(r[4] for r in rows) / 1e6),
+           % (len(rows), sum(r[5] for r in rows) / 1e6),
            "`raw_input_manifest.csv`.", ""]
     io.open(os.path.join(RELEASE, "raw_input_manifest.md"), "w",
             encoding="utf-8").write("\n".join(md))
-    missing = sorted({r[0].split("/", 1)[0] for r in rows if not r[1]})
+    missing = sorted({r[1].split("/", 1)[0] for r in rows if not r[2]})
     if missing:
         print("  출처를 안 적은 폴더: %s" % ", ".join(missing))
     print("raw_input_manifest.md 도 썼다")

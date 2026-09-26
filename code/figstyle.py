@@ -50,22 +50,42 @@ FULL = 7.1               # 학술지 전폭 180 mm
 WIDE = 6.0               # 세로가 긴 지도
 HALF = 3.4               # 두 개를 나란히
 
-_PRETENDARD = [
-    r"G:/My Drive/resources/Pretendard.ttf",
-    os.path.expanduser("~/AppData/Local/Microsoft/Windows/Fonts/PretendardVariable.ttf"),
+# The release bundle carries its own copy of the typeface (fonts/, SIL Open Font
+# License 1.1, see fonts/OFL.txt), so the figure steps run and give the same image
+# on any machine. Until 2026-09-26 this list held four paths on the author's own
+# computers and raised when none existed, which stopped run_pipeline.py at the
+# first figure step for anyone else. The bundled files come first so that every
+# machine draws with the same font file; an installed Pretendard is the fallback,
+# and without either the figure is drawn in matplotlib's default sans-serif with a
+# printed warning rather than an error.
+_FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+_BUNDLED = [os.path.join(_FONT_DIR, "Pretendard-Regular.otf"),
+            os.path.join(_FONT_DIR, "Pretendard-Bold.otf")]
+_INSTALLED = [
     os.path.expanduser("~/AppData/Local/Microsoft/Windows/Fonts/Pretendard-Regular.otf"),
-    r"C:/Users/nariy/AppData/Local/Microsoft/Windows/Fonts/PretendardVariable.ttf",
+    os.path.expanduser("~/AppData/Local/Microsoft/Windows/Fonts/PretendardVariable.ttf"),
+    os.path.expanduser("~/Library/Fonts/Pretendard-Regular.otf"),
+    os.path.expanduser("~/.local/share/fonts/Pretendard-Regular.otf"),
+    "/usr/share/fonts/opentype/pretendard/Pretendard-Regular.otf",
 ]
 
 
 def use_pretendard():
-    """Pretendard 를 등록하고 기본 글꼴로 세운다. 없으면 조용히 넘어가지 않고 멈춘다."""
-    for p in _PRETENDARD:
-        if os.path.exists(p):
+    """Register Pretendard and make it the default family. Returns the family used."""
+    found = [p for p in _BUNDLED if os.path.exists(p)]
+    if not found:
+        found = [p for p in _INSTALLED if os.path.exists(p)][:1]
+    if found:
+        for p in found:
             fm.fontManager.addfont(p)
-            plt.rcParams["font.family"] = fm.FontProperties(fname=p).get_name()
-            return
-    raise FileNotFoundError("Pretendard not found: tried %s" % _PRETENDARD)
+        name = fm.FontProperties(fname=found[0]).get_name()
+        plt.rcParams["font.family"] = name
+        return name
+    print("figstyle: Pretendard not found (bundled fonts/ missing, none installed); "
+          "drawing in matplotlib's default sans-serif. The image will differ from "
+          "the released one in its type only.")
+    plt.rcParams["font.family"] = "sans-serif"
+    return "sans-serif"
 
 
 def apply(base=10.0):

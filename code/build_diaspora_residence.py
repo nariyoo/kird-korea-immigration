@@ -53,6 +53,15 @@ def canon_country(name):
         name = name[1:-1]
     return COUNTRY_CANONICAL.get(name, name)
 
+# Everyone in this table is an ethnic Korean of foreign nationality, so its China
+# and Russia columns are the Korean-Chinese and Korean-Russian populations. The
+# editions say so in different words: 2008-2017 head the column 중국 (and 러시아 in
+# 2010-2013 and 2016-2017), 2014-2015 and 2018- print 한국계 러시아인, and 2018- print
+# 한국계 중국인. The series runs on without a break (307,292 in 2017, 330,394 in
+# 2018), and the rest of the release keeps 중국 for China without its Korean-descent
+# subgroup, so the one label here is the subgroup's in every year. 2026-09-26.
+SUBGROUP = {"중국": "한국계중국인", "러시아(연방)": "한국계러시아인"}
+
 SRC = os.path.join(ROOT, "01_raw_data", "출입국통계연보")
 OUT = os.path.join(ROOT, "04_dataset_release", "data",
                    "diaspora_residence_by_sido.csv")
@@ -182,7 +191,7 @@ def parse(path, year):
         # it went out as a nationality called 기타(Others) beside the computed 기타.
         if RESIDUAL.fullmatch(re.sub(r"\(.*\)$", "", name)):
             continue
-        cols[j] = canon_country(name)
+        cols[j] = SUBGROUP.get(canon_country(name), canon_country(name))
 
     out, grand = [], None
     for _, r in body.iterrows():
@@ -244,6 +253,9 @@ def main():
     if not frames:
         raise SystemExit("한 해도 못 읽었다")
     all_df = pd.concat(frames, ignore_index=True)
+    left = sorted(set(all_df["country"]) & set(SUBGROUP))
+    if left:
+        raise SystemExit(f"parent labels survived the subgroup relabel: {left}")
     all_df = all_df.sort_values(["year", "sido", "country"])
     all_df.to_csv(OUT, index=False, encoding="utf-8-sig")
     print("\n-> %s  (%d행, %d개 연도)"
