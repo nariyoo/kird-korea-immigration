@@ -1007,7 +1007,8 @@ def shannon(counts):
     t = sum(counts.values())
     if not t:
         return 0.0
-    return round(-sum((v / t) * math.log(v / t) for v in counts.values() if v > 0), 3)
+    # + 0.0: a one-nationality unit gives -0.0, which the CSV would print as "-0.0"
+    return round(-sum((v / t) * math.log(v / t) for v in counts.values() if v > 0), 3) + 0.0
 
 
 def incl(counts, pop):

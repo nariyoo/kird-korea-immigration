@@ -165,11 +165,21 @@ def facts():
     nat_gap = nat_gap[nat_gap.index.isin(bad_years)]
     F["sido_eq_from"] = str(max(bad_years) + 1) if bad_years else str(int(j.index.get_level_values(0).min()))
     F["sido_gap_years"] = "%d-%d" % (min(bad_years), max(bad_years)) if bad_years else "none"
-    F["sido_gap_range"] = "%s to %s" % (fmt(nat_gap.min()), fmt(nat_gap.max())) if len(nat_gap) else "0 to 0"
-    vs = rd("visa_by_sigungu.csv").groupby("year")["n"].sum()
+    # 2026-09-26 (5차 대조): the gap can run either way (2014: the district file holds
+    # one stateless 화성시 resident the province row leaves out), so its size is stated.
+    _mx = int(nat_gap.abs().max()) if len(nat_gap) else 0
+    F["sido_gap_range"] = "at most %s %s" % (fmt(_mx), "person" if _mx == 1 else "people")
+    # visa_by_sigungu carries the district table's 기타 column as ETC since 5차 대조;
+    # the README quotes it and says it equals visa_national's ETC, so check that here.
+    vb_ = rd("visa_by_sigungu.csv")
+    etc_d = vb_[vb_["visa_code"] == "ETC"].groupby("year")["n"].sum()
+    etc_n = reg[reg["visa_code"] == "ETC"].groupby("year")["n"].sum()
+    etc_n = etc_n[etc_n > 0]
+    if not etc_d.reindex(etc_n.index).fillna(-1).astype(int).equals(etc_n.astype(int)):
+        raise SystemExit("readme_facts: visa_by_sigungu ETC differs from visa_national ETC")
     ns_ = nb.groupby("year")["n"].sum()
-    F["visa_gap_2020"] = fmt(ns_[2020] - vs[2020])
-    F["visa_gap_last"] = fmt(ns_[last] - vs[last])
+    F["etc_2020"] = fmt(etc_d[2020])
+    F["etc_last"] = fmt(etc_d[last])
     F["dist_gap_last"] = fmt(tot[("registered", last)] - ns_[last])
     na_ = rd("national_annual.csv").set_index("year")
     F["broad_ratio_2008"] = "%.2f" % (na_.loc[2008, "broad_total"] / na_.loc[2008, "foreign_total"])
@@ -238,9 +248,9 @@ CLAIMS = [
     ("stay_2014", _p(r"\)\s+and 2014\s+(?P<v>[\d,]+)\s+\(")),
     ("sido_eq_from", _p(r"and from (?P<v>\d{4}) it equals the sum of that")),
     ("sido_gap_years", _p(r"province's districts in every province and year\. In (?P<v>\d{4}-\d{4}) the")),
-    ("sido_gap_range", _p(r"exceed the district sum by (?P<v>[\d,]+ to [\d,]+) people a year")),
-    ("visa_gap_2020", _p(r"0 through 2012, (?P<v>[\d,]+) in 2020 and")),
-    ("visa_gap_last", _p(r"in 2020 and (?P<v>[\d,]+) in \d{4}\. Second,")),
+    ("sido_gap_range", _p(r"differ from the district sum by (?P<v>at most [\d,]+ (?:person|people)) a year")),
+    ("etc_2020", _p(r"363 people in 2013, (?P<v>[\d,]+) at the 2020 peak")),
+    ("etc_last", _p(r"at the 2020 peak and (?P<v>[\d,]+) in \d{4}, the\s+same as")),
     ("dist_gap_last", _p(r"itself sits (?P<v>[\d,]+) below the national total")),
     ("broad_ratio_2008", _p(r"ran (?P<v>[\d.]+) times `registered_foreigners` in 2008")),
     ("broad_ratio_last", _p(r"in 2008 and (?P<v>[\d.]+) times in \d{4}")),
@@ -264,8 +274,8 @@ REQUIRED_META = {"n_tables", "vars_all", "vars_summary", "n_datafiles"}
 # shorter code-first document and carries only the file table).
 REQUIRED = {"f6_first", "f2_first", "f2_next", "f4_stay_last", "residual_min",
             "residual_max", "respop", "district_residuals", "broad_gap",
-            "sido_eq_from", "sido_gap_years", "sido_gap_range", "visa_gap_2020",
-            "visa_gap_last", "dist_gap_last"}
+            "sido_eq_from", "sido_gap_years", "sido_gap_range", "etc_2020",
+            "etc_last", "dist_gap_last"}
 
 ROW = re.compile(r"^\|\s*`?([A-Za-z0-9_]+\.csv)`?\s*\|")
 YEARS = re.compile(r"^\s*((?:19|20)\d{2})\s*[-–]\s*((?:19|20)\d{2})\s*$")

@@ -118,9 +118,11 @@ def fix_subnational():
       2. 인천 남구 -> 미추홀구 (renamed 2018); merge into 미추홀구 (geojson uses 미추홀구).
       3. 군위군 경상북도 -> 대구광역시 (transferred 2023); the geojson uses 대구광역시|군위군,
          so relabel all years to 대구 for a continuous series.
-      4. Remove stray / defunct rows: 수원시·창원시 (gu-less city totals), 마산시·연기군
-         (abolished), 세종특별자치시|0 (parse artifact; 세종 is province-level), 청원군
-         (merged into 청주 2014; residual rows).
+      4. Fold the residual lines of abolished or renamed districts (마산시, 진해시,
+         연기군, 청원군, 여주군, 당진군, 포천군, 화성시 동부출장소) into their
+         successor, then remove the old names. A line printed under a bare city name
+         beside that city's gu (수원시, 용인시, 창원시 from 2010, ...) is kept as a
+         row of its own (5차 대조).
       (부천시 was consolidated earlier by consolidate_bucheon.py.)
 
     Then recompute the indices for every changed district and rebuild the per-sigungu
@@ -244,27 +246,32 @@ def fix_subnational():
     region["sigungu_en"]["세종특별자치시|세종시"] = "Sejong-si"
 
     # ---------- 4) remove strays / artifacts ----------
-    # city totals that duplicate the gu rows, sub-office artifacts, and pre-promotion
-    # 군 / 시 transition rows that appear only in the 2009-2013 source. Some are
+    # sub-office lines and pre-promotion 군 / 시 transition rows, each already folded
+    # into its successor above (nothing here is a duplicate: every one of these
+    # lines is counted once in its province's 소계, on top of the rows beside it). Some are
     # preserved for years before the administrative reorganization so the figure
     # layer can color the post-reorg child polygons with the pre-reorg parent
     # value (e.g., the five Changwon gu's 2009 colors come from 창원시 / 마산시 /
     # 진해시 totals).
     STRAYS = [
-        # (sido, sigungu, remove_from_year)
-        ("경기도", "수원시", 2008),
-        ("경상남도", "창원시", 2010),   # merged July 2010 → keep 2008-2009 as parent
+        # (sido, sigungu, remove_from_year). Every name here is folded into its
+        # successor below before it is removed, so removing it loses nobody.
         ("경상남도", "마산시", 2010),   # merged July 2010 → keep 2008-2009 as parent
         ("경상남도", "진해시", 2010),   # merged July 2010 → keep 2008-2009 as parent
         ("충청남도", "연기군", 2012),   # became Sejong 2012 → keep 2008-2011
         ("충청북도", "청원군", 2014),   # absorbed by Cheongju 2014 → keep 2008-2013
-        ("경기도", "용인시", 2008), ("경기도", "고양시", 2008),
-        ("경기도", "성남시", 2008), ("경기도", "안양시", 2008),
         ("경기도", "여주군", 2008), ("경기도", "포천군", 2008),
         ("경기도", "화성시동부출장소", 2008),
-        ("충청남도", "당진군", 2008), ("충청남도", "천안시", 2008),
-        ("충청북도", "청주시", 2008),
+        ("충청남도", "당진군", 2008),
     ]
+    # 2026-09-26 (5차 대조): 수원시, 용인시, 고양시, 성남시, 안양시, 천안시, 청주시 and,
+    # from 2010, 창원시 are no longer strays. The line the yearbook prints under the
+    # bare city name beside that city's own gu rows is never the city's total: in
+    # every district table from 2008 to 2024 the province 소계 equals the sum of all
+    # its lines with the city line included (2010: 경상남도 57,718 with 창원시 261;
+    # 2009: 경기도 266,808 with 용인시 142). Removing it lost 5-294 people a year in
+    # 2008-2013 and 3 in 2014-2015. It stays a district row under the city's name,
+    # with no resident population.
     # Residual lines of abolished districts in the 2014+ tables. Several editions
     # still print a line under a district that no longer exists, and those people
     # are real registrations on ground that now belongs to one successor: 연기군 in
@@ -284,10 +291,21 @@ def fix_subnational():
     # (2008-2013 here; 2014 is read in step 1): 경기도's 소계 counts it on top of
     # the 화성시 row (2012: 1,992; 2013: 1,775), so it is not inside the city row.
     SUBOFFICE = {("경기도", "화성시동부출장소"): ("경기도", "화성시")}
+    # Residual lines whose successor applies in every year from the change on, the
+    # 2008-2013 block included (03's REMAP does not carry these). 포천군 became 포천시
+    # in 2003 and the 2009 table still prints a 포천군 line (1); 마산시 and 진해시 were
+    # merged into 창원시 in July 2010, and a 마산시 line survives in 2013 (2) and 2014
+    # (1). 마산시 has two successor gu, so its line goes to the 창원시 line, which
+    # holds the people the yearbook places in 창원시 and in none of its gu. These
+    # were dropped as strays until 2026-09-26 (5차 대조).
+    FOLD_FROM = {("경기도", "포천군"): (("경기도", "포천시"), 2004),
+                 ("경상남도", "마산시"): (("경상남도", "창원시"), 2010),
+                 ("경상남도", "진해시"): (("경상남도", "창원시 진해구"), 2010)}
     for y in IBS:
         fold = dict(SUBOFFICE)
         if int(y) >= 2014:
             fold.update(FOLD)
+        fold.update({k: tgt for k, (tgt, y0) in FOLD_FROM.items() if int(y) >= y0})
         for (sido, sg), (sido2, sg2) in fold.items():
             old = RBS.get(y, {}).get(sido, {}).get(sg)
             if not old:

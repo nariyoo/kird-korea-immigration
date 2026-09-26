@@ -258,13 +258,15 @@ def finalize_release():
         write(d, p_vs)
         print(f"visa_by_sigungu.csv: restored pre-merger 창원시 ({len(add)} rows, 2008-2009)")
 
-    # ---- step 1g: visa_by_sigungu — drop the stray 포천군 2009 parse artifact ----
+    # ---- step 1g: visa_by_sigungu — no 포천군 row may survive ----
+    # 2026-09-26 (5차 대조): the 2009 포천군 line (1 person) is not an artifact; 경기도's
+    # 소계 counts it. 08 now carries it on 포천시; dropping it here lost a person, so a
+    # 포천군 row reaching this step is an upstream failure and stops the build.
     d = read(p_vs)
-    m = (d["year"] == "2009") & (d["sigungu"] == "포천군")
+    m = d["sigungu"] == "포천군"
     if m.any():
-        d = d[~m]
-        write(d, p_vs)
-        print(f"visa_by_sigungu.csv: dropped stray 포천군 2009 artifact ({int(m.sum())} row)")
+        raise SystemExit("visa_by_sigungu.csv: %d 포천군 row(s) reached step 1g; "
+                         "08's rename to 포천시 did not run" % int(m.sum()))
 
     # ---- step 1h: children_by_age — drop 연기군 duplicates of the Sejong backfill ----
     # The Sejong continuity backfill copies 연기군 2011-2012 onto 세종특별자치시/세종시
@@ -1074,7 +1076,12 @@ def build_segregation():
             cols = bycol.get(r, [])
             x = piv[cols].sum(axis=1) if cols else pd.Series(0.0, index=k.index)
             D, iso, _ = indices(x, k, t)
-            rrows.append({"year": y, "continent": r, "total": int(x.sum()),
+            # total is every registered foreigner of the region, as the dictionary
+            # says; the indices need a resident population and so leave out the
+            # city lines printed beside a city's gu, which have none (5차 대조:
+            # 2014 창원시 4, 2015 수원시 2 and 창원시 1).
+            ny = nat[(nat.year == y) & nat["country"].map(lambda c: C2REGION.get(c, "기타") == r)]
+            rrows.append({"year": y, "continent": r, "total": int(ny["n"].sum()),
                           "dissimilarity_D": round(D, 3), "isolation": round(iso, 4)})
     rnew = pd.DataFrame(rrows)
     rout = reg[["year", "continent", "continent_en"]].merge(rnew, on=["year", "continent"], how="left")
@@ -1478,7 +1485,11 @@ def build_data_dictionary():
          "해당 시군구·연도·국적의 MOJ 등록외국인 수(2008-2024)."),
         ("visa_by_sigungu.csv", "visa_code", "string",
          "Visa/status-of-stay code, written without hyphens (E9, F4 = the source's "
-         "E-9, F-4).", "체류자격(비자) 코드, 하이픈 없이 표기(E9, F4 = 원자료의 E-9, F-4)."),
+         "E-9, F-4). ETC (2013 on) is the district table's 기타 column, the statuses it "
+         "does not list by code; its national sum equals visa_national's ETC.",
+         "체류자격(비자) 코드, 하이픈 없이 표기(E9, F4 = 원자료의 E-9, F-4). ETC(2013년부터)는 "
+         "시군구 표의 기타 열, 코드로 따로 싣지 않은 자격이다. 전국 합이 visa_national 의 "
+         "ETC 와 같다."),
         ("visa_by_sigungu.csv", "n", "integer",
          "MOJ registered foreigners on that visa in that district-year (2008-2024).",
          "해당 시군구·연도·비자의 MOJ 등록외국인 수(2008-2024)."),
@@ -1842,10 +1853,10 @@ def build_data_dictionary():
          "visa_by_sigungu 와 같다."),
         ("visa_by_sido.csv", "n", "integer",
          "Registered foreigners on that visa in that province-year: visa_by_sigungu "
-         "summed within the province. It has no ETC (분류외) status, which visa_national "
-         "carries, so province sums run below the national table.",
+         "summed within the province. The province sums add up to the national "
+         "registered total in every year.",
          "그 시도·연도·자격의 등록외국인 수. visa_by_sigungu 를 시도 안에서 더한 것이다. "
-         "visa_national 이 싣는 ETC(분류외) 자격이 없어 시도 합이 전국 표보다 적다."),
+         "시도 합이 해마다 전국 등록외국인 총계와 같다."),
         ("nationality_national.csv / visa_national.csv", "year", "integer",
          "Reference year (2006-2024).", "기준연도(2006-2024)."),
         ("nationality_national.csv / visa_national.csv", "population", "string",

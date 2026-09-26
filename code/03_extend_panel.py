@@ -1271,6 +1271,18 @@ def build_visa_sigungu():
                 if v:
                     vcols[c] = v
                     break
+            # The 기타 column (Others; 2013 on) holds the statuses the table does not
+            # list by code, and the district rows add up to the row total only with
+            # it. It carries no code, so vcode() skipped it and visa_by_sigungu fell
+            # short of the table's own grand total by exactly that column: 363 in
+            # 2013, 39,210 in 2020, 31,626 in 2024 (5차 대조, 2026-09-26). Its grand
+            # total equals visa_national's ETC (분류외) in every year, so it takes
+            # that code.
+            if c not in vcols and c > 3:
+                heads = [re.sub(r"\s+", "", str(x).split("\n")[0]) for x in (h_codes[c], h_alt[c])
+                         if x is not None and not (isinstance(x, float) and pd.isna(x))]
+                if any(h.startswith("기타") or h.lower().startswith("other") for h in heads):
+                    vcols[c] = "ETC"
         if not vcols:
             return {}
         first_vcol = min(vcols.keys())
@@ -1846,6 +1858,24 @@ def merge_sigungu_nationality():
 
     added_rbs = added_ibs = 0
     missing_pop = []
+    # City lines printed beside that city's own general districts (용인시 14 in 2008,
+    # 142 in 2009, 33 in 2010; 창원시 261 in 2010; 성남시, 안양시, 고양시, 천안시,
+    # 청주시 1-15 in 2009-2013). They are not the city's total: the province 소계
+    # and the grand total count them on top of the gu rows, to the person, in every
+    # edition. They are people the yearbook places in the city and in none of its
+    # gu, and they stay a row of their own under the city's name. There is no
+    # resident population for such a row (the MOIS table has gu rows only), so its
+    # denominator is left empty rather than given the whole city's. Until
+    # 2026-09-26 (5차 대조) 04 dropped them as "city totals that duplicate the gu
+    # rows", 5-294 people a year.
+    residual_city = {}
+    for ystr, blk in preview.items():
+        for key in blk:
+            sido, sg = key.split("|")
+            if re.fullmatch(r".+시", sg) and any(
+                    k2 != key and k2.startswith(sido + "|" + sg) and k2.endswith("구")
+                    for k2 in blk):
+                residual_city.setdefault(ystr, set()).add(key)
     for ystr, blk in preview.items():
         # Apply REMAP to this year's parsed block before indexing
         for old, new in REMAP.items():
@@ -1864,7 +1894,9 @@ def merge_sigungu_nationality():
         for key, nat in blk.items():
             sido, sg_ns = key.split("|")
             pop_v = pop_lookup.get((y, sido, sg_ns))
-            if pop_v is None:
+            if key in residual_city.get(ystr, ()):
+                pop_v = None
+            elif pop_v is None:
                 missing_pop.append((y, key))
             # Use the canonical sigungu name (with spaces, e.g. "안산시 단원구")
             # so 2008-2013 joins cleanly with 2014+ in indices, region, language.

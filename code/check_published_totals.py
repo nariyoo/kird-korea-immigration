@@ -174,7 +174,52 @@ def main():
         return 1
     print("GATE OK: every year, composed 2006-2010 staying included, equals the "
           "printed grand total (%d series-years)" % len(direct))
-    return district_gate(ns["REGION_COUNTRY_FILES"])
+    rc = district_gate(ns["REGION_COUNTRY_FILES"])
+    rc2 = visa_district_gate()        # run both, so one failure does not hide the other
+    return rc or rc2
+
+
+def _pre2014_files(pattern):
+    """The 2008-2013 district tables (지역및국적별 / 지역및체류자격별), which 01 does not
+    list: 03 reads them with its own glob, and so does this."""
+    import glob
+    out = {}
+    for y in range(2008, 2014):
+        g = sorted(glob.glob(os.path.join(RAWYB, "%d_출입국통계연보" % y, pattern)))
+        if g:
+            out[y] = g[0]
+    return out
+
+
+def _visa_files():
+    """The district x visa tables, 2008-2024, found as 03's build_visa_sigungu finds
+    them (the country x visa table, whose name also holds 체류자격, is excluded)."""
+    import glob
+    out = _pre2014_files("*지역및체류자격*")
+    for y in range(2014, RELEASE_LAST_YEAR + 1):
+        d = os.path.join(RAWYB, "%d_출입국통계연보" % y)
+        g = [f for pat in ("*시군구*체류자격*등록외국인*", "*지역*체류자격*등록외국인*")
+             for f in sorted(glob.glob(os.path.join(d, pat)))
+             if "국적" not in os.path.basename(f)]
+        if g:
+            out[y] = g[0]
+    return out
+
+
+def grand_row(path):
+    """The grand-total row of a district table: (sheet, row index).
+
+    2008-2013 editions put title lines above a two-line header, and the 총계 label
+    sits in column 0 or 1 (2012-2013 stack the Korean and English, and the T/M/F
+    values, in one cell, so the first line is read). From 2014 the header is one
+    line and the 계 / 총계 / 총합계 row follows it.
+    """
+    df = pd.read_excel(path, sheet_name=0, header=None)
+    for i in range(1, 9):
+        for c in (0, 1):
+            if norm(str(df.iloc[i, c]).split("\n")[0]) in ("계", "총계", "총합계"):
+                return df, i
+    return df, None
 
 
 def district_gate(files):
@@ -197,15 +242,39 @@ def district_gate(files):
     KNOWN holds the people the table prints on a line that names no district.
     """
     RESID = {"무국적", "기타", "미등록국가", "미상", "한국"}
-    # City lines printed beside those cities' gu rows, which no gu can take:
-    # 2014 마산시 (1) and 창원시 (3); 2015 수원시 (2) and 창원시 (1). In 2015 경기도's
-    # district rows also sum to one less than the 소계 the same sheet prints
-    # (369,664 against 369,665), so the printed total holds one person no row has.
-    KNOWN = {2014: 4, 2015: 4}
+    # The one place the raw table does not add up: in 2015 경기도's district rows sum
+    # to one less than the 소계 the same sheet prints (369,664 against 369,665), and
+    # the grand total follows the 소계, so the printed total holds one person no row
+    # has. (The 2014 마산시 (1) and 창원시 (3) and 2015 수원시 (2) and 창원시 (1) city
+    # lines were exceptions here until 2026-09-26, 5차 대조; they are carried now.)
+    KNOWN = {2015: 1}
     nb = pd.read_csv(os.path.join(RELEASE_DATA, "nationality_by_sigungu.csv"),
                      encoding="utf-8-sig", usecols=["year", "country", "n"])
     got = nb[~nb["country"].isin(RESID)].groupby("year")["n"].sum()
+    got_all = nb.groupby("year")["n"].sum()
     rows = []
+    # 2008-2013 (5차 대조, 2026-09-26). These editions print the top 19 nationalities
+    # and a 기타 column that is the residual of all the others (무국적 included), and
+    # the district files carry that column as a country of its own, so the whole
+    # printed total is compared, not the named columns. Until this date no gate
+    # covered these years, and the district files fell 5-294 people a year short:
+    # the city lines printed beside that city's own gu (용인시 14/142/33 in
+    # 2008-2010, 창원시 261 in 2010, 성남시, 안양시, 고양시, 천안시, 청주시 1-15)
+    # and 포천군 2009 (1) were dropped as strays, though each province's 소계 and the
+    # grand total count them on top of the gu rows. No exception: in all six tables
+    # the district lines add up to the province 소계 and the 소계 to the grand total.
+    for year, path in sorted(_pre2014_files("*지역및국적*").items()):
+        df, i = grand_row(path)
+        if i is None:
+            rows.append((year, None, got_all.get(year)))
+            continue
+        tot = df.iloc[i].tolist()
+        want = cell_number(tot[3])
+        cells = sum(cell_number(v) or 0 for v in tot[4:])
+        if cells != want:
+            print("   %d: the printed grand-total row does not add up (%s against %s)"
+                  % (year, format(int(cells), ","), format(int(want), ",")))
+        rows.append((year, want, got_all.get(year)))
     for year in sorted(files):
         if year > RELEASE_LAST_YEAR or not os.path.exists(files[year]):
             continue
@@ -235,6 +304,43 @@ def district_gate(files):
         return 1
     print("GATE OK: nationality_by_sigungu sums to the printed total row of the "
           "district-by-nationality table in every year %d-%d" % (rows[0][0], rows[-1][0]))
+    return 0
+
+
+def visa_district_gate():
+    """visa_by_sigungu against the district-by-visa table's printed grand total.
+
+    2026-09-26 (5차 대조). Two losses no gate saw. The table's 기타 column (Others,
+    2013 on), the statuses it does not list by code, has no code in its header, and
+    03's parser kept only coded columns: visa_by_sigungu fell short by 363 in 2013,
+    39,210 in 2020 and 31,626 in 2024, exactly visa_national's ETC. And the city
+    lines of 2008-2013 went through the population table's city-total rule. The
+    whole printed total must be there; the table adds up in every year (district
+    lines to the 소계, the 소계 to the grand total), so there is no exception.
+    """
+    vb = pd.read_csv(os.path.join(RELEASE_DATA, "visa_by_sigungu.csv"),
+                     encoding="utf-8-sig", usecols=["year", "n"])
+    got = vb.groupby("year")["n"].sum()
+    rows = []
+    for year, path in sorted(_visa_files().items()):
+        df, i = grand_row(path)
+        want = cell_number(df.iloc[i, 3]) if i is not None else None
+        rows.append((year, want, got.get(year)))
+    print()
+    print("시군구x체류자격 표: 인쇄 총계 대 visa_by_sigungu 합")
+    for y, pt, g in rows:
+        print("   %d  인쇄 %11s  배포 %11s" % (y, format(int(pt or 0), ","),
+                                          format(int(g or 0), ",")))
+    years = set(range(2008, RELEASE_LAST_YEAR + 1))
+    off = [(y, pt, g) for y, pt, g in rows if pt is None or g != pt]
+    lost = sorted(years - {y for y, _, _ in rows})
+    if off or lost:
+        print("FAIL: visa_by_sigungu does not sum to the district-by-visa table's printed "
+              "total in %s%s" % (", ".join(str(y) for y, _, _ in off),
+                                 (" (no table found: %s)" % lost) if lost else ""))
+        return 1
+    print("GATE OK: visa_by_sigungu sums to the printed total of the district-by-visa "
+          "table in every year %d-%d" % (rows[0][0], rows[-1][0]))
     return 0
 
 

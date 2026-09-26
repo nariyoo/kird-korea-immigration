@@ -219,27 +219,40 @@ def export_dataset():
     #   Changwon gu polygons from these parent rows.
     _BUCHEON_GU = {"부천시 소사구", "부천시 오정구", "부천시 원미구"}
     # Year-aware strays: drop only when at or after `from_year`.
+    # Stray names in the MOIS population table, which prints a city's total beside
+    # its gu. The MOJ district tables print no such totals (see city_lines below).
     _STRAYS = {
         ("경기도", "수원시"): 2008,
         ("경상남도", "창원시"): 2010,   # merged July 2010
         ("경상남도", "마산시"): 2010,   # merged July 2010
-        ("세종특별자치시", "0"): 2008,
-        # 포천군 became 포천시 in 2003; a stray 포천군 row (1 person) still appears in
-        # the 2009 district-by-visa sheet. fix_subnational drops it on the dashboard
-        # side, so drop it here too and keep the two panels on the same district set.
-        ("경기도", "포천군"): 2008,
     }
+    _STRAYS_ALL = {("세종특별자치시", "0"): 2008}
     # 1:1 administrative renames. Apply BEFORE stray filtering.
+    # 포천군 became 포천시 in 2003; the 2009 district tables still print a 포천군 line
+    # (1 person), counted in 경기도's 소계. It was dropped as a stray until
+    # 2026-09-26 (5차 대조); it goes to 포천시 like the other renamed districts.
     _RENAMES = {
         ("경기도", "여주군"):       ("경기도", "여주시"),
         ("충청남도", "당진군"):     ("충청남도", "당진시"),
         ("충청남도", "연기군"):     ("세종특별자치시", "세종시"),
         ("경상남도", "진해시"):     ("경상남도", "창원시 진해구"),
         ("충청북도", "청원군"):     ("충청북도", "청주시 청원구"),
+        ("경기도", "포천군"):       ("경기도", "포천시"),
     }
+    # From the July 2010 merger a 마산시 line (2013: 2 people) has two successor gu;
+    # it goes to the 창원시 line, the people the table places in 창원시 and none of
+    # its gu, as 04 does on the nationality side.
+    _RENAMES_FROM = {("경상남도", "마산시"): (("경상남도", "창원시"), 2010)}
 
 
-    def consolidate_admin(df, value_cols):
+    def consolidate_admin(df, value_cols, city_lines=False):
+        """city_lines=True for the MOJ district tables. There a line printed under
+        a bare city name beside that city's gu is not the city's total: the
+        province 소계 counts it on top of the gu rows in every edition, 2008-2024
+        (2010 경상남도: 57,718 with 창원시 261). It is kept as a row of its own. The
+        MOIS population table does print city totals, and they are dropped
+        (city_lines=False). Until 2026-09-26 (5차 대조) the visa table went through
+        the population rule and lost 5-294 people a year in 2008-2013."""
         df = df.copy()
         df["sigungu"] = df["sigungu"].astype(str)
         df.loc[(df["sido"] == "인천광역시") & (df["sigungu"] == "남구"), "sigungu"] = "미추홀구"
@@ -260,6 +273,11 @@ def export_dataset():
             df.loc[mask, "sido"] = nsido
             df.loc[mask, "sigungu"] = nsg
             df.loc[mask, "_renamed"] = True
+        if city_lines and "year" in df.columns:
+            for (osido, osg), ((nsido, nsg), y0) in _RENAMES_FROM.items():
+                mask = (df["sido"] == osido) & (df["sigungu"] == osg) & (df["year"] >= y0)
+                df.loc[mask, "sido"] = nsido
+                df.loc[mask, "sigungu"] = nsg
         # Sub-office (출장소) rows go to their parent city. They were dropped as
         # "already counted in the city row" until 2026-09-26 (4차 대조), but the
         # province 소계 of the same table counts 화성시 동부출장소 on top of 화성시
@@ -277,7 +295,9 @@ def export_dataset():
         df["_isgu"] = df["sigungu"].str.contains(" ", regex=False, na=False)
         df["_base"] = df["sigungu"].str.split().str[0]
         _real_gu = df["_isgu"] & ~df["_renamed"]
-        if "year" in df.columns:
+        if city_lines:
+            keep_gu = pd.Series(True, index=df.index)
+        elif "year" in df.columns:
             gu_keys = set(map(tuple,
                 df[_real_gu][["year", "sido", "_base"]].drop_duplicates().values.tolist()))
             keep_gu = df["_isgu"] | df.apply(
@@ -291,14 +311,15 @@ def export_dataset():
         # Year-aware stray filter: drop the (sido, sigungu) row only for years
         # at or after the reorganization. Pre-reorg years are kept so 2008-2009
         # has a value to render.
+        strays = dict(_STRAYS_ALL) if city_lines else {**_STRAYS, **_STRAYS_ALL}
         if "year" in df.columns:
             keep = df.apply(
                 lambda r: not (
-                    (r["sido"], r["sigungu"]) in _STRAYS
-                    and r["year"] >= _STRAYS[(r["sido"], r["sigungu"])]
+                    (r["sido"], r["sigungu"]) in strays
+                    and r["year"] >= strays[(r["sido"], r["sigungu"])]
                 ), axis=1)
         else:
-            keep = ~df.apply(lambda r: (r["sido"], r["sigungu"]) in _STRAYS, axis=1)
+            keep = ~df.apply(lambda r: (r["sido"], r["sigungu"]) in strays, axis=1)
         df = df[keep]
         keys = [c for c in df.columns if c not in value_cols]
         return df.groupby(keys, as_index=False)[value_cols].sum().sort_values(keys)
@@ -384,7 +405,7 @@ def export_dataset():
                     sg = spaced.get((sido, sg_ns), sg_ns)
                     for code, n in codes.items():
                         rows.append({"year": int(y), "sido": sido, "sigungu": sg, "visa_code": code, "n": n})
-            vrdf = consolidate_admin(pd.DataFrame(rows), ["n"])
+            vrdf = consolidate_admin(pd.DataFrame(rows), ["n"], city_lines=True)
             vrdf = vrdf.sort_values(["year", "sido", "sigungu", "visa_code"])
             w("foreign_residents_by_sigungu_visa.csv", add_en(vrdf, ["sido", "sigungu"]))
             # v1.2.0: the same table with the province treated as the unit

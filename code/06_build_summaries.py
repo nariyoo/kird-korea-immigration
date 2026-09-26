@@ -206,6 +206,17 @@ def summary_sigungu_and_sido():
             # count MOIS 창원시); it is filled from its own predecessor (진해시) instead.
             bare_si = {(u["sido"], u["sigungu"]) for u in units
                        if " " not in u["sigungu"] and u["sigungu"].endswith("시")}
+            # A bare "X시" unit beside real "X시 ~구" units, with no resident
+            # population, is the line the MOJ table prints under the city name for
+            # people it places in the city and in none of its gu (5차 대조,
+            # 2026-09-26: 용인시 2008-2011, 창원시 2010-2015, ...). It is not the city:
+            # the MOIS city row must not land on it, the gu keep their apportioned
+            # shares of that row as before, and the line carries MOJ counts only.
+            gu_parent = {(u["sido"], u["sigungu"].split(" ", 1)[0]) for u in units
+                         if " " in u["sigungu"] and u["sigungu"].split(" ", 1)[1].endswith("구")}
+            residual_si = {k for k in bare_si if k in gu_parent and not any(
+                u.get("total_pop") for u in units if (u["sido"], u["sigungu"]) == k)}
+            bare_si -= residual_si
             for u in units:
                 sg = u["sigungu"]
                 if " " in sg and sg.split(" ", 1)[1].endswith("구") and sg.split(" ", 1)[0].endswith("시"):
@@ -217,7 +228,7 @@ def summary_sigungu_and_sido():
                 sg = canon(sido, sg0)
                 tp = u.get("total_pop")
                 ml = mois_norm_lookup(y, sido)
-                r = enrich(ml.get(norm(sg0)) or ml.get(norm(sg)))
+                r = None if (sido, sg0) in residual_si else enrich(ml.get(norm(sg0)) or ml.get(norm(sg)))
                 apportioned = False
                 if r is None and " " in sg0 and sg0.split(" ", 1)[1].endswith("구") and sg0.split(" ", 1)[0].endswith("시") \
                         and (sido, sg0.split(" ", 1)[0]) not in bare_si:
@@ -250,7 +261,10 @@ def summary_sigungu_and_sido():
                 row += [round(r.get(k, "")) if isinstance(r.get(k), float) else r.get(k, "") for k in CNT]
                 row += [pct(r.get("합계", 0), tp) if (r.get("합계") and tp) else ""]   # broad_share = broad/total_pop
                 row += derived(r)
-                row += [("True" if apportioned else "False") if r else ""]   # the dictionary's spelling; 10 wrote True/False and this wrote TRUE/FALSE until 2026-09-26
+                # a city line (residual_si) carries no broad values and none apportioned:
+                # False, so the column stays a clean boolean for readers (a blank
+                # beside True/False made pandas warn on mixed types, 5차 대조)
+                row += [("True" if apportioned else "False") if (r or (sido, sg0) in residual_si) else ""]   # the dictionary's spelling; 10 wrote True/False and this wrote TRUE/FALSE until 2026-09-26
                 row += [u.get(IDX_SRC.get(k, k), "") for k in IDX]
                 rows.append(row)
         write("summary_by_sigungu.csv", head, rows)

@@ -49,17 +49,17 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 |---|---|---|---|
 | `national_annual.csv` | a year | 2008-2024 | 17 |
 | `summary_by_sido.csv` | a province and a year | 2006-2024 | 317 |
-| `summary_by_sigungu.csv` | a district and a year | 2008-2024 | 4,240 |
+| `summary_by_sigungu.csv` | a district and a year | 2008-2024 | 4,261 |
 | `summary_by_eupmyeondong.csv` | a sub-district and a year | 2014-2024 | 38,619 |
-| `nationality_by_sigungu.csv` | a district, nationality and year | 2008-2024 | 173,749 |
+| `nationality_by_sigungu.csv` | a district, nationality and year | 2008-2024 | 173,825 |
 | `nationality_by_sido.csv` | a province, nationality and year | 2008-2024 | 24,809 |
 | `nationality_national.csv` | a population, nationality and year | 2006-2024 | 7,283 |
-| `visa_by_sigungu.csv` | a district, visa status and year | 2008-2024 | 75,996 |
-| `visa_by_sido.csv` | a province, visa status and year | 2008-2024 | 7,018 |
+| `visa_by_sigungu.csv` | a district, visa status and year | 2008-2024 | 78,123 |
+| `visa_by_sido.csv` | a province, visa status and year | 2008-2024 | 7,209 |
 | `visa_national.csv` | a population, visa status and year | 2006-2024 | 1,241 |
 | `visa_by_nationality.csv` | a population, nationality, visa and year | 2006-2024 | 238,025 |
 | `age_sex_national.csv` | a population, nationality, age band, sex and year | registered 2009-2024, stay 2011-2024 | 155,903 |
-| `language_demand.csv` | a language, scope, place and year | 2006-2024 | 208,684 |
+| `language_demand.csv` | a language, scope, place and year | 2006-2024 | 208,723 |
 | `ethnic_enclaves.csv` | an enclave district, nationality and year | 2008-2024 | 738 |
 | `segregation_by_nationality.csv` | a nationality and year | 2014-2024 | 1,062 |
 | `region_segregation.csv` | a continent of origin and year | 2014-2024 | 118 |
