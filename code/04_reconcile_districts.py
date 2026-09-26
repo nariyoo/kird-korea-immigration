@@ -28,6 +28,7 @@ from kird import pielou
 from kird import shannon
 from kird import COUNTRY_LANGUAGE
 from kird import COUNTRY_REGION
+from kird import RESIDUAL_LINES
 from kird import ROOT
 
 
@@ -160,10 +161,13 @@ def fix_subnational():
     header = [str(x).split("\n")[0] for x in df.iloc[0].tolist()]
     from kird import COUNTRY_CANONICAL
     # canonical names, as every other district row has them by now (영국외지민 is
-    # 영국, and so on); the raw header alone put a second UK label on 화성시 2014
+    # 영국, and so on); the raw header alone put a second UK label on 화성시 2014.
+    # Every column that holds people is read, the ones that name no nationality
+    # (무국적, 미등록국가, 기타) included, as 01's load_region_country reads them
+    # (2026-09-26, final audit).
     ccols = {c: COUNTRY_CANONICAL.get(re.sub(r"\s+", "", header[c]), re.sub(r"\s+", "", header[c]))
              for c in range(4, df.shape[1])
-             if re.search(r"[가-힣]", str(header[c])) and re.sub(r"\s+", "", header[c]) not in ("기타", "계", "총계")}
+             if re.search(r"[가-힣]", str(header[c])) and re.sub(r"\s+", "", header[c]) not in ("계", "총계")}
     # The 2014 table prints 화성시 동부출장소 (1,709) as a row of its own beside
     # 화성시 (29,968), and 경기도's 소계 and the grand total, which equals the national
     # status table to the person, count both: the sub-office is NOT inside the city
@@ -480,8 +484,9 @@ def recompute_from_reconciled():
                         continue
                     for c, x in cs.items():
                         # 기타 is the residual bin, never an enclave (the release
-                        # drops it; the dashboard now does too). 2026-09-25.
-                        if c == "기타" or x < ABS_FLOOR or X.get(c, 0) <= 0 or not natpop:
+                        # drops it; the dashboard now does too). 2026-09-25. Nor is
+                        # any other line that names no nationality (2026-09-26).
+                        if c in RESIDUAL_LINES or x < ABS_FLOOR or X.get(c, 0) <= 0 or not natpop:
                             continue
                         lq = (x / tot_pop) / (X[c] / natpop)
                         share = x / sg_for
@@ -665,10 +670,12 @@ def normalize_top19():
     def observed(nat_dict):
         """How many nationalities the source actually lists, before the top-19
         reduction. The residual 기타 is a bin, not a nationality, so it does not
-        count. Through 2013 the yearbook publishes only the top 19 plus that bin at
-        the district level, so these counts are capped at 19 for those years."""
+        count, and neither does any other line that names no nationality (무국적,
+        미등록국가; kird.RESIDUAL_LINES), which the district files carry since
+        2026-09-26. Through 2013 the yearbook publishes only the top 19 plus that
+        bin at the district level, so these counts are capped at 19 for those years."""
         return len([c for c, v in nat_dict.items()
-                    if v and v > 0 and c != OTHER])
+                    if v and v > 0 and c not in RESIDUAL_LINES])
 
 
     def reduce_to_top19(nat_dict, top19_set):
@@ -687,14 +694,15 @@ def normalize_top19():
 
     def national_top19(year):
         """Identify the top-19 nationalities nationally for the year, by summing
-        across all districts. Excludes 기타 itself so it stays as the residual bin."""
+        across all districts. Excludes 기타 itself so it stays as the residual bin,
+        and every other line that names no nationality, which goes into that bin."""
         nat = {}
         for sido, sigs in RBS.get(year, {}).items():
             for sg, cs in sigs.items():
                 if sg in ("총계", "총합계", "소계", "계"):
                     continue
                 for c, v in cs.items():
-                    if c == OTHER:
+                    if c in RESIDUAL_LINES:
                         continue
                     nat[c] = nat.get(c, 0) + v
         return set(c for c, _ in sorted(nat.items(), key=lambda x: -x[1])[:TOP_K])
@@ -749,7 +757,7 @@ def normalize_top19():
             for _sg, _cs in RBS.get(ystr, {}).get(rec["sido"], {}).items():
                 if _sg in ("총계", "총합계", "소계", "계"):
                     continue
-                uni |= {c for c, v in _cs.items() if v and c != OTHER
+                uni |= {c for c, v in _cs.items() if v and c not in RESIDUAL_LINES
                         and c not in ("총계", "총합계", "소계", "계")}
             rec["n_nationalities_observed"] = len(uni)
             new = make_record(rec["sido"], "", reduced, rec.get("total_pop"), "ns")

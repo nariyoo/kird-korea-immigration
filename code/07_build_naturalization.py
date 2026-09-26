@@ -205,6 +205,39 @@ def build_panel():
         return hits[0] if hits else None
 
 
+    TOTAL_TYPES = ("총계", "총합계", "합계", "계")
+
+    def fill_blanks(vals, where):
+        """A printed row's empty cells, read as the zeros they are.
+
+        The 2019, 2020 and 2024 by-country tables and the 2019, 2020, 2023 and 2024
+        by-age tables leave a cell empty where every other edition prints 0 (2024
+        mixes the two within a row). Until 2026-09-26 (final audit) an empty cell
+        wrote no row, so in those years a missing row meant zero while in the others
+        a zero was a row: 2019 by country had 409 rows over 103 countries where the
+        same grid is 1,339 rows in 2018. A blank is read as 0 only when the row's own
+        printed total equals the sum of its printed cells, so the zeros are the
+        table's arithmetic and not a guess; otherwise the build stops.
+        """
+        blanks = [t for t, v in vals.items() if v is None and t not in TOTAL_TYPES]
+        if not blanks:
+            return vals
+        tot = next((vals[t] for t in TOTAL_TYPES if vals.get(t) is not None), None)
+        if tot is None:
+            raise SystemExit(f"{where}: empty cells {blanks} and no row total to "
+                             f"check them against")
+        # 귀화소계 is the sum of the four routes where the edition prints them
+        # (2014-2018), and a cell of its own where it does not (the 2014 age table)
+        split = any(t in vals for t in ("일반귀화", "간이귀화", "특별귀화", "수반취득"))
+        leaves = [t for t in vals if t not in TOTAL_TYPES
+                  and not (t == "귀화소계" and split)]
+        got = sum(vals[t] or 0 for t in leaves)
+        if got != tot:
+            raise SystemExit(f"{where}: the row total {tot} is not the sum of its printed "
+                             f"cells ({got}), so the empty cells {blanks} cannot be read "
+                             f"as zeros")
+        return {t: (0 if v is None and t not in TOTAL_TYPES else v) for t, v in vals.items()}
+
     def header_row(df):
         """Row index whose cells name the processing types."""
         for r in range(min(8, len(df))):
@@ -287,6 +320,7 @@ def build_panel():
                     unit = CANON.get(name, name)
                     if m and m.group(1) in notes:
                         folded.add(unit)
+            vals = fill_blanks(vals, f"{os.path.basename(path)} {kind} row {unit!r}")
             for t, v in vals.items():
                 if v is not None:
                     rows.append((unit, t, v))

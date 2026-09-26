@@ -175,8 +175,9 @@ def main():
     print("GATE OK: every year, composed 2006-2010 staying included, equals the "
           "printed grand total (%d series-years)" % len(direct))
     rc = district_gate(ns["REGION_COUNTRY_FILES"])
-    rc2 = visa_district_gate()        # run both, so one failure does not hide the other
-    return rc or rc2
+    rc2 = visa_district_gate()        # run all, so one failure does not hide another
+    rc3 = district_level_gate(ns["REGION_COUNTRY_FILES"])
+    return rc or rc2 or rc3
 
 
 def _pre2014_files(pattern):
@@ -235,23 +236,28 @@ def district_gate(files):
     Kingdom nationals; by 4,287 in 2014), and the national checks above never saw it,
     because they read the status tables.
 
-    The yearbook's grand-total row, summed over the nationality columns, must equal
-    nationality_by_sigungu summed over every district and nationality. The columns
-    that name no nationality (무국적, 기타, 미등록국가, 98-183 people a year) are left
-    out on both sides: the district files do not carry them (the national tables do).
-    KNOWN holds the people the table prints on a line that names no district.
+    The yearbook's printed grand total must equal nationality_by_sigungu summed over
+    every district and every column, the columns that name no nationality (무국적,
+    미등록국가, 기타) included. Until 2026-09-26 (final audit) those columns were left
+    out on both sides here, because the district files dropped them, and the gate
+    passed over 126-183 missing people a year; the parser carries them now, district
+    by district, so the whole printed total is compared. From 2014 that is the
+    grand-total row's 계 cell, which equals the sum of the province 소계 rows: in
+    2014 and 2015 the grand row's own nationality cells add up to 9 and 15 fewer than
+    its 계 (the province rows, and the district lines under them, add up). KNOWN
+    holds the people the table prints on a line that names no district.
     """
-    RESID = {"무국적", "기타", "미등록국가", "미상", "한국"}
     # The one place the raw table does not add up: in 2015 경기도's district rows sum
     # to one less than the 소계 the same sheet prints (369,664 against 369,665), and
     # the grand total follows the 소계, so the printed total holds one person no row
-    # has. (The 2014 마산시 (1) and 창원시 (3) and 2015 수원시 (2) and 창원시 (1) city
+    # has. The district-by-visa table of the same edition prints that person on a
+    # 화성시 동부출장소 line (1), which this table does not print (final audit).
+    # (The 2014 마산시 (1) and 창원시 (3) and 2015 수원시 (2) and 창원시 (1) city
     # lines were exceptions here until 2026-09-26, 5차 대조; they are carried now.)
     KNOWN = {2015: 1}
     nb = pd.read_csv(os.path.join(RELEASE_DATA, "nationality_by_sigungu.csv"),
                      encoding="utf-8-sig", usecols=["year", "country", "n"])
-    got = nb[~nb["country"].isin(RESID)].groupby("year")["n"].sum()
-    got_all = nb.groupby("year")["n"].sum()
+    got = got_all = nb.groupby("year")["n"].sum()
     rows = []
     # 2008-2013 (5차 대조, 2026-09-26). These editions print the top 19 nationalities
     # and a 기타 column that is the residual of all the others (무국적 included), and
@@ -279,7 +285,6 @@ def district_gate(files):
         if year > RELEASE_LAST_YEAR or not os.path.exists(files[year]):
             continue
         df = pd.read_excel(files[year], sheet_name=0, header=None)
-        head = [norm(v) for v in df.iloc[0].tolist()]
         tot = None
         for i in range(1, 6):
             if norm(df.iloc[i, 0]) in ("계", "총계", "총합계"):
@@ -288,12 +293,11 @@ def district_gate(files):
         if tot is None:
             rows.append((year, None, got.get(year)))
             continue
-        # column 3 is the row total; nationality columns start at 4
-        want = sum(cell_number(tot[j]) or 0 for j in range(4, len(tot))
-                   if head[j] and head[j] != "nan" and head[j] not in RESID)
+        # column 3 is the row total, every column of the table included
+        want = cell_number(tot[3]) or 0
         rows.append((year, want - KNOWN.get(year, 0), got.get(year)))
     print()
-    print("시군구x국적 표: 인쇄 총계행(국적 칸 합) 대 nationality_by_sigungu 합")
+    print("시군구x국적 표: 인쇄 총계 대 nationality_by_sigungu 합 (모든 칸)")
     for y, pt, g in rows:
         print("   %d  인쇄 %11s  배포 %11s" % (y, format(int(pt or 0), ","),
                                           format(int(g or 0), ",")))
@@ -307,6 +311,134 @@ def district_gate(files):
     return 0
 
 
+SIDO_FIX = {"강원특별자치도": "강원도", "전북특별자치도": "전라북도"}
+SUB_LABELS = ("소계", "총계", "총합계", "계")
+# Where the release carries a district-table line under another label (README,
+# District (sigungu) units): a rename, a district that moved province, and the
+# residual lines some editions still print under an abolished district. 연기군 counts
+# in 세종 (owner decision), so it moves province as well.
+LINE_TO = {("충청남도", "연기군"): ("세종특별자치시", "세종시"),
+           ("충청북도", "청원군"): ("충청북도", "청주시청원구"),
+           ("충청남도", "당진군"): ("충청남도", "당진시"),
+           ("경기도", "여주군"): ("경기도", "여주시"),
+           ("경상남도", "마산시"): ("경상남도", "창원시"),
+           ("경상남도", "진해시"): ("경상남도", "창원시진해구"),
+           ("인천광역시", "남구"): ("인천광역시", "미추홀구"),
+           ("경상북도", "군위군"): ("대구광역시", "군위군")}
+
+
+def district_table_lines(path):
+    """A 2014+ district-by-nationality table, line by line.
+
+    Returns ({(sido, line): n}, {sido: 소계}, grand 계), where n is the row-total cell
+    (column 3), so every column of the table counts, the ones that name no nationality
+    included. A line's value is its 계 row, or 남 + 여 where the edition prints no 계
+    row for it (the district lines of 2019). Names are compared without spaces.
+    """
+    df = pd.read_excel(path, sheet_name=0, header=None)
+    body = df.iloc[1:].copy()
+    body[0] = body[0].ffill()
+    body[1] = body[1].ffill()
+    tot, mf, grand = {}, {}, None
+    for r in body.itertuples(index=False):
+        s0, s1, g = norm(r[0]), norm(r[1]), norm(r[2])
+        v = cell_number(r[3]) or 0
+        if s0 in ("계", "총계", "총합계"):
+            if g in ("계", "총계", "총합계") and grand is None:
+                grand = v
+            continue
+        key = (SIDO_FIX.get(s0, s0), s1)
+        if g in ("계", "총계", "총합계"):
+            tot.setdefault(key, v)
+        elif g in ("남", "여", "남성", "여성"):
+            mf[key] = mf.get(key, 0) + v
+    lines = {k: tot.get(k, mf.get(k, 0)) for k in set(tot) | set(mf)}
+    sub = {s: n for (s, l), n in lines.items() if l in SUB_LABELS}
+    dist = {k: n for k, n in lines.items() if k[1] not in SUB_LABELS}
+    # 세종 prints its province row and no district line (2021 puts its 남/여 rows
+    # under a 시군구 cell of 0); its one district is the province.
+    dist = {k: n for k, n in dist.items() if k[0] != "세종특별자치시"}
+    if "세종특별자치시" in sub:
+        dist[("세종특별자치시", "세종시")] = sub["세종특별자치시"]
+    return dist, sub, grand
+
+
+def release_key(sido, line):
+    """The (sido, sigungu without spaces) the release files a district line under."""
+    if "출장소" in line:
+        m = re.match(r"^(.+?시)", line)
+        line = m.group(1) if m else line
+    if sido == "경기도" and line.startswith("부천시"):
+        line = "부천시"
+    return LINE_TO.get((sido, line), (sido, line))
+
+
+def district_level_gate(files):
+    """Every district and every province against the lines the table prints.
+
+    2026-09-26 (final audit). The national gate above sees only the grand total. The
+    district table's columns that name no nationality (무국적, 미등록국가, 기타) were
+    dropped at every level below the country until this date, 126-183 people a year
+    over up to 70 districts, and a district that loses a person while another gains
+    one leaves the national sum untouched. Here each district of
+    nationality_by_sigungu, all columns summed, must equal the row-total cell of the
+    line or lines the table prints for it (after the relabelling the README
+    documents: renames, residual lines of abolished districts, 출장소 lines, the
+    부천 gu, 세종), and each province of nationality_by_sido, which counts a district
+    in the province of that year, must equal the table's own 소계, with the residual
+    연기군 line moved to 세종 as the release does. 2014 to the release year. The one
+    exception is the 2015 경기도 소계, one person above its own district lines.
+    """
+    KNOWN_PROV = {(2015, "경기도"): 1}
+    nb = pd.read_csv(os.path.join(RELEASE_DATA, "nationality_by_sigungu.csv"),
+                     encoding="utf-8-sig", usecols=["year", "sido", "sigungu", "n"])
+    nb["k"] = nb["sigungu"].astype(str).str.replace(" ", "", regex=False)
+    got_d = nb.groupby(["year", "sido", "k"])["n"].sum()
+    ns = pd.read_csv(os.path.join(RELEASE_DATA, "nationality_by_sido.csv"),
+                     encoding="utf-8-sig", usecols=["year", "sido", "n"])
+    got_p = ns.groupby(["year", "sido"])["n"].sum()
+    off_d, off_p, n_d, n_p = [], [], 0, 0
+    for year in sorted(files):
+        if year > RELEASE_LAST_YEAR or not os.path.exists(files[year]):
+            continue
+        dist, sub, _ = district_table_lines(files[year])
+        want = {}
+        for (sd, line), n in dist.items():
+            k = release_key(sd, line)
+            want[k] = want.get(k, 0) + n
+        have = {(sd, k): int(v) for (y, sd, k), v in got_d.items() if y == year}
+        for k in sorted(set(want) | set(have)):
+            n_d += 1
+            if want.get(k, 0) != have.get(k, 0):
+                off_d.append((year, k, want.get(k, 0), have.get(k, 0)))
+        # provinces: the table's own 소계, with the 연기군 line counted in 세종
+        prov = dict(sub)
+        yg = dist.get(("충청남도", "연기군"), 0)
+        if yg:
+            prov["충청남도"] = prov.get("충청남도", 0) - yg
+            prov["세종특별자치시"] = prov.get("세종특별자치시", 0) + yg
+        for sd in sorted(set(prov) | {s for (y, s) in got_p.index if y == year}):
+            if not prov.get(sd) and not got_p.get((year, sd)):
+                continue           # 2014's empty 기타 province row
+            n_p += 1
+            w = prov.get(sd, 0) - KNOWN_PROV.get((year, sd), 0)
+            if w != int(got_p.get((year, sd), 0)):
+                off_p.append((year, sd, w, int(got_p.get((year, sd), 0))))
+    print()
+    print("시군구x국적 표: 시군구 줄마다, 시도 소계마다 (모든 칸)")
+    print("   시군구 %d곳-연도, 어긋남 %d; 시도 %d곳-연도, 어긋남 %d"
+          % (n_d, len(off_d), n_p, len(off_p)))
+    for o in (off_d + off_p)[:12]:
+        print("   ", o)
+    if off_d or off_p or not n_d:
+        print("FAIL: the district files differ from the lines the district-by-nationality "
+              "table prints")
+        return 1
+    print("GATE OK: every district and province of nationality_by_sigungu / "
+          "nationality_by_sido equals the printed line, 2014-%d" % RELEASE_LAST_YEAR)
+    return 0
+
+
 def visa_district_gate():
     """visa_by_sigungu against the district-by-visa table's printed grand total.
 
@@ -317,6 +449,13 @@ def visa_district_gate():
     lines of 2008-2013 went through the population table's city-total rule. The
     whole printed total must be there; the table adds up in every year (district
     lines to the 소계, the 소계 to the grand total), so there is no exception.
+
+    The two district tables of one edition do not always place a person in the same
+    district: the 2015 nationality table prints a bare 창원시 line (1) above 창원시
+    마산합포구 (2,159), and the visa table prints no 창원시 line and 2,160 for
+    마산합포구. Each file follows its own table; validate_release's
+    check_district_tables_agree holds the two files to each other district by
+    district and lists the places the tables differ (final audit, 2026-09-26).
     """
     vb = pd.read_csv(os.path.join(RELEASE_DATA, "visa_by_sigungu.csv"),
                      encoding="utf-8-sig", usecols=["year", "n"])

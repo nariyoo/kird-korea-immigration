@@ -239,10 +239,12 @@ def readme_claims():
     emd = pd.read_csv(D + "summary_by_eupmyeondong.csv", encoding="utf-8-sig",
                       low_memory=False)
 
-    # 관측 국적 수: 전국 2013=19, 2014=190 (문서의 「193」은 이름 합치기 전 값)
+    # 관측 국적 수: 전국 2013=19, 2014=189 (문서의 「193」은 이름 합치기 전 값). 2026-09-26
+    # 최종 감사부터 국적 아닌 칸(무국적·미등록국가·기타)을 세지 않는다. 그전의 190 은
+    # 2014년 화성시의 무국적 한 명을 국적 하나로 센 값이었다.
     obs = dict(zip(na["year"], na["n_nationalities_observed"]))
-    check(obs.get(2013) == 19 and obs.get(2014) == 190,
-          "national n_nationalities_observed 2013=19, 2014=190",
+    check(obs.get(2013) == 19 and obs.get(2014) == 189,
+          "national n_nationalities_observed 2013=19, 2014=189",
           {y: obs.get(y) for y in (2013, 2014)})
     check("193 in 2014" not in txt and ", 193" not in txt,
           "README 에 옛 값 193 이 남아 있지 않다")
@@ -459,6 +461,19 @@ def as_a_user():
         j = n.merge(s[key + ["resident_pop"]], on=key, how="left", indicator=True)
         miss = int((j["_merge"] != "both").sum())
         check(miss == 0, "%s 가 요약에 전부 붙는다" % name, "%d행" % miss)
+        # (c2) 거꾸로도: 등록외국인이 있는 요약 행마다 상세 행이 있는가. 2026-09-26 최종
+        # 감사에서 앞 방향만 보던 것을 찾았다. 요약의 2015 창원시(1명) 행에 자격 행이
+        # 없는데, 그 해 시군구x체류자격 표가 창원시 줄을 싣지 않고 그 사람을 마산합포구
+        # 줄(2,160)에 넣기 때문이다(국적 표는 창원시 1 + 마산합포구 2,159). 그 한 곳만
+        # 원자료대로 비고, 다른 빈 곳은 결함이다.
+        EMPTY_OK = {"visa_by_sigungu.csv": {(2015, "경상남도", "창원시")}}
+        have = set(map(tuple, n[n["n"] > 0][key].drop_duplicates().values.tolist()))
+        want = set(map(tuple, s[s["registered_foreigners"] > 0][key].values.tolist()))
+        lack = sorted(want - have)
+        ok_ = EMPTY_OK.get(name, set())
+        check([k for k in lack if k not in ok_] == [] and ok_ <= set(lack),
+              "등록외국인이 있는 요약 행마다 %s 행이 있다 (원자료대로 빈 곳 %d)"
+              % (name, len(ok_)), "없는 곳 %s" % lack[:5])
 
     # (d) 영문 이름만으로 join 하면 안 된다는 것이 문서에 있는가
     d24 = s[s["year"] == s["year"].max()]

@@ -6,7 +6,7 @@ the openICPSR title is "Spatiotemporal administrative dataset of nationality, re
 [![Data](https://img.shields.io/badge/data-openICPSR-b31b1b.svg)](https://doi.org/10.3886/E249944V1)
 [![DOI](https://img.shields.io/badge/DOI-10.3886%2FE249944V1-informational.svg)](https://doi.org/10.3886/E249944V1)
 [![Licence](https://img.shields.io/badge/licence-CC%20BY%204.0-green.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
 KIRD is a harmonized panel of foreign residents in South Korea, built from the annual
 statistical yearbooks of two ministries and released as 28 tidy tables (version 1.2.0: 26 built by
@@ -51,8 +51,8 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `summary_by_sido.csv` | a province and a year | 2006-2024 | 317 |
 | `summary_by_sigungu.csv` | a district and a year | 2008-2024 | 4,261 |
 | `summary_by_eupmyeondong.csv` | a sub-district and a year | 2014-2024 | 38,619 |
-| `nationality_by_sigungu.csv` | a district, nationality and year | 2008-2024 | 173,825 |
-| `nationality_by_sido.csv` | a province, nationality and year | 2008-2024 | 24,809 |
+| `nationality_by_sigungu.csv` | a district, nationality and year | 2008-2024 | 174,748 |
+| `nationality_by_sido.csv` | a province, nationality and year | 2008-2024 | 25,013 |
 | `nationality_national.csv` | a population, nationality and year | 2006-2024 | 7,283 |
 | `visa_by_sigungu.csv` | a district, visa status and year | 2008-2024 | 78,123 |
 | `visa_by_sido.csv` | a province, visa status and year | 2008-2024 | 7,209 |
@@ -62,10 +62,10 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `language_demand.csv` | a language, scope, place and year | 2006-2024 | 208,723 |
 | `ethnic_enclaves.csv` | an enclave district, nationality and year | 2008-2024 | 738 |
 | `segregation_by_nationality.csv` | a nationality and year | 2014-2024 | 1,062 |
-| `region_segregation.csv` | a continent of origin and year | 2014-2024 | 118 |
+| `region_segregation.csv` | a continent of origin and year | 2014-2024 | 121 |
 | `naturalization_annual.csv` | a year and processing route | 2011-2024 | 140 |
-| `naturalization_by_country.csv` | a year, former nationality and route | 2011-2024 | 13,556 |
-| `naturalization_by_age.csv` | a year, age band and route | 2011-2024 | 1,452 |
+| `naturalization_by_country.csv` | a year, former nationality and route | 2011-2024 | 16,210 |
+| `naturalization_by_age.csv` | a year, age band and route | 2011-2024 | 1,620 |
 | `children_by_age.csv` | a district, single year of age and year | 2011-2024 | 63,309 |
 | `multicultural_households.csv` | a sub-district, household category and year | 2016-2024 | 299,791 |
 | `diaspora_residence_by_sido.csv` | a province, nationality and year (F-4 residence reports) | 2008-2024 | 6,168 |
@@ -146,7 +146,8 @@ Moran's I of the district foreign share on queen contiguity, the spatial cluster
 
 An **ethnic enclave** is a district where one nationality has a location quotient of at least 2 and
 makes up at least 30 per cent of that district's foreign population, with an absolute floor of 200
-people of that nationality (200 or more). The residual 기타 (Other) category is never flagged, and
+people of that nationality (200 or more). The residual 기타 (Other) category and the district
+table's other columns that name no nationality (무국적, 미등록국가) are never flagged, and
 each district-nationality pair is one enclave, so `n_enclaves` counts pairs rather than districts. The location quotient alone would flag a nationally rare nationality on a small local
 cluster, and the share alone would flag a district with few foreign residents of any kind.
 
@@ -190,8 +191,9 @@ python code/run_pipeline.py --from 08_export_dataset.py    # resume at a step
 ```
 
 `code/kird.py` resolves every path from the project root, so the scripts run from any location and
-`KIRD_ROOT` points them at another checkout. Python 3.10 or newer. Every step is described in
-[`code/README.md`](code/README.md).
+`KIRD_ROOT` points them at another checkout. Python 3.11 or newer: the pinned numpy 2.3.5, scipy
+1.16.3, pyproj 3.7.2, libpysal 4.14.1 and esda 2.9.0 require it, and the release was built on
+3.13.9. Every step is described in [`code/README.md`](code/README.md).
 
 **The raw ministry workbooks are not in this repository**, so a bare checkout documents the build
 rather than reproducing it: run it as-is and phase 1 stops at the first missing workbook, phase 2 at
@@ -228,27 +230,31 @@ never altered; only the label a row carries.
 - **강원도 → 강원특별자치도** (2023) and **전라북도 → 전북특별자치도** (2024), province renames with no
   boundary change. One label each.
 
-Three kinds of row are dropped, because keeping them would double count: a city total
-that repeats the general districts listed below it (수원시, 창원시), a 포천군 row that
-appears in the 2009 sheet six years after the county became a city, and a Sejong row
-whose district cell holds a literal 0. The 화성시동부출장소 sub-office line is added to
-화성시, because the yearbook counts it apart from the city line, and the residual lines
-later editions print under 청원군, 당진군, 연기군 and 여주군 go to their successor.
+One kind of row is dropped, because keeping it would double count: a Sejong row whose
+district cell holds a literal 0. Every other line the district tables print is carried. The
+화성시동부출장소 sub-office line is added to 화성시, because the yearbook counts it apart from the
+city line; the residual lines some editions print under 청원군, 당진군, 연기군, 여주군, 포천군
+(2009) and 마산시 (2013-2014) go to their successor; and the line some 2008-2015 editions print
+under the bare name of a city beside that city's own general districts (용인시, 창원시, and 1-15
+people under 고양시, 성남시, 수원시, 안양시, 천안시 or 청주시) is not the city's total, since the
+province subtotal counts it on top of the gu rows, and stays a district row of its own with no
+resident population (21 district-years).
 
 ## 7. Caveats
 
 District-level nationality detail begins in 2008 and district-level indices in 2009.
 
-A district-level sum is slightly below the published national total (0.2 per cent in 2024), because the national tables carry
-the yearbook's non-nationality lines (무국적, 기타), which the district files do not.
-`national_annual.foreign_total` is documented as the district sum, so the two agree within the data
-even though the national total in the yearbook is marginally higher.
+The district files carry the district table's columns for people it names no nationality for
+(무국적, 미등록국가, or a single 기타 column, by edition), so a district-level sum equals the published
+national registered total in every year from 2008 except 2015, when it is one person short: the
+yearbook's 경기도 subtotal holds a person none of its district lines does. These columns are not
+nationalities; `n_nationalities_observed` does not count them and the diversity indices put them in
+the residual bin. `national_annual.foreign_total` is the district sum.
 
-`summary_by_sido.registered_foreigners` carries the yearbook's own province rows, so it differs from
-a sum of the districts in both directions: above it by 903 to 6,828 people a year nationally in
-2008-2014, below it by 2,096 to 3,583 in 2015-2024. Both figures are the
-publisher's. The province nationality and visa tables and every other province count are district
-sums.
+`summary_by_sido.registered_foreigners` carries the yearbook's own province rows, which equal the sum
+of their districts in every province and year from 2008 except 2015, when the 경기도 subtotal is one
+person above its district lines. The province nationality and visa tables and every other province
+count are district sums.
 
 `resident_pop` is present for every district in every year; where the Ministry of Justice and the
 Ministry of the Interior adopted a boundary change in different years, the population is carried on

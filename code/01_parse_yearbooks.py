@@ -180,9 +180,12 @@ DROP_NAMES = {
 # national tables fell short of the printed grand total by 106-337 people a year.
 # The two status-table loaders now keep them as their own rows; export_json takes
 # them back out, so the dashboard's country lists and every index stay on
-# nationalities alone. The district tables are a different source and are untouched.
+# nationalities alone. The district tables print the same kind of population as
+# columns (무국적, 미등록국가, or one 기타 column, by edition); load_region_country
+# keeps them too since the final audit of 2026-09-26 (DISTRICT_DROP).
 RESIDUAL_LINES = {"무국적", "기타", "미등록국가", "미상", "한국"}
 VISA_DROP = DROP_NAMES - RESIDUAL_LINES
+DISTRICT_DROP = DROP_NAMES - RESIDUAL_LINES
 
 
 # Substring patterns to drop (footnotes etc. that aren't real countries)
@@ -1648,12 +1651,21 @@ def load_region_country(year, path):
     df = pd.read_excel(path, sheet_name=0, header=None)
     header = df.iloc[0].tolist()
 
+    # The columns that name no nationality are carried as the table prints them,
+    # district by district: 무국적 and 미등록국가 (2014-2016, 2019, 2021-2022; 무국적
+    # alone in 2024) and a 기타 column (2015-2018, 2020, 2023, 2025; empty in 2015-2016,
+    # where it stands beside the other two, and the only such column elsewhere). Until
+    # 2026-09-26 (final audit) DROP_NAMES removed them with the continent subtotals,
+    # so every district, province and national sum built on this table fell short
+    # of the printed total by 126-183 people a year (2022: 무국적 122 over 67 named
+    # districts, 미등록국가 32). They keep their own labels here; the indices'
+    # residual bin takes them downstream (kird.RESIDUAL_LINES).
     country_cols = {}
     for i, h in enumerate(header):
         if i < 4 or not isinstance(h, str):
             continue
         cleaned = clean_country(h)
-        if cleaned and cleaned not in DROP_NAMES:
+        if cleaned and cleaned not in DISTRICT_DROP:
             country_cols[i] = cleaned
 
     body = df.iloc[1:].copy().reset_index(drop=True)
@@ -2307,6 +2319,12 @@ def compute_indices(region_df, pop_df):
             X = nat_totals.get(country, 0)
             if X < 100:  # skip very small populations (noise)
                 continue
+            # The district table's columns that name no nationality (무국적, 기타,
+            # 미등록국가; 126-183 people a year) are carried since 2026-09-26 but are
+            # not a group to measure segregation for; segregation_by_nationality
+            # takes its keys from this list.
+            if country in RESIDUAL_LINES:
+                continue
             # D = 0.5 * Σ |x_i/X - y_i/Y| where y is Korean (reference group)
             D = 0.0
             if kor_total and kor_total > 0:
@@ -2429,8 +2447,9 @@ def compute_indices(region_df, pop_df):
             sido, sigungu, country, x = row["sido"], row["sigungu"], row["country"], row["n"]
             # 기타 is the yearbook's residual bin, not a nationality, so it is never an
             # enclave (09_finish_release drops it from the release; the dashboard used
-            # to keep it and flagged 1-2 more a year in 2009-2013). 2026-09-25.
-            if x < 200 or country == "기타":
+            # to keep it and flagged 1-2 more a year in 2009-2013). 2026-09-25. The
+            # same holds for every line that names no nationality (2026-09-26).
+            if x < 200 or country in RESIDUAL_LINES:
                 continue
             sg_for = sigungu_foreign.get((sido, sigungu), 0)
             if sg_for <= 0:

@@ -49,6 +49,12 @@ import pandas as pd
 
 TOL = 5e-3          # 소수 셋째 자리로 실린 값이라 이만큼은 반올림 차이다
 AGG = {"총계", "총합계", "소계", "계"}
+# The yearbook's lines that hold people but name no nationality: 무국적, 미등록국가,
+# 미상, a single 기타 line or column, and 한국. The national tables carry the status
+# table's lines (2026-09-26) and the district files the district table's columns
+# (2026-09-26, final audit), so every level adds up to the printed total. They are
+# not nationalities: never counted as one, never ranked into the top 19.
+RESIDUAL_LINES = {"무국적", "기타", "미등록국가", "미상", "한국"}
 
 FILES = {
     "age_sex_national.csv": ["year", "population", "country", "gender", "age_group"],
@@ -301,8 +307,10 @@ def national_top19(cnt):
         for cs in blk.values():
             for c, v in cs.items():
                 agg[c] = agg.get(c, 0.0) + v
+        # the lines that name no nationality (기타, 무국적, 미등록국가) are never
+        # ranked; they sit in the residual bin
         out[y] = set([c for c, _ in sorted(agg.items(), key=lambda x: -x[1])
-                      if c != "기타"][:19])
+                      if c not in RESIDUAL_LINES][:19])
     return out
 
 
@@ -330,8 +338,9 @@ def check_indices(d):
             "HHI": r.get("HHI"), "_HHI": sum((v / sum(base)) ** 2 for v in base),
             "index_base_k": r.get("index_base_k"), "_k": S,
             "n_nationalities_observed": r.get("n_nationalities_observed"),
-            # 기타는 나라가 아니라 잔여 칸이므로 세지 않는다
-            "_obs": len([1 for c, v in cs.items() if v > 0 and c != "기타"]),
+            # 기타는 나라가 아니라 잔여 칸이므로 세지 않는다. 무국적·미등록국가도
+            # 국적이 아니다(2026-09-26부터 시군구 파일에 실린다).
+            "_obs": len([1 for c, v in cs.items() if v > 0 and c not in RESIDUAL_LINES]),
         })
     df = pd.DataFrame(rows).dropna(subset=["shannon_H"])
     for pub, calc, tol, name in (("shannon_H", "_H", 6e-3, "shannon_H"),
@@ -442,7 +451,8 @@ def check_theil(d):
         for p in ks:
             for c, v in blk[p].items():
                 agg[c] = agg.get(c, 0.0) + v
-        top = set([c for c, _ in sorted(agg.items(), key=lambda x: -x[1]) if c != "기타"][:19])
+        top = set([c for c, _ in sorted(agg.items(), key=lambda x: -x[1])
+                   if c not in RESIDUAL_LINES][:19])
         grp, tot, mix = {}, {}, {}
         for p in ks:
             m = {c: v for c, v in blk[p].items() if c in top}
@@ -536,10 +546,6 @@ def check_cross_file(d):
 #              has no such row, so its M + F total is one lower.
 AGE_BASE_KNOWN = {("stay", 2022): 17, ("stay", 2019): -1}
 
-# The yearbook's nationality x status table prints lines that name no nationality;
-# since 2026-09-26 the national tables carry them so each year adds up to the
-# printed grand total. Nothing below the national level carries them.
-RESIDUAL_LINES = {"무국적", "기타", "미등록국가", "미상", "한국"}
 
 
 def check_age_bases(d):
@@ -1064,6 +1070,53 @@ def check_dictionary_numbers(data, d):
         exp.append(("naturalization_annual.csv", "year",
                     ["annual series runs %d-%d" % (ann["year"].min(), ann["year"].max()),
                      "panels run %d-%d" % (pc["year"].min(), pc["year"].max())]))
+    # the district table's columns that name no nationality (2026-09-26, final audit)
+    nb = d.get("nationality_by_sigungu.csv")
+    if nb is not None:
+        r = nb[(nb["n"] > 0) & (nb["country"].isin(["무국적", "미등록국가", "미상", "한국"])
+                                | ((nb["country"] == "기타") & (nb["year"] >= 2014)))]
+        if len(r):
+            per = r.groupby("year")["n"].sum()
+            exp.append(("nationality_by_sigungu.csv", "country / country_en",
+                        ["%s to %s people a year" % (format(int(per.min()), ","),
+                                                     format(int(per.max()), ","))]))
+    # the city lines, the rows under a bare city name beside that city's gu: how many,
+    # how large, how many the visa file carries, and whom the Theil H and the two
+    # segregation files leave out (2026-09-26, final audit; they were typed by hand)
+    na, seg, vb = (d.get(f) for f in ("national_annual.csv",
+                                      "segregation_by_nationality.csv",
+                                      "visa_by_sigungu.csv"))
+    if sg is not None and "resident_pop" in sg.columns:
+        cl = sg[sg["resident_pop"].isna() & (sg["registered_foreigners"] > 0)]
+        if len(cl):
+            fm = lambda v: format(int(v), ",")
+            exp.append(("summary_by_sigungu.csv", "sigungu / sigungu_en",
+                        ["%d district-years" % len(cl),
+                         "%s to %s people" % (fm(cl["registered_foreigners"].min()),
+                                              fm(cl["registered_foreigners"].max()))]))
+            keys = list(map(tuple, cl[["year", "sido", "sigungu"]].values.tolist()))
+            if vb is not None:
+                vk = set(map(tuple, vb.loc[vb["n"] > 0, ["year", "sido", "sigungu"]]
+                             .drop_duplicates().values.tolist()))
+                exp.append(("visa_by_sigungu.csv", "sido / sido_en / sigungu / sigungu_en",
+                            ["carries %d of the %d city rows"
+                             % (sum(1 for k in keys if k in vk), len(cl))]))
+            if na is not None:
+                th = set(na.loc[na["theil_segregation_H"].notna(), "year"])
+                per = cl[cl["year"].isin(th)].groupby("year")["registered_foreigners"].sum()
+                if len(per):
+                    exp.append(("national_annual.csv", "theil_segregation_H",
+                                ["(%s to %s people a year in " % (fm(per.min()), fm(per.max()))]))
+            if seg is not None:
+                sc = cl[cl["year"].isin(set(seg["year"]))].sort_values(["year", "sido", "sigungu"])
+                en = ["%s in %d %s" % (fm(r.registered_foreigners), r.year, r.sigungu)
+                      for r in sc.itertuples()]
+                if en:
+                    en[0] = en[0].replace(" in ", " people in " if en[0].split()[0] != "1"
+                                          else " person in ", 1)
+                    txt = (", ".join(en[:-1]) + " and " + en[-1]) if len(en) > 1 else en[0]
+                    exp.append(("segregation_by_nationality.csv", "national_total", [txt]))
+                    exp.append(("region_segregation.csv", "dissimilarity_D", [txt]))
     bad = []
     for f, var, needles in exp:
         text = row(f, var)
@@ -1227,6 +1280,108 @@ def check_dictionary_years(data, d):
           "; ".join(bad[:4]))
 
 
+# Where the district-by-visa and district-by-nationality tables of one edition place
+# a person differently, read in the raw files (year, sido, sigungu): visa total minus
+# nationality total. The 2015 nationality table prints a bare 창원시 line (1 person)
+# above 창원시 마산합포구 (2,159); the visa table prints no 창원시 line and 2,160 for
+# 마산합포구. The 2015 visa table prints a 화성시 동부출장소 line (1 person), which the
+# release adds to 화성시; the nationality table prints no such line and holds that
+# person only in its 경기도 소계 (369,665 against 369,664 over its district lines),
+# which is the one person the nationality files fall short of the national total.
+TABLES_DIFFER = {(2015, "경상남도", "창원시"): -1, (2015, "경상남도", "창원시 마산합포구"): 1,
+                 (2015, "경기도", "화성시"): 1}
+
+
+def check_district_tables_agree(d):
+    """The district visa and nationality files hold the same people, district by
+    district, and every district row of the summary has detail rows behind it.
+
+    2026-09-26 (final audit). The two files come from two tables of one edition that
+    print the same registered population by district. Until this date the
+    nationality file dropped the table's columns that name no nationality, so from
+    2014 a district's visa total could exceed its nationality total and no check
+    compared the two below the national sum. The reverse join (a summary row with no
+    detail rows) was not checked either: summary_by_sigungu's 2015 창원시 row (1
+    person) has no visa row, because the visa table prints no such line.
+    """
+    nb, vb, sm = (d.get(f) for f in ("nationality_by_sigungu.csv", "visa_by_sigungu.csv",
+                                     "summary_by_sigungu.csv"))
+    if nb is None or vb is None or sm is None:
+        return
+    k = ["year", "sido", "sigungu"]
+    a = nb.groupby(k)["n"].sum().rename("nat")
+    b = vb.groupby(k)["n"].sum().rename("visa")
+    j = pd.concat([a, b], axis=1).fillna(0)
+    j["gap"] = j["visa"] - j["nat"]
+    known = dict(TABLES_DIFFER)
+    off = {key: int(g) for key, g in j["gap"].items()
+           if int(g) != known.get(tuple(key), 0)}
+    missing = [key for key in known if int(j["gap"].get(key, 0)) != known[key]]
+    check(not off and not missing,
+          "cross-file: visa_by_sigungu and nationality_by_sigungu hold the same people "
+          "in every district-year (%d documented differences)" % len(known),
+          "%d district-years differ, e.g. %s; documented but absent %s"
+          % (len(off), list(off.items())[:4], missing[:3]))
+    have = sm[sm["registered_foreigners"] > 0].set_index(k).index
+    for name, frame in (("nationality_by_sigungu.csv", nb), ("visa_by_sigungu.csv", vb)):
+        rows = set(map(tuple, frame[frame["n"] > 0][k].drop_duplicates().values.tolist()))
+        lack = sorted(set(map(tuple, have.tolist())) - rows)
+        allowed = {key for key, g in known.items()
+                   if name == "visa_by_sigungu.csv" and g < 0
+                   and int(j.loc[key, "visa"]) == 0}
+        bad = [key for key in lack if key not in allowed]
+        check(not bad, "cross-file: every summary_by_sigungu row with registered "
+              "foreigners has %s rows behind it" % name,
+              "%d without, e.g. %s" % (len(bad), bad[:4]))
+
+
+def check_national_reach(d):
+    """The district files add up to the published national registered total.
+
+    2026-09-26 (final audit): national_annual.foreign_total, the sum of the districts,
+    sat 126-183 below the registered total of nationality_national every year from
+    2014, because the district files dropped the district table's columns that name
+    no nationality. The table's printed grand total equals the national one in every
+    year; the only gap left is 2015, where the table's 경기도 소계 holds one person
+    none of its district lines does.
+    """
+    na, nn = d.get("national_annual.csv"), d.get("nationality_national.csv")
+    if na is None or nn is None:
+        return
+    reg = nn[nn["population"] == "registered"].groupby("year")["n"].sum()
+    dist = na.set_index("year")["foreign_total"]
+    gap = (reg - dist).dropna()
+    gap = {int(y): int(g) for y, g in gap.items() if int(y) >= 2008}
+    bad = {y: g for y, g in gap.items() if g != {2015: 1}.get(y, 0)}
+    check(bool(gap) and not bad,
+          "cross-file: national_annual.foreign_total = nationality_national registered "
+          "total every year from 2008 (2015: one person short)", "gap by year %s" % bad)
+
+
+def check_naturalization_grid(d):
+    """Each naturalization panel year is a full grid: every country (age band) the
+    panel carries that year has a row for every processing type it carries that year.
+
+    2026-09-26 (final audit): the 2019, 2020 and 2024 by-country tables and the 2019,
+    2020, 2023 and 2024 by-age tables leave zero cells empty, and an empty cell wrote
+    no row, so a missing row meant zero in those years and nothing in the others
+    (2019 by country: 409 rows over 103 countries, 1,339 in 2018).
+    """
+    for name, unit in (("naturalization_by_country.csv", "country"),
+                       ("naturalization_by_age.csv", "age")):
+        df = d.get(name)
+        if df is None:
+            continue
+        bad = {}
+        for y, g in df.groupby("year"):
+            per = g.groupby(unit)["type"].nunique()
+            k = g["type"].nunique()
+            if (per != k).any():
+                bad[int(y)] = "%d of %d %s short" % (int((per != k).sum()), len(per), unit)
+        check(not bad, "naturalization: %s is a full %s x type grid in every year"
+              % (name, unit), bad)
+
+
 def main():
     data = sys.argv[1] if len(sys.argv) > 1 else \
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -1266,6 +1421,9 @@ def main():
     check_single_district_province(d)
     check_visa_label_per_code(d)
     check_stata_labels(data)
+    check_district_tables_agree(d)
+    check_national_reach(d)
+    check_naturalization_grid(d)
     print()
     if FAILED:
         print("%d of %d checks FAILED:" % (len(FAILED), CHECKED))

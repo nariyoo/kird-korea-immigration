@@ -1001,6 +1001,17 @@ import math
 OTHER_REGION = "기타"
 KOREAN_REGION = "동아시아"
 
+# The yearbook's lines that hold people but name no nationality: 무국적 (stateless),
+# 미등록국가 and 미상, a single 기타 (other) line or column, and 한국. The national
+# status tables print them as lines, the district tables as columns, and the release
+# carries them at every level where the table prints them, so each level adds up to
+# the printed total. They are never a nationality: they do not count in
+# n_nationalities_observed, are never ranked into an index's top 19, never form an
+# enclave and never get a segregation row of their own; the indices' residual bin
+# takes them. In the 2008-2013 district tables 기타 is the residual of every
+# nationality those editions do not list by name. (2026-09-26)
+RESIDUAL_LINES = frozenset({"무국적", "기타", "미등록국가", "미상", "한국"})
+
 
 def shannon(counts):
     """Shannon entropy of the nationality composition, natural log, 3 dp."""

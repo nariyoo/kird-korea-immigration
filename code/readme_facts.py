@@ -79,6 +79,19 @@ def fmt(n):
     return format(int(n), ",")
 
 
+def years_text(ys):
+    """2014, 2015, 2016, 2019 -> '2014-2016 and 2019' (the dictionary's form)."""
+    ys = sorted(int(y) for y in ys)
+    if not ys:
+        return "no year"
+    runs, a = [], ys[0]
+    for p, q in zip(ys, ys[1:] + [None]):
+        if q != p + 1:
+            runs.append(str(a) if a == p else "%d-%d" % (a, p))
+            a = q
+    return ", ".join(runs[:-1]) + (" and " if len(runs) > 1 else "") + runs[-1]
+
+
 def facts():
     F = {}
     vn = rd("visa_national.csv")
@@ -136,21 +149,24 @@ def facts():
                           % (int(gap.max()), (", ".join(pl[:-1]) + " and " + pl[-1])
                              if len(pl) > 1 else pl[0], ys[0], ys[-1]))
 
-    # the yearbook's non-nationality lines below the national level
+    # The district table's own columns that name no nationality, which the district
+    # files carry district by district since 2026-09-26 (final audit). Until then
+    # they held one such row, and the README quoted it. 기타 before 2014 is the
+    # residual of the nationalities those editions do not list, so it is left out.
     nb = rd("nationality_by_sigungu.csv")
-    # 기타 is left out: in the 2008-2013 district tables it is the yearbook's residual
-    # of the nationalities it does not list, not the status table's 기타 line.
-    hit = nb[nb["country"].isin([c for c in RESIDUAL_LINES if c != "기타"]) & (nb["n"] > 0)]
-    if hit.empty:
-        F["district_residuals"] = "none"
-    elif len(hit) > 3:
-        F["district_residuals"] = ("%d district-years, %s people"
-                                   % (len(hit), fmt(hit["n"].sum())))
-    else:
-        F["district_residuals"] = "; ".join(
-            "%s in %d, %s %s, %s %s" % (r.country, r.year, r.sido, r.sigungu, fmt(r.n),
-                                        "person" if r.n == 1 else "people")
-            for r in hit.sort_values(["year", "sido", "sigungu"]).itertuples())
+    res = nb[(nb["n"] > 0) & (nb["country"].isin([c for c in RESIDUAL_LINES if c != "기타"])
+                              | ((nb["country"] == "기타") & (nb["year"] >= 2014)))]
+    if res.empty:
+        raise SystemExit("readme_facts: nationality_by_sigungu carries none of the district "
+                         "table's columns that name no nationality")
+    per = res.groupby("year")["n"].sum()
+    F["district_residual_range"] = "%s to %s" % (fmt(per.min()), fmt(per.max()))
+    F["district_residual_districts"] = str(int(
+        res.drop_duplicates(["year", "sido", "sigungu"]).groupby("year").size().max()))
+    F["district_stateless_years"] = years_text(res.loc[res["country"] == "무국적", "year"].unique())
+    F["district_unreg_years"] = years_text(
+        res.loc[res["country"].isin(["미등록국가", "미상"]), "year"].unique())
+    F["district_other_years"] = years_text(res.loc[res["country"] == "기타", "year"].unique())
     # 2026-09-26 (4차 대조): province rows against the district sums, and the district
     # tables against the national ones. These sentences were hand-kept and described
     # the parser's losses (UK columns overwritten, sub-office and residual lines
@@ -163,10 +179,11 @@ def facts():
     nat_gap = (sd.groupby("year")["registered_foreigners"].sum()
                - sg.groupby("year")["registered_foreigners"].sum()).dropna()
     nat_gap = nat_gap[nat_gap.index.isin(bad_years)]
-    F["sido_eq_from"] = str(max(bad_years) + 1) if bad_years else str(int(j.index.get_level_values(0).min()))
-    F["sido_gap_years"] = "%d-%d" % (min(bad_years), max(bad_years)) if bad_years else "none"
-    # 2026-09-26 (5차 대조): the gap can run either way (2014: the district file holds
-    # one stateless 화성시 resident the province row leaves out), so its size is stated.
+    # 2026-09-26 (final audit): with the district table's columns that name no
+    # nationality carried, the province row equals its districts from 2008 in every
+    # year but 2015 (the yearbook's own 경기도 소계 is one above its district lines).
+    F["sido_eq_from"] = str(int(j.index.get_level_values(0).min()))
+    F["sido_gap_years"] = years_text(bad_years) if bad_years else "none"
     _mx = int(nat_gap.abs().max()) if len(nat_gap) else 0
     F["sido_gap_range"] = "at most %s %s" % (fmt(_mx), "person" if _mx == 1 else "people")
     # visa_by_sigungu carries the district table's 기타 column as ETC since 5차 대조;
@@ -180,10 +197,38 @@ def facts():
     ns_ = nb.groupby("year")["n"].sum()
     F["etc_2020"] = fmt(etc_d[2020])
     F["etc_last"] = fmt(etc_d[last])
-    F["dist_gap_last"] = fmt(tot[("registered", last)] - ns_[last])
+    # the district files against the published national registered total: equal in
+    # every year since the final audit of 2026-09-26, but 2015 (one person the
+    # yearbook's 경기도 소계 holds and none of its district lines does)
+    g_ = {int(y): int(tot[("registered", y)] - n) for y, n in ns_.items()
+          if ("registered", y) in tot.index}
+    off_ = {y: v for y, v in g_.items() if v}
+    F["dist_gap_years"] = years_text(off_) if off_ else "none"
+    _m = max(off_.values(), default=0)
+    F["dist_gap_size"] = "%s %s" % (fmt(_m), "person" if _m == 1 else "people")
     na_ = rd("national_annual.csv").set_index("year")
+    # the observed-nationality count the Index definitions quote, 2013 and 2014
+    F["obs_2013"] = str(int(na_.loc[2013, "n_nationalities_observed"]))
+    F["obs_2014"] = str(int(na_.loc[2014, "n_nationalities_observed"]))
     F["broad_ratio_2008"] = "%.2f" % (na_.loc[2008, "broad_total"] / na_.loc[2008, "foreign_total"])
     F["broad_ratio_last"] = "%.2f" % (na_.loc[last, "broad_total"] / na_.loc[last, "foreign_total"])
+    # 2026-09-26 (final audit): the city lines printed beside a city's own gu carry no
+    # resident population, so the Theil H and the two segregation files leave them
+    # out, and the Index definitions say whom. These were typed by hand.
+    cl = sg[sg["resident_pop"].isna() & (sg["registered_foreigners"] > 0)]
+    th = na_["theil_segregation_H"].dropna().index
+    per_cl = cl[cl["year"].isin(th)].groupby("year")["registered_foreigners"].sum()
+    if per_cl.empty:
+        raise SystemExit("readme_facts: no city line in a year with a Theil H")
+    F["cityline_theil"] = "%s to %s" % (fmt(per_cl.min()), fmt(per_cl.max()))
+    F["cityline_theil_years"] = years_text(per_cl.index)
+    seg_years = sorted(set(rd("segregation_by_nationality.csv")["year"].astype(int)))
+    F["seg_first"] = str(seg_years[0])
+    sc = cl[cl["year"].isin(seg_years)].sort_values(["year", "sido", "sigungu"])
+    items = ["%d %s (%s)" % (r.year, r.sigungu, fmt(r.registered_foreigners))
+             for r in sc.itertuples()]
+    F["cityline_seg"] = ((", ".join(items[:-1]) + " and " + items[-1]) if len(items) > 1
+                         else (items[0] if items else "no row"))
 
     # Against the published v1.1.0 (2026-09-26, 4차 대조: these were hand-kept and
     # moved when the district counts did). Only when the v1.1.0 zip is present.
@@ -239,19 +284,34 @@ CLAIMS = [
     ("residual_min", _p(r"carry them as rows of their own\s+\((?P<v>[\d,]+) to [\d,]+ registered")),
     ("residual_max", _p(r"carry them as rows of their own\s+\([\d,]+ to (?P<v>[\d,]+) registered")),
     ("respop", _p(r"Resident population totals match MOIS\s+\((?P<v>[^)]*)\)")),
-    ("district_residuals", _p(r"Below the national level the only such rows are:\s+(?P<v>[^.]*)\.")),
+    # 2026-09-26 (final audit): the district files carry the district table's columns
+    # that name no nationality; the sentence that said only one such row existed
+    # below the national level is gone.
+    ("district_stateless_years", _p(r"columns\s+of\s+its\s+own,\s+by\s+edition:\s+무국적\s+in\s+(?P<v>[\d,\sand-]+?),\s+미등록국가\s+in")),
+    ("district_unreg_years", _p(r",\s+미등록국가\s+in\s+(?P<v>[\d,\sand-]+?),\s+and\s+a\s+single\s+기타\s+column\s+in")),
+    ("district_other_years", _p(r"and\s+a\s+single\s+기타\s+column\s+in\s+(?P<v>[\d,\sand-]+?)\.")),
+    ("district_residual_range", _p(r"district\s+by\s+district\s+as\s+printed\s+\((?P<v>[\d,]+\s+to\s+[\d,]+)\s+people\s+a\s+year")),
+    ("district_residual_districts", _p(r"people\s+a\s+year\s+over\s+up\s+to\s+(?P<v>\d+)\s+districts\)")),
     ("broad_gap", _p(r"differ from the\s+province row by\s+(?P<v>[^;]*);")),
     ("reg_2006", _p(r"Registered 2006 is (?P<v>[\d,]+) in the deposited files")),
     ("stay_2006", _p(r"staying 2006\s+(?P<v>[\d,]+)\s+\(")),
     ("stay_2008", _p(r"staying 2006\s+[\d,]+\s+\([\d,]+\), 2008\s+(?P<v>[\d,]+)")),
     ("stay_2009", _p(r", 2009\s+(?P<v>[\d,]+)\s+\([\d,]+\) and 2014")),
     ("stay_2014", _p(r"\)\s+and 2014\s+(?P<v>[\d,]+)\s+\(")),
-    ("sido_eq_from", _p(r"and from (?P<v>\d{4}) it equals the sum of that")),
-    ("sido_gap_years", _p(r"province's districts in every province and year\. In (?P<v>\d{4}-\d{4}) the")),
-    ("sido_gap_range", _p(r"differ from the district sum by (?P<v>at most [\d,]+ (?:person|people)) a year")),
+    ("sido_eq_from", _p(r"From\s+(?P<v>\d{4})\s+it\s+equals\s+the\s+sum\s+of\s+that")),
+    ("sido_gap_years", _p(r"in\s+every\s+province\s+and\s+year\s+except\s+(?P<v>[\d,\sand-]+?),\s+when\s+the\s+yearbook's\s+own")),
+    ("sido_gap_range", _p(r"differ\s+from\s+the\s+district\s+sum\s+by\s+(?P<v>at most [\d,]+ (?:person|people))\s+a\s+year")),
     ("etc_2020", _p(r"363 people in 2013, (?P<v>[\d,]+) at the 2020 peak")),
     ("etc_last", _p(r"at the 2020 peak and (?P<v>[\d,]+) in \d{4}, the\s+same as")),
-    ("dist_gap_last", _p(r"itself sits (?P<v>[\d,]+) below the national total")),
+    ("dist_gap_years", _p(r"national\s+registered\s+total\s+in\s+every\s+year\s+except\s+(?P<v>[\d,\sand-]+?)\s+\(")),
+    ("dist_gap_size", _p(r"national\s+registered\s+total\s+in\s+every\s+year\s+except\s+[\d,\sand-]+?\s+\((?P<v>[\d,]+ (?:person|people))")),
+    # the city lines the segregation indices leave out (2026-09-26, final audit)
+    ("cityline_theil", _p(r"so\s+Theil\s+H\s+leaves\s+out\s+(?P<v>[\d,]+\s+to\s+[\d,]+)\s+people\s+a\s+year\s+in")),
+    ("cityline_theil_years", _p(r"so\s+Theil\s+H\s+leaves\s+out\s+[\d,]+\s+to\s+[\d,]+\s+people\s+a\s+year\s+in\s+(?P<v>[\d,\sand-]+?),\s+and\s+the\s+segregation\s+files")),
+    ("seg_first", _p(r"segregation\s+files,\s+which\s+start\s+in\s+(?P<v>\d{4}),\s+leave\s+out")),
+    ("cityline_seg", _p(r"which\s+start\s+in\s+\d{4},\s+leave\s+out\s+(?P<v>[^.`]+?)\.\s+`region_segregation\.total`")),
+    ("obs_2013", _p(r"\(national:\s+(?P<v>\d+) in 2013, \d+ in\s+2014\)")),
+    ("obs_2014", _p(r"\(national:\s+\d+ in 2013, (?P<v>\d+) in\s+2014\)")),
     ("broad_ratio_2008", _p(r"ran (?P<v>[\d.]+) times `registered_foreigners` in 2008")),
     ("broad_ratio_last", _p(r"in 2008 and (?P<v>[\d.]+) times in \d{4}")),
     ("moran_years", _p(r"`morans_I_share` differs in all (?P<v>\d+) years")),
@@ -273,9 +333,12 @@ REQUIRED_META = {"n_tables", "vars_all", "vars_summary", "n_datafiles"}
 # Claims every README that describes the data must carry (the GitHub README is a
 # shorter code-first document and carries only the file table).
 REQUIRED = {"f6_first", "f2_first", "f2_next", "f4_stay_last", "residual_min",
-            "residual_max", "respop", "district_residuals", "broad_gap",
+            "residual_max", "respop", "district_stateless_years", "district_unreg_years",
+            "district_other_years", "district_residual_range",
+            "district_residual_districts", "broad_gap",
             "sido_eq_from", "sido_gap_years", "sido_gap_range", "etc_2020",
-            "etc_last", "dist_gap_last"}
+            "etc_last", "dist_gap_years", "dist_gap_size", "obs_2013", "obs_2014",
+            "cityline_theil", "cityline_theil_years", "seg_first", "cityline_seg"}
 
 ROW = re.compile(r"^\|\s*`?([A-Za-z0-9_]+\.csv)`?\s*\|")
 YEARS = re.compile(r"^\s*((?:19|20)\d{2})\s*[-–]\s*((?:19|20)\d{2})\s*$")
