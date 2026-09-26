@@ -51,16 +51,16 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `summary_by_sido.csv` | a province and a year | 2006-2024 | 317 |
 | `summary_by_sigungu.csv` | a district and a year | 2008-2024 | 4,240 |
 | `summary_by_eupmyeondong.csv` | a sub-district and a year | 2014-2024 | 38,619 |
-| `nationality_by_sigungu.csv` | a district, nationality and year | 2008-2024 | 173,723 |
-| `nationality_by_sido.csv` | a province, nationality and year | 2008-2024 | 24,807 |
+| `nationality_by_sigungu.csv` | a district, nationality and year | 2008-2024 | 173,749 |
+| `nationality_by_sido.csv` | a province, nationality and year | 2008-2024 | 24,809 |
 | `nationality_national.csv` | a population, nationality and year | 2006-2024 | 7,283 |
-| `visa_by_sigungu.csv` | a district, visa status and year | 2008-2024 | 75,989 |
+| `visa_by_sigungu.csv` | a district, visa status and year | 2008-2024 | 75,996 |
 | `visa_by_sido.csv` | a province, visa status and year | 2008-2024 | 7,018 |
 | `visa_national.csv` | a population, visa status and year | 2006-2024 | 1,241 |
 | `visa_by_nationality.csv` | a population, nationality, visa and year | 2006-2024 | 238,025 |
 | `age_sex_national.csv` | a population, nationality, age band, sex and year | registered 2009-2024, stay 2011-2024 | 155,903 |
-| `language_demand.csv` | a language, scope, place and year | 2006-2024 | 208,622 |
-| `ethnic_enclaves.csv` | an enclave district, nationality and year | 2008-2024 | 739 |
+| `language_demand.csv` | a language, scope, place and year | 2006-2024 | 208,684 |
+| `ethnic_enclaves.csv` | an enclave district, nationality and year | 2008-2024 | 738 |
 | `segregation_by_nationality.csv` | a nationality and year | 2014-2024 | 1,062 |
 | `region_segregation.csv` | a continent of origin and year | 2014-2024 | 118 |
 | `naturalization_annual.csv` | a year and processing route | 2011-2024 | 140 |
@@ -100,7 +100,7 @@ published down to sub-district level and carries the multicultural-household det
 broken out by nationality.
 
 The two are not interchangeable and their sum counts the same people twice. Nationally
-`broad_total` ran 1.05 times `registered_foreigners` in 2008 and 1.74 times in 2024. The gap widens
+`broad_total` ran 1.04 times `registered_foreigners` in 2008 and 1.74 times in 2024. The gap widens
 as naturalizations and Korean-born children accumulate, so the choice of definition moves the trend as well as the level.
 
 **MOJ staying foreigners** (`population = stay` in `nationality_national`, `visa_national`,
@@ -220,7 +220,7 @@ never altered; only the label a row carries.
   since the post-merger district rows do not exist yet; 진해시 is carried onto 창원시 진해구.
 - **세종특별자치시**, created July 2012. The district panel carries 세종시 as one continuous unit
   from 2008; there is no separate 연기군 row. At province level Sejong is counted inside 충청남도
-  until 2011, following the source.
+  until 2011, following the source. The 2012-2014 editions still print a residual 연기군 line under 충청남도; both levels count it in 세종.
 - **충청북도 청원군 → 청주시 청원구**, absorbed by Cheongju 2014. Values before 2014 are carried onto
   청주시 청원구.
 - **경기도 여주군 → 여주시** (promoted 2013) and **충청남도 당진군 → 당진시** (promoted 2012), county
@@ -228,18 +228,19 @@ never altered; only the label a row carries.
 - **강원도 → 강원특별자치도** (2023) and **전라북도 → 전북특별자치도** (2024), province renames with no
   boundary change. One label each.
 
-Four kinds of row are dropped, because keeping them would double count: a city total that repeats
-the general districts listed below it (수원시, 창원시), the 화성시동부출장소 sub-office whose
-population is also in its parent city, a 포천군 row that appears in the 2009 sheet six years after
-the county became a city, and a Sejong row whose district cell holds a literal 0.
+Three kinds of row are dropped, because keeping them would double count: a city total
+that repeats the general districts listed below it (수원시, 창원시), a 포천군 row that
+appears in the 2009 sheet six years after the county became a city, and a Sejong row
+whose district cell holds a literal 0. The 화성시동부출장소 sub-office line is added to
+화성시, because the yearbook counts it apart from the city line, and the residual lines
+later editions print under 청원군, 당진군, 연기군 and 여주군 go to their successor.
 
 ## 7. Caveats
 
 District-level nationality detail begins in 2008 and district-level indices in 2009.
 
-A district-level sum is slightly below the published national total (0.2 per cent in 2024), because
-the yearbook's district table does not place every registered foreigner in a district and the national
-tables also carry the yearbook's non-nationality lines (무국적, 기타), which no district table has.
+A district-level sum is slightly below the published national total (0.2 per cent in 2024), because the national tables carry
+the yearbook's non-nationality lines (무국적, 기타), which the district files do not.
 `national_annual.foreign_total` is documented as the district sum, so the two agree within the data
 even though the national total in the yearbook is marginally higher.
 

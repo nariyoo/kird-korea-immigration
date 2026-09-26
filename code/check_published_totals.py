@@ -174,6 +174,67 @@ def main():
         return 1
     print("GATE OK: every year, composed 2006-2010 staying included, equals the "
           "printed grand total (%d series-years)" % len(direct))
+    return district_gate(ns["REGION_COUNTRY_FILES"])
+
+
+def district_gate(files):
+    """The district-by-nationality table against its own printed grand-total row.
+
+    2026-09-26 (4차 대조): the parser wrote each nationality column of a row straight
+    into its result, so where several columns fold onto one country (영국 +
+    영국외지민 + 영국외지시민 + 영국해외영토시민, 홍콩 + 홍콩거주난민, 미국 + 미국인근섬)
+    the last one overwrote the rest; and the residual lines some editions still print
+    under abolished districts (청원군, 당진군, 연기군, 여주군, 2014-2018) were dropped
+    instead of carried on their successor. nationality_by_sigungu fell short of the
+    table's printed total every year from 2014 (by 3,068 in 2024, 2,918 of them United
+    Kingdom nationals; by 4,287 in 2014), and the national checks above never saw it,
+    because they read the status tables.
+
+    The yearbook's grand-total row, summed over the nationality columns, must equal
+    nationality_by_sigungu summed over every district and nationality. The columns
+    that name no nationality (무국적, 기타, 미등록국가, 98-183 people a year) are left
+    out on both sides: the district files do not carry them (the national tables do).
+    KNOWN holds the people the table prints on a line that names no district.
+    """
+    RESID = {"무국적", "기타", "미등록국가", "미상", "한국"}
+    # City lines printed beside those cities' gu rows, which no gu can take:
+    # 2014 마산시 (1) and 창원시 (3); 2015 수원시 (2) and 창원시 (1). In 2015 경기도's
+    # district rows also sum to one less than the 소계 the same sheet prints
+    # (369,664 against 369,665), so the printed total holds one person no row has.
+    KNOWN = {2014: 4, 2015: 4}
+    nb = pd.read_csv(os.path.join(RELEASE_DATA, "nationality_by_sigungu.csv"),
+                     encoding="utf-8-sig", usecols=["year", "country", "n"])
+    got = nb[~nb["country"].isin(RESID)].groupby("year")["n"].sum()
+    rows = []
+    for year in sorted(files):
+        if year > RELEASE_LAST_YEAR or not os.path.exists(files[year]):
+            continue
+        df = pd.read_excel(files[year], sheet_name=0, header=None)
+        head = [norm(v) for v in df.iloc[0].tolist()]
+        tot = None
+        for i in range(1, 6):
+            if norm(df.iloc[i, 0]) in ("계", "총계", "총합계"):
+                tot = df.iloc[i].tolist()
+                break
+        if tot is None:
+            rows.append((year, None, got.get(year)))
+            continue
+        # column 3 is the row total; nationality columns start at 4
+        want = sum(cell_number(tot[j]) or 0 for j in range(4, len(tot))
+                   if head[j] and head[j] != "nan" and head[j] not in RESID)
+        rows.append((year, want - KNOWN.get(year, 0), got.get(year)))
+    print()
+    print("시군구x국적 표: 인쇄 총계행(국적 칸 합) 대 nationality_by_sigungu 합")
+    for y, pt, g in rows:
+        print("   %d  인쇄 %11s  배포 %11s" % (y, format(int(pt or 0), ","),
+                                          format(int(g or 0), ",")))
+    off = [(y, pt, g) for y, pt, g in rows if pt is None or g != pt]
+    if not rows or off:
+        print("FAIL: nationality_by_sigungu does not sum to the district table's printed "
+              "total row in %s" % ", ".join(str(y) for y, _, _ in off))
+        return 1
+    print("GATE OK: nationality_by_sigungu sums to the printed total row of the "
+          "district-by-nationality table in every year %d-%d" % (rows[0][0], rows[-1][0]))
     return 0
 
 

@@ -785,6 +785,95 @@ def check_one_label_per_code(d):
           "%d codes, e.g. %s" % (len(bad), list(bad.items())[:2]))
 
 
+def check_single_district_province(d):
+    """A province with one district is that district, in every year.
+
+    2026-09-26 (4차 대조): 세종 2012 was 2,271 in summary_by_sido and 2,360 in
+    summary_by_sigungu, 2013 2,462 against 2,475. The yearbook still printed a
+    residual 연기군 line under 충청남도 in those two years; the district files counted
+    it in 세종시 and the province file left it in 충청남도.
+    """
+    sd, sg = d.get("summary_by_sido.csv"), d.get("summary_by_sigungu.csv")
+    if sd is None or sg is None:
+        return
+    sg = sg.assign(_p=sg["sigungu_code"].map(lambda v: _code(v)[:2]))
+    sd = sd.assign(_p=sd["sido_code"].map(_code))
+    one = sg.groupby(["year", "_p"]).filter(lambda g: len(g) == 1)
+    j = one.merge(sd, on=["year", "_p"], suffixes=("_d", "_s"))
+    cols = [c for c in ("registered_foreigners", "resident_pop") if c + "_d" in j.columns]
+    bad = []
+    for c in cols:
+        a, b = j[c + "_d"], j[c + "_s"]
+        m = ~((a == b) | (a.isna() & b.isna()))
+        bad += ["%s %d %s: %s vs %s" % (r["sido_s"], r["year"], c, r[c + "_d"], r[c + "_s"])
+                for _, r in j[m].iterrows()]
+    check(len(j) > 0 and not bad,
+          "cross-file: a single-district province equals its district every year "
+          "(%d province-years)" % len(j), "; ".join(bad[:4]))
+
+
+def check_visa_label_per_code(d):
+    """One visa_label per (year, visa_code), in every file that carries labels.
+
+    2026-09-26 (4차 대조): five F4 rows of visa_by_nationality (the 기타 line,
+    2006-2010) read 재외동포(거소) while every other F4 row read 재외동포.
+    """
+    seen = {}
+    for f in ("visa_by_nationality.csv", "visa_national.csv"):
+        df = d.get(f)
+        if df is None or "visa_label" not in df.columns:
+            continue
+        for (y, c), labs in df.groupby(["year", "visa_code"])["visa_label"]:
+            seen.setdefault((int(y), str(c)), set()).update(labs.dropna().astype(str))
+    bad = {k: sorted(v) for k, v in seen.items() if len(v) > 1}
+    check(not bad, "labels: one visa_label per (year, visa_code) across the visa files",
+          "%d codes, e.g. %s" % (len(bad), list(bad.items())[:3]))
+
+
+def check_stata_labels(data):
+    """The .dta files carry a label per column, and numbers as numbers.
+
+    2026-09-26 (4차 대조): nationality_by_sido, nationality_national, visa_by_sido and
+    visa_national each had one grouped dictionary row typed "mixed", so every column
+    of the four .dta files carried the same label (the file's description, cut at 80
+    characters) and n was stored as text.
+    """
+    p = os.path.join(data, "data_dictionary.csv")
+    if not os.path.exists(p):
+        p = os.path.join(os.path.dirname(data), "data_dictionary.csv")
+    if not os.path.exists(p):
+        return
+    dic = pd.read_csv(p, encoding="utf-8-sig")
+    odd = sorted(set(dic["type"].astype(str).str.lower()) - {"integer", "float", "string"})
+    check(not odd, "dictionary: every row has one type (integer, float or string)", odd)
+    numeric = set()
+    for _, r in dic.iterrows():
+        if str(r["type"]).lower() in ("integer", "float"):
+            for f in str(r["file"]).split("/"):
+                for v in str(r["variable"]).split("/"):
+                    numeric.add((f.strip(), v.strip()))
+    dtas = []
+    for root, _dirs, files in os.walk(data):
+        dtas += [os.path.join(root, f) for f in files if f.endswith(".dta")]
+    if not dtas:
+        return
+    same, text = [], []
+    for fp in sorted(dtas):
+        name = os.path.basename(fp)[:-4] + ".csv"
+        with pd.io.stata.StataReader(fp) as rd_:
+            labs = rd_.variable_labels()
+            df = rd_.read()
+        vals = [labs.get(c, "") for c in df.columns]
+        if len(vals) >= 3 and max(vals.count(v) for v in set(vals)) > len(vals) // 2:
+            same.append(name)
+        text += ["%s.%s" % (name, c) for c in df.columns
+                 if (name, c) in numeric and not pd.api.types.is_numeric_dtype(df[c])]
+    check(not same, "stata: no .dta gives most of its columns one shared label "
+          "(%d files)" % len(dtas), same[:6])
+    check(not text, "stata: columns the dictionary types as numbers are numeric in "
+          "the .dta", text[:6])
+
+
 def _code(v):
     """숫자로 읽힌 코드(27.0)와 빈칸(NaN)을 글자로 맞춘다."""
     if v is None or (isinstance(v, float) and v != v):
@@ -1174,6 +1263,9 @@ def main():
     check_diaspora_labels(d)
     check_published_residuals(d)
     check_dictionary_numbers(data, d)
+    check_single_district_province(d)
+    check_visa_label_per_code(d)
+    check_stata_labels(data)
     print()
     if FAILED:
         print("%d of %d checks FAILED:" % (len(FAILED), CHECKED))

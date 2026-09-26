@@ -1258,7 +1258,10 @@ def build_data_dictionary():
          "for every year of the panel. Two cases need care. 세종특별자치시 (Sejong, "
          "established July 2012) has no province row before 2012: at the sido level its "
          "2008-2011 residents are counted inside 충청남도, and only the district file "
-         "carries 세종시 as a continuous unit from 2008. 강원도 and 전라북도 keep these "
+         "carries 세종시 as a continuous unit from 2008. The 2012-2014 yearbooks "
+         "still print a residual 연기군 line inside 충청남도, although 연기군 had become "
+         "세종 in July 2012; both levels count it in 세종, so from 2012 the "
+         "세종특별자치시 row equals its one district, 세종시. 강원도 and 전라북도 keep these "
          "short names in every year, although the register renamed them "
          "강원특별자치도 (2023) and 전북특별자치도 (2024); sido_code follows the register "
          "and the name does not. The source spellings, year by year, are in "
@@ -1267,7 +1270,10 @@ def build_data_dictionary():
          "광역시·도(한글+영문). 모든 해에 하나의 고정된 이름 집합을 씁니다. 두 경우를 "
          "주의하십시오. 세종특별자치시(2012년 7월 출범)는 2012년 전에는 시도 행이 없고, "
          "시도 층에서는 2008-2011년 주민이 충청남도 안에 들어 있으며, 시군구 파일만 세종시를 "
-         "2008년부터 한 단위로 잇습니다. 강원도와 전라북도는 대장이 강원특별자치도(2023)와 "
+         "2008년부터 한 단위로 잇습니다. 2012-2014년 연보는 연기군이 2012년 7월 세종이 된 "
+         "뒤에도 충청남도 안에 연기군 잔여 줄을 싣는데, 두 층 모두 이것을 세종에 세므로 "
+         "2012년부터 세종특별자치시 행은 그 유일한 시군구인 세종시와 같습니다. "
+         "강원도와 전라북도는 대장이 강원특별자치도(2023)와 "
          "전북특별자치도(2024)로 이름을 바꾼 뒤에도 모든 해에 짧은 이름을 씁니다. "
          "sido_code 는 대장을 따르고 이름은 따르지 않습니다. 해마다 원자료가 쓴 표기는 "
          "crosswalk_region.csv 에, 원자료 목록은 GitHub 저장소의 raw_input_manifest.csv 에 "
@@ -1357,11 +1363,16 @@ def build_data_dictionary():
          "eup/myeon/dong level. District (sigungu) values begin in 2008.",
          "MOJ 등록외국인(장기체류 >90일). 읍면동 미발행. 시군구는 2008년부터."),
         ("summary_by_sido.csv / summary_by_sigungu.csv", "resident_pop", "integer",
-         "MOIS resident-registration population of Korean nationals: the common "
-         "denominator for foreign_share_pct and every derived index, so "
-         "foreign_share = registered_foreigners / resident_pop reproduces exactly.",
-         "MOIS 내국인 주민등록인구(공통 분모). foreign_share·broad_share·모든 지표의 분모 → "
-         "registered_foreigners/resident_pop로 재현 가능."),
+         "MOIS resident-registration population of Korean nationals. It is the "
+         "denominator of foreign_share_pct (100 x registered_foreigners / resident_pop "
+         "reproduces the column) and the Korean-national group in shannon_H_inclusive "
+         "and continent_H. The files carry no broad-definition share: broad_total counts "
+         "a different population (MOIS), so a share built from it should state its "
+         "denominator.",
+         "MOIS 내국인 주민등록인구. foreign_share_pct 의 분모이고(100 x "
+         "registered_foreigners / resident_pop 로 그 열이 재현된다), shannon_H_inclusive "
+         "와 continent_H 에서는 내국인 집단이다. 광의 비율 열은 싣지 않는다. broad_total 은 "
+         "다른 모집단(MOIS)을 세므로, 그것으로 비율을 만들면 분모를 밝혀야 한다."),
         ("summary_by_sido.csv / summary_by_sigungu.csv", "foreign_share_pct", "float",
          "Registered foreigners / resident population x100 (MOJ basis).",
          "등록외국인/주민등록인구 x100 (MOJ 기준)."),
@@ -1727,9 +1738,13 @@ def build_data_dictionary():
         ("crosswalk_visa.csv", "source_code", "string",
          "Visa code as a source edition lists it, including pre-2010 sub-codes.",
          "연감 판본의 체류자격 코드. 2010년 이전 하위 코드를 포함한다."),
-        ("crosswalk_visa.csv", "visa_code / visa_label / visa_label_en", "string",
-         "Parent code this dataset reports, with its Korean and English name.",
-         "이 자료가 싣는 부모 코드와 그 한글·영문 이름."),
+        ("crosswalk_visa.csv", "visa_code", "string",
+         "Parent code this dataset reports for the source code (E8T for the 2006-2009 "
+         "E-8).",
+         "원자료 코드에 대해 이 자료가 싣는 부모 코드(2006-2009년판 E-8 은 E8T)."),
+        ("crosswalk_visa.csv", "visa_label / visa_label_en", "string",
+         "Korean and English name of the parent code.",
+         "부모 코드의 한글·영문 이름."),
         ("crosswalk_visa.csv", "rule", "string",
          "'sub-code collapsed to parent', 'unchanged', or, for E-8 in the 2006-2009 "
          "editions, 'same source code, different status' (carried as E8T).",
@@ -1794,42 +1809,73 @@ def build_data_dictionary():
         ("segregation_by_nationality.csv", "interaction_korean", "float",
          "Interaction with Koreans (cross-group exposure).", "내국인과의 접촉(이질 노출)."),
         # ---------- v1.2.0 level-parallel companions ----------
-        ("nationality_by_sido.csv", "year / sido / sido_en / country / country_en / n",
-         "mixed",
-         "nationality_by_sigungu summed within the province, 2008-2024: registered "
-         "foreigners of that nationality in that province-year. A district counts in "
-         "the province it belonged to that year, the first two digits of its "
-         "sigungu_code (군위군 in 경상북도 through 2022, 세종시 in 충청남도 through "
-         "2011; see sido_code). Allocated basis "
-         "(people the yearbook records without a district are absent), so province "
-         "sums run slightly below the national tables.",
-         "nationality_by_sigungu 를 시도 안에서 더한 것(2008-2024). 시군구는 그 해 속했던 "
-         "시도, 곧 sigungu_code 앞 두 자리의 시도에 든다(군위군은 2022년까지 경상북도, "
-         "세종시는 2011년까지 충청남도; sido_code 참고). 시군구가 적히지 "
-         "않은 사람이 빠지는 배분 기준이라 전국 표보다 조금 적다."),
-        ("nationality_national.csv",
-         "year / population / country / country_en / n", "mixed",
-         "visa_by_nationality summed over visa_code, 2006-2024: the published "
-         "national count of that nationality, for both population bases, with the "
-         "yearbook's non-nationality lines (see visa_by_nationality.country). Each "
-         "year sums to the grand total the yearbook prints, on both bases (staying "
-         "basis from 2011; 2006-2010 is composed from three tables).",
-         "visa_by_nationality 를 자격에 대해 더한 것(2006-2024). 그 국적의 공표 전국 "
-         "수이며 두 인구 기준을 모두 싣고, 연보의 국적 아닌 줄도 싣는다"
-         "(visa_by_nationality.country 참조). 해마다 두 기준 모두 연보가 인쇄한 총계와 "
-         "같다(체류 기준은 2011년부터, 2006-2010은 세 표를 합친 값)."),
-        ("visa_by_sido.csv", "year / sido / sido_en / visa_code / n", "mixed",
-         "visa_by_sigungu summed within the province, 2008-2024, a district counting "
-         "in the province it belonged to that year. Allocated basis, "
-         "as nationality_by_sido.",
-         "visa_by_sigungu 를 시도 안에서 더한 것(2008-2024). 시군구는 그 해 속했던 시도에 "
-         "든다. 배분 기준은 nationality_by_sido 와 같다."),
-        ("visa_national.csv",
-         "year / population / visa_code / visa_label / visa_label_en / n", "mixed",
-         "visa_by_nationality summed over country, 2006-2024: the published "
-         "national count under that status, for both population bases.",
-         "visa_by_nationality 를 국적에 대해 더한 것(2006-2024). 그 자격의 공표 전국 "
-         "수이며 두 인구 기준을 모두 싣는다."),
+        # One row per column (or per genuinely shared name pair). Until 2026-09-26
+        # each of these four files had a single grouped row typed "mixed", so
+        # load_stata_dict gave every column of the .dta the same label (the file's
+        # description, cut to 80 characters) and, the type being neither integer
+        # nor float, stored n as text.
+        ("nationality_by_sido.csv / visa_by_sido.csv", "year", "integer",
+         "Reference year (2008-2024).", "기준연도(2008-2024)."),
+        ("nationality_by_sido.csv / visa_by_sido.csv", "sido / sido_en", "string",
+         "Province or metropolitan city (Korean + English) the districts are summed "
+         "into: the province each district belonged to that year, the first two digits "
+         "of its sigungu_code (군위군 in 경상북도 through 2022, 세종시 in 충청남도 "
+         "through 2011; see sido_code).",
+         "시군구를 더해 넣은 광역시·도(한글+영문). 시군구는 그 해 속했던 시도, 곧 "
+         "sigungu_code 앞 두 자리의 시도에 든다(군위군은 2022년까지 경상북도, 세종시는 "
+         "2011년까지 충청남도; sido_code 참고)."),
+        ("nationality_by_sido.csv", "country / country_en", "string",
+         "Nationality (Korean + English), as in nationality_by_sigungu.",
+         "국적(한글+영문). nationality_by_sigungu 와 같다."),
+        ("nationality_by_sido.csv", "n", "integer",
+         "Registered foreigners of that nationality in that province-year: "
+         "nationality_by_sigungu summed within the province. Province sums run slightly "
+         "below the national tables, which also carry the yearbook's lines that name no "
+         "nationality (무국적, 기타).",
+         "그 시도·연도·국적의 등록외국인 수. nationality_by_sigungu 를 시도 안에서 더한 "
+         "것이다. 전국 표는 연보의 국적 아닌 줄(무국적·기타)도 싣기 때문에 시도 합이 그보다 "
+         "조금 적다."),
+        ("visa_by_sido.csv", "visa_code", "string",
+         "Visa/status-of-stay code, written without hyphens (E9, F4 = the source's "
+         "E-9, F-4), as in visa_by_sigungu.",
+         "체류자격(비자) 코드, 하이픈 없이 표기(E9, F4 = 원자료의 E-9, F-4). "
+         "visa_by_sigungu 와 같다."),
+        ("visa_by_sido.csv", "n", "integer",
+         "Registered foreigners on that visa in that province-year: visa_by_sigungu "
+         "summed within the province. It has no ETC (분류외) status, which visa_national "
+         "carries, so province sums run below the national table.",
+         "그 시도·연도·자격의 등록외국인 수. visa_by_sigungu 를 시도 안에서 더한 것이다. "
+         "visa_national 이 싣는 ETC(분류외) 자격이 없어 시도 합이 전국 표보다 적다."),
+        ("nationality_national.csv / visa_national.csv", "year", "integer",
+         "Reference year (2006-2024).", "기준연도(2006-2024)."),
+        ("nationality_national.csv / visa_national.csv", "population", "string",
+         "Population base (values: registered / stay): registered foreigners (등록) or "
+         "staying foreigners (체류). Filter to one before summing.",
+         "모집단(값: registered / stay): 등록외국인 또는 체류외국인. 더하기 전에 하나로 "
+         "거르십시오."),
+        ("nationality_national.csv", "country / country_en", "string",
+         "Nationality (Korean + English), with the yearbook's lines that name no "
+         "nationality (see visa_by_nationality.country).",
+         "국적(한글+영문). 연보의 국적 아닌 줄도 싣는다(visa_by_nationality.country 참조)."),
+        ("nationality_national.csv", "n", "integer",
+         "Published national count of that nationality: visa_by_nationality summed over "
+         "visa_code. Each year sums to the grand total the yearbook prints, on both "
+         "bases (staying basis from 2011; 2006-2010 is composed from three tables).",
+         "그 국적의 공표 전국 수. visa_by_nationality 를 자격에 대해 더한 것이다. 해마다 두 "
+         "기준 모두 연보가 인쇄한 총계와 같다(체류 기준은 2011년부터, 2006-2010은 세 표를 "
+         "합친 값)."),
+        ("visa_national.csv", "visa_code", "string",
+         "Visa/status-of-stay code, written without hyphens (E9, F4 = the source's "
+         "E-9, F-4).",
+         "체류자격(비자) 코드, 하이픈 없이 표기(E9, F4 = 원자료의 E-9, F-4)."),
+        ("visa_national.csv", "visa_label / visa_label_en", "string",
+         "Visa category label (Korean + English), one per code and year, as in "
+         "visa_by_nationality.",
+         "체류자격 이름(한글+영문). 연도·코드마다 하나이며 visa_by_nationality 와 같다."),
+        ("visa_national.csv", "n", "integer",
+         "Published national count under that status: visa_by_nationality summed over "
+         "country.",
+         "그 자격의 공표 전국 수. visa_by_nationality 를 국적에 대해 더한 것이다."),
         ("national_annual.csv",
          "broad_total / non_naturalized / workers / marriage_migrants / students / "
          "ethnic_koreans / other_foreigners / naturalized / children", "integer",

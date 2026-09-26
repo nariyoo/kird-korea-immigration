@@ -426,7 +426,9 @@ def attach_breakdowns():
         for fn, (ko, en) in lab.items():
             if code_labels and ko in code_labels:        # visa: ko is the code; look up label
                 lk, le = code_labels[ko]
-                label_rows.append((fn, en_desc(prefix, le, lk, src)))
+                # the code goes in too: final_qc reads it back to compare the column
+                # with visa_national, and a label alone does not name one code
+                label_rows.append((fn, en_desc(prefix, le, "%s, %s" % (lk, ko), src)))
             else:
                 label_rows.append((fn, en_desc(prefix, en, ko, src)))
         return out
@@ -435,8 +437,9 @@ def attach_breakdowns():
     def en_desc(prefix, en, ko, src):
         kind = {"nat_": "nationality", "visa_": "visa status", "lang_": "language",
                 "childage_": "children aged", "mc_": "multicultural category"}[prefix]
-        en_d = f"Count for {kind}: {en} ({ko}). From {src}; blank = not separately reported."
-        ko_d = f"{kind} {ko}({en}) 인원수. 출처 {src}; 공백=별도 미보고."
+        src_en, src_ko = src if isinstance(src, tuple) else (src, src)
+        en_d = f"Count for {kind}: {en} ({ko}). From {src_en}; blank = not separately reported."
+        ko_d = f"{kind} {ko}({en}) 인원수. 출처 {src_ko}; 공백=별도 미보고."
         return (en_d, ko_d)
 
 
@@ -637,13 +640,45 @@ def attach_breakdowns():
                     lrn.append((c, dd_))
             for c in COMP:
                 na[c] = pd.to_numeric(na[c], errors="coerce").round(0).astype("Int64")
-            # wide national totals (same keep-sets as the summaries, aggregated to the year)
-            natN = nat.groupby(["year", "country", "country_en"], as_index=False)["n"].sum()
-            visN = visa.groupby(["year", "visa_code"], as_index=False)["n"].sum()
+            # Wide national columns, same keep-sets as the summaries.
+            # nat_* and visa_* come from the national tables (population =
+            # registered): the published national count, full nationality detail in
+            # every year. Until 2026-09-26 (4차 대조) they were the district tables
+            # summed to the year, which left 184 year x nationality cells blank in
+            # 2008-2013, when the district tables list only the top 19 per district
+            # (nat_korean_chinese 2008: blank against 362,920), put 한국계중국인 into
+            # nat_china in 2008 (483,577 against 121,754), and dropped the people
+            # the yearbook places in no district. lang_* stays the sum of the
+            # district rows of language_demand: the national scope of that file is
+            # on the staying basis, a different population from every other column
+            # of this row, and no registered-basis national language table exists.
+            nn_ = pd.read_csv(f"{SRC}/nationality_national.csv", encoding="utf-8-sig")
+            vn_ = pd.read_csv(f"{SRC}/visa_national.csv", encoding="utf-8-sig")
+            natN = (nn_[nn_["population"] == "registered"]
+                    .groupby(["year", "country", "country_en"], as_index=False)["n"].sum())
+            visN = (vn_[vn_["population"] == "registered"]
+                    .groupby(["year", "visa_code"], as_index=False)["n"].sum())
             lanN = lang_sg.groupby(["year", "language", "language_en"], as_index=False)["count"].sum()
-            na = pivot_merge(na, ["year"], natN, "country", "n", "nat_", lrn, "nationality (national total)", "country_en", keep=keep_nat)
-            na = pivot_merge(na, ["year"], visN, "visa_code", "n", "visa_", lrn, "visa (national total)", code_labels=code_labels, keep=keep_visa)
-            na = pivot_merge(na, ["year"], lanN, "language", "count", "lang_", lrn, "language demand (national total)", "language_en", keep=keep_lang)
+            na = pivot_merge(na, ["year"], natN, "country", "n", "nat_", lrn,
+                             ("nationality_national (population = registered; the published "
+                              "national count, including people placed in no district)",
+                              "nationality_national (population = registered; 공표 전국 수, "
+                              "시군구가 적히지 않은 사람 포함)"),
+                             "country_en", keep=keep_nat)
+            na = pivot_merge(na, ["year"], visN, "visa_code", "n", "visa_", lrn,
+                             ("visa_national (population = registered; the published "
+                              "national count)",
+                              "visa_national (population = registered; 공표 전국 수)"),
+                             code_labels=code_labels, keep=keep_visa)
+            na = pivot_merge(na, ["year"], lanN, "language", "count", "lang_", lrn,
+                             ("language_demand scope = sigungu summed over districts "
+                              "(registered, district-allocated basis; each district "
+                              "carries its top ~20 languages, so this is a lower bound; "
+                              "the national scope rows are on the staying basis)",
+                              "language_demand 의 sigungu 범위를 전국으로 더한 것(등록·시군구 "
+                              "배정 기준; 시군구마다 상위 ~20개 언어만 실으므로 하한; national "
+                              "범위 행은 체류 기준)"),
+                             "language_en", keep=keep_lang)
             na = tidy_types(na, orig_na)
             out_na = os.path.join(DATA, "national_annual.csv")
             na.to_csv(out_na, index=False, encoding="utf-8-sig")
@@ -731,27 +766,52 @@ def export_deposit_stata():
 
 
 def final_qc():
-    """Final pre-publish QC for the KIRD openICPSR deposit.
-    Checks: (1) file integrity + CSV/DTA parity, (2) cross-level sum consistency,
-    (3) within-row identities, (4) official MOJ-figure comparison, (5) wide attach consistency.
-    Reports FAILURES and magnitudes; does not modify any file.
+    """Final pre-publish QC for the KIRD openICPSR deposit: the gate.
+
+    Every check below is a pass/fail check; the function exits 1 when any fails, so
+    `run_pipeline.py --phase 3` stops there. It modifies no file.
+
+      (1) File integrity and CSV/DTA parity: every CSV under data/ and
+          data/detailed_data/ has a .dta twin and no .dta lacks a CSV; each pair has
+          the same columns in the same order and the same values, cell by cell.
+      (2) Cross-level sums of the wide columns: sigungu sums to sido for every
+          nat_*, visa_* and lang_* column, province by province (a district counts
+          in the province of its sigungu_code that year); sido sums to national for
+          lang_*; sigungu against national for nat_* and visa_* from 2014, within
+          0.5% a year (the national columns are the published counts, which include
+          the people the yearbook places in no district); the MOIS broad columns,
+          sigungu against national and eup/myeon/dong against sigungu, within 0.5%.
+      (3) Within-row identities at every level: foreign_share_pct =
+          100 x foreign count / Korean population; broad_total = non_naturalized +
+          naturalized + children and non_naturalized = its five components, to one
+          person, wherever the parts are published.
+      (4) Comparison against the published MOJ figures: national_annual's nat_* and
+          visa_* equal nationality_national / visa_national (population =
+          registered) cell by cell, and national foreign_total equals the district
+          total of the MOJ validation file every year.
+      (5) Wide-attach consistency: every wide column on a sido or sigungu file also
+          sits on national_annual with the same name, and no wide column is blank in
+          every row.
+
+    Until 2026-09-26 this printed "SUMMARY: N FAIL(s)" and returned None whatever N
+    was, (1) compared shapes only and for 17 of the 28 tables, (3) looked at the
+    national row only, (4) swallowed a missing validation file, and (5) printed
+    totals without judging them.
     """
     def load(name):
         p = os.path.join(DEP, name)
-        return pd.read_csv(p, encoding="utf-8-sig")
+        return pd.read_csv(p, encoding="utf-8-sig", low_memory=False)
 
     nat   = load("national_annual.csv")
     sido  = load("summary_by_sido.csv")
     sgg   = load("summary_by_sigungu.csv")
     emd   = load("summary_by_eupmyeondong.csv")
-    det   = lambda f: pd.read_csv(os.path.join(DEP, "detailed_data", f), encoding="utf-8-sig")
+    det   = lambda f: pd.read_csv(os.path.join(DEP, "detailed_data", f),
+                                  encoding="utf-8-sig", low_memory=False)
 
-    fams = {
-        "nat":      [c for c in nat.columns if c.startswith("nat_")],
-        "visa":     [c for c in nat.columns if c.startswith("visa_")],
-        "lang":     [c for c in nat.columns if c.startswith("lang_")],
-        "childage": [c for c in nat.columns if c.startswith("childage_")],
-    }
+    def fam(df, p):
+        return [c for c in df.columns if c.startswith(p)]
+    fams = {"nat": "nat_", "visa": "visa_", "lang": "lang_"}
     broad = ["broad_total","non_naturalized","workers","marriage_migrants","students",
              "ethnic_koreans","other_foreigners","naturalized","children"]
 
@@ -762,129 +822,164 @@ def final_qc():
         print(f"[{tag}] {label}" + (f"  -- {detail}" if detail else ""))
 
     print("="*70); print("(1) FILE INTEGRITY + CSV/DTA PARITY"); print("="*70)
-    files = ["national_annual","summary_by_sido","summary_by_sigungu","summary_by_eupmyeondong"]
-    det_files = ["age_sex_national","children_by_age","ethnic_enclaves","language_demand",
-                 "multicultural_households","nationality_by_sigungu","naturalization_annual",
-                 "naturalization_by_age","naturalization_by_country","region_segregation",
-                 "segregation_by_nationality","visa_by_nationality","visa_by_sigungu"]
-    for f in files + det_files:
-        sub = "" if f in files else "detailed_data"
-        csv_p = os.path.join(DEP, sub, f+".csv")
-        dta_p = os.path.join(DEP, sub, f+".dta")
-        c = pd.read_csv(csv_p, encoding="utf-8-sig")
-        has_dta = os.path.exists(dta_p)
-        if has_dta:
-            d = pd.read_stata(dta_p)
-            ok = (len(c)==len(d)) and (c.shape[1]==d.shape[1])
-            check(f"{f}: CSV/DTA parity", ok, f"csv{c.shape} dta{d.shape}")
-        else:
-            check(f"{f}: DTA exists", False, "no .dta")
+    pairs = []
+    for sub in ("", "detailed_data"):
+        folder = os.path.join(DEP, sub)
+        names = os.listdir(folder)
+        csvs = {f[:-4] for f in names if f.endswith(".csv")}
+        dtas = {f[:-4] for f in names if f.endswith(".dta")}
+        check(f"data/{sub + '/' if sub else ''}: every CSV has a .dta and every .dta a CSV",
+              csvs == dtas, f"csv only {sorted(csvs - dtas)}, dta only {sorted(dtas - csvs)}")
+        pairs += [(sub, f) for f in sorted(csvs & dtas)]
+    check("28 tables staged", len(pairs) == 28, f"{len(pairs)}")
+    for sub, f in pairs:
+        c = pd.read_csv(os.path.join(DEP, sub, f + ".csv"), encoding="utf-8-sig",
+                        low_memory=False)
+        d = pd.read_stata(os.path.join(DEP, sub, f + ".dta"))
+        if list(c.columns) != list(d.columns) or len(c) != len(d):
+            check(f"{f}: CSV/DTA parity", False, f"csv{c.shape} dta{d.shape}")
+            continue
+        bad = 0
+        for col in c.columns:
+            a, b = c[col], d[col]
+            if (pd.api.types.is_bool_dtype(a)
+                    or set(map(str, b.dropna().unique())) <= {"True", "False"}):
+                m = (a.fillna("").astype(str).str.lower()
+                     != b.fillna("").astype(str).str.lower())
+            elif pd.api.types.is_numeric_dtype(a) or pd.api.types.is_numeric_dtype(b):
+                an = pd.to_numeric(a, errors="coerce").to_numpy(dtype=float)
+                bn = pd.to_numeric(b, errors="coerce").to_numpy(dtype=float)
+                m = ~np.isclose(an, bn, rtol=0, atol=1e-9, equal_nan=True)
+            else:
+                m = (a.fillna("").astype(str).str.strip()
+                     != b.fillna("").astype(str).str.strip())
+            bad += int(np.asarray(m).sum())
+        check(f"{f}: CSV/DTA parity (shape, columns, values)", bad == 0,
+              f"{c.shape}, {bad} cells differ" if bad else f"{c.shape}")
 
-    print("\n" + "="*70); print("(2) CROSS-LEVEL SUM CONSISTENCY (wide families)"); print("="*70)
-    def cmp_levels(low, high, cols, lname, hname, by=None):
-        """sum `cols` over low grouped by year (and `by`), compare to high."""
-        cols = [c for c in cols if c in low.columns and c in high.columns]
-        if not cols: return
-        keys = ["year"] + ([by] if by else [])
-        lo = low.groupby(keys)[cols].sum().sum(axis=1)
-        if by:
-            hi = high.groupby(keys)[cols].sum().sum(axis=1)
-        else:
-            hi = high.groupby("year")[cols].sum().sum(axis=1)
-        j = pd.concat([lo.rename("low"), hi.rename("high")], axis=1).dropna()
-        j["gap"] = j["low"] - j["high"]
-        j["pct"] = 100*j["gap"]/j["high"].replace(0,np.nan)
-        worst = j["pct"].abs().max()
-        yr_worst = j["pct"].abs().idxmax()
-        ok = worst < 0.5  # tolerance 0.5%
-        check(f"Sum {lname} == {hname} [{ '+'.join(c.split('_')[0] for c in [cols[0]]) }* fam]",
-              ok, f"max |gap|={worst:.2f}% at {yr_worst} (n={len(cols)} cols)")
-        if not ok:
-            bad = j[j["pct"].abs()>=0.5].sort_values("pct", key=abs, ascending=False).head(6)
-            print("       worst rows:\n" + bad[["low","high","gap","pct"]].to_string())
-
-    # a district belongs to the province of that year, the first two digits of its
-    # sigungu_code (군위군 in 경상북도 through 2022, 세종시 in 충청남도 through 2011);
-    # the district files carry the 2024 province name, so grouping on sido is wrong
+    print("\n" + "="*70); print("(2) CROSS-LEVEL SUMS"); print("="*70)
     _c = lambda v: "" if v != v else str(v).split(".")[0]
     sgg_p = sgg.assign(_prov=sgg["sigungu_code"].map(lambda v: _c(v)[:2]))
     sido_p = sido.assign(_prov=sido["sido_code"].map(lambda v: _c(v).zfill(2)))
-    for fam, cols in fams.items():
-        print(f"-- family: {fam} ({len(cols)} cols) --")
-        cmp_levels(sgg,  nat,  cols, "sigungu", "national")
-        cmp_levels(sido, nat,  cols, "sido",    "national")
-        cmp_levels(sgg_p, sido_p, cols, "sigungu-in-sido", "sido", by="_prov")
+    # districts with no province row that year (세종시 2008-2011) have nowhere to land
+    have = set(zip(sido_p["year"], sido_p["_prov"]))
+    sgg_in = sgg_p[[k in have for k in zip(sgg_p["year"], sgg_p["_prov"])]]
+    for name, p in fams.items():
+        cols = [c for c in fam(sido, p) if c in sgg.columns]
+        lo = sgg_in.groupby(["year", "_prov"])[cols].sum()
+        hi = sido_p.groupby(["year", "_prov"])[cols].sum()
+        gap = (lo.reindex(hi.index).fillna(0) - hi).abs()
+        n_bad = int((gap > 0).sum().sum())
+        check(f"{p}*: sigungu sums to sido, per province, year and column ({len(cols)} cols)",
+              n_bad == 0, f"{n_bad} cells differ, worst {gap.max().max():.0f}")
+    cols = [c for c in fam(nat, "lang_") if c in sido.columns]
+    lo = sido.groupby("year")[cols].sum()
+    hi = nat.set_index("year")[cols].fillna(0)
+    gap = (lo.reindex(hi.index).fillna(0) - hi).abs()
+    check(f"lang_*: sido sums to national, per year and column ({len(cols)} cols)",
+          int((gap > 0).sum().sum()) == 0, f"worst {gap.max().max():.0f}")
 
-    print("\n-- broad categories --")
+    def within(low, high, cols, label, years=None):
+        cols = [c for c in cols if c in low.columns and c in high.columns]
+        lo = low.groupby("year")[cols].sum().sum(axis=1)
+        hi = high.groupby("year")[cols].sum().sum(axis=1)
+        j = pd.concat([lo.rename("low"), hi.rename("high")], axis=1).dropna()
+        if years is not None:
+            j = j[j.index >= years]
+        pct = (100 * (j["low"] - j["high"]) / j["high"].replace(0, np.nan)).abs()
+        w = pct.max()
+        check(label, bool(w < 0.5), f"max |gap| {w:.3f}% in {pct.idxmax()}")
+    for p in ("nat_", "visa_"):
+        within(sgg, nat, fam(nat, p), f"{p}*: sigungu sum within 0.5% of the published "
+               f"national count, 2014 on", years=2014)
     for col in broad:
-        cmp_levels(sgg, nat, [col], f"sigungu.{col}", "national")
-    # emd -> sigungu for broad (emd has broad cols)
-    print("-- emd -> sigungu (broad_total) --")
-    cmp_levels(emd, sgg, ["broad_total"], "emd", "sigungu",
-               by=None)
+        within(sgg, nat, [col], f"broad {col}: sigungu sum within 0.5% of national")
+    within(emd, sgg, ["broad_total"], "broad_total: eupmyeondong sum within 0.5% of sigungu")
 
-    print("\n" + "="*70); print("(3) WITHIN-ROW IDENTITIES (national)"); print("="*70)
-    n = nat.copy()
-    n["share_chk"] = 100*n["foreign_total"]/n["total_pop"]
-    d = (n["share_chk"]-n["foreign_share_pct"]).abs().max()
-    check("national foreign_share_pct == foreign_total/total_pop", d<0.001, f"max abs diff={d:.5f}")
-
-    # broad identities (only on rows where the components are published that year)
+    print("\n" + "="*70); print("(3) WITHIN-ROW IDENTITIES (every level)"); print("="*70)
+    for label, df, num, den in (("national", nat, "foreign_total", "total_pop"),
+                                ("sido", sido, "registered_foreigners", "resident_pop"),
+                                ("sigungu", sgg, "registered_foreigners", "resident_pop")):
+        x = df.dropna(subset=[num, den, "foreign_share_pct"])
+        x = x[x[den] > 0]
+        g = (100 * x[num] / x[den] - x["foreign_share_pct"]).abs()
+        check(f"{label}: foreign_share_pct = 100 x {num} / {den}", bool((g <= 0.006).all()),
+              f"max {g.max():.4f}")
     comp5 = ["workers","marriage_migrants","students","ethnic_koreans","other_foreigners"]
-    if all(c in n for c in comp5+["non_naturalized","naturalized","children","broad_total"]):
-        m5 = n[comp5].notna().all(axis=1)
-        nn = n.loc[m5, comp5].sum(axis=1)
-        rel1 = (nn - n.loc[m5,"non_naturalized"]).abs()/n.loc[m5,"non_naturalized"].replace(0,np.nan)
-        check("national non_naturalized == Σ(work+marr+stud+ethk+other)", rel1.max()<0.001, f"max rel diff={rel1.max():.6f}")
-        bt = n["non_naturalized"].fillna(0)+n["naturalized"].fillna(0)+n["children"].fillna(0)
-        rel2 = (bt - n["broad_total"]).abs()/n["broad_total"].replace(0,np.nan)
-        check("national broad_total == non_naturalized + naturalized + children", rel2.max()<0.001, f"max rel diff={rel2.max():.6f}")
+    for label, df in (("national", nat), ("sido", sido), ("sigungu", sgg),
+                      ("eupmyeondong", emd)):
+        x = df.dropna(subset=["broad_total", "non_naturalized", "naturalized", "children"])
+        g = (x["broad_total"] - x[["non_naturalized", "naturalized", "children"]].sum(axis=1)).abs()
+        check(f"{label}: broad_total = non_naturalized + naturalized + children",
+              bool((g <= 1).all()), f"max {g.max() if len(g) else 0}")
+        x = df.dropna(subset=["non_naturalized"] + comp5)
+        g = (x["non_naturalized"] - x[comp5].sum(axis=1)).abs()
+        check(f"{label}: non_naturalized = its five components",
+              bool((g <= 1).all()), f"max {g.max() if len(g) else 0}")
 
-    # Σchildage == children?
-    ca = fams["childage"]
-    if ca and "children" in n:
-        s = n[ca].sum(axis=1)
-        rel = (s - n["children"]).abs()/n["children"].replace(0,np.nan)
-        check("national Σchildage_* == children", rel.max()<0.02, f"max rel diff={rel.max():.4f}")
-
-    print("\n" + "="*70); print("(4) OFFICIAL MOJ FIGURE COMPARISON"); print("="*70)
-    # mois_moj_validation.csv: year,sido,sigungu,moj_n,mois_n
-    try:
-        v = pd.read_csv(os.path.join(CLEAN,"mois_moj_validation.csv"), encoding="utf-8-sig")
-        # The authoritative validation: our national foreign_total must equal the official
-        # MOJ national control to the person, every year.
+    print("\n" + "="*70); print("(4) PUBLISHED MOJ FIGURES"); print("="*70)
+    dd = pd.read_csv(os.path.join(DEPOSIT, "data_dictionary.csv"), encoding="utf-8-sig")
+    for p, src, key in (("nat_", det("nationality_national.csv"), "country"),
+                        ("visa_", det("visa_national.csv"), "visa_code")):
+        src = src[src["population"] == "registered"]
+        # the category behind each wide column, as the dictionary records it:
+        # "Count for nationality: China (중국). From ..." / "... (E9). From ..."
+        rows = dd[(dd["file"] == "national_annual.csv") & dd["variable"].str.startswith(p)]
+        n_bad, n_cells = 0, 0
+        def last_paren(t):
+            """The last balanced (...) group before ". From": labels such as
+            러시아(연방) nest their own parentheses."""
+            head = t.split(". From")[0]
+            if not head.endswith(")"):
+                return None
+            depth = 0
+            for i in range(len(head) - 1, -1, -1):
+                depth += {")": 1, "(": -1}.get(head[i], 0)
+                if depth == 0:
+                    return head[i + 1:-1]
+            return None
+        for v, desc in zip(rows["variable"], rows["description_en"]):
+            got_ = last_paren(desc)
+            if got_ is None:
+                n_bad += 1
+                continue
+            cat = got_.split(", ")[-1] if p == "visa_" else got_
+            want = src[src[key].astype(str) == cat].groupby("year")["n"].sum()
+            got = nat.set_index("year")[v]
+            j = pd.concat([got.rename("got"), want.rename("want")], axis=1)
+            j = j[j.index.isin(nat["year"])].fillna(0)
+            n_cells += len(j)
+            n_bad += int((j["got"] != j["want"]).sum())
+        check(f"national_annual {p}* = {'nationality' if p == 'nat_' else 'visa'}_national "
+              f"(registered), cell by cell", n_bad == 0 and len(rows) > 0,
+              f"{n_bad} of {n_cells} cells differ over {len(rows)} columns")
+    p_ = os.path.join(CLEAN, "mois_moj_validation.csv")
+    if not os.path.exists(p_):
+        check("MOJ validation file present", False, p_)
+    else:
+        v = pd.read_csv(p_, encoding="utf-8-sig")
         mj = v.dropna(subset=["moj_n"]).groupby("year")["moj_n"].sum()
-        cmpn = pd.concat([nat.set_index("year")["foreign_total"], mj.rename("moj")], axis=1).dropna()
-        cmpn["pct"] = 100*(cmpn["foreign_total"]-cmpn["moj"])/cmpn["moj"]
-        check("national foreign_total == official MOJ national total (every year)",
-              cmpn["pct"].abs().max()<0.01, f"max |diff|={cmpn['pct'].abs().max():.4f}% over {len(cmpn)} yrs")
-        # Sigungu-level MOIS vs MOJ divergence is expected and documented: MOIS counts by
-        # residence registration (행정구역), MOJ by 체류지; they reconcile only at the
-        # national total. Reported for transparency, NOT a pass/fail criterion.
-        v2 = v.dropna(subset=["moj_n","mois_n"]).copy()
-        if len(v2):
-            v2["apct"] = 100*(v2["mois_n"]-v2["moj_n"]).abs()/v2["moj_n"].replace(0,np.nan)
-            print(f"   [info] sigungu MOIS vs MOJ: median |diff|={v2['apct'].median():.1f}%, "
-                  f"{100*(v2['apct']<5).mean():.0f}% within 5% (expected; different geographic basis)")
-    except Exception as e:
-        print("   (validation file issue):", e)
+        j = pd.concat([nat.set_index("year")["foreign_total"], mj.rename("moj")], axis=1).dropna()
+        check("national foreign_total = the MOJ validation file's district total, every year",
+              len(j) == len(nat) and bool((j["foreign_total"] == j["moj"]).all()),
+              f"{len(j)} years, max |diff| {(j['foreign_total'] - j['moj']).abs().max():.0f}")
 
-    print("\n" + "="*70); print("(5) WIDE ATTACH SANITY (per-level Σfam vs national totals)"); print("="*70)
-    for fam, cols in fams.items():
-        if not cols:
-            print(f"   {fam:9s}: (not attached as wide columns)")
-            continue
-        cN = nat[cols].sum(axis=1).sum()
-        cS = sido[cols].sum(axis=1).sum()
-        cG = sgg[cols].sum(axis=1).sum()
-        pS = 100*cS/cN if cN else float('nan')
-        pG = 100*cG/cN if cN else float('nan')
-        print(f"   {fam:9s}: national={cN:,.0f}  Σsido={cS:,.0f} ({pS:.1f}%)  Σsigungu={cG:,.0f} ({pG:.1f}%)")
+    print("\n" + "="*70); print("(5) WIDE-ATTACH CONSISTENCY"); print("="*70)
+    for label, df in (("sido", sido), ("sigungu", sgg)):
+        w = [c for p in fams.values() for c in fam(df, p)]
+        off = sorted(set(w) - set(nat.columns))
+        check(f"{label}: every wide column also sits on national_annual", not off, off[:5])
+    for label, df in (("national", nat), ("sido", sido), ("sigungu", sgg), ("eupmyeondong", emd)):
+        w = [c for p in list(fams.values()) + ["mc_"] for c in fam(df, p)]
+        empty = [c for c in w if df[c].isna().all()]
+        check(f"{label}: no wide column blank in every row ({len(w)} cols)", not empty, empty[:5])
 
     print("\n" + "="*70)
     print(f"SUMMARY: {len(FAILS)} FAIL(s)")
     for f in FAILS: print("   FAIL:", f)
     print("="*70)
+    if FAILS:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

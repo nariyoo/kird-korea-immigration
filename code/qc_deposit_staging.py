@@ -252,8 +252,10 @@ def readme_claims():
         na.loc[na.year == 2008, "foreign_total"].iloc[0]
     r24 = na.loc[na.year == 2024, "broad_total"].iloc[0] / \
         na.loc[na.year == 2024, "foreign_total"].iloc[0]
-    check(abs(r08 - 1.05) < 0.005 and abs(r24 - 1.74) < 0.005,
-          "broad/registered 1.05 (2008), 1.74 (2024)",
+    # 2026-09-26 (4차 대조): 1.05 -> 1.04 in 2008, once the district files stopped
+    # losing the 화성시 sub-office line and the columns that fold onto one country.
+    check(abs(r08 - 1.04) < 0.005 and abs(r24 - 1.74) < 0.005,
+          "broad/registered 1.04 (2008), 1.74 (2024)",
           (round(r08, 3), round(r24, 3)))
 
     # adm_code 붙임율: README 의 범위 서술과 실측이 맞는가
@@ -468,6 +470,60 @@ def as_a_user():
           "sigungu_en 이 유일하지 않다는 것을 README 가 알린다 (중복 %d개)" % n_dup)
 
 
+# ------------------------------------------------- 7. README 의 읽기 요리법
+def readme_recipe():
+    """README 가 권하는 읽기 코드를 그대로 모든 표에 돌려 본다.
+
+    2026-09-26 (4차 대조): README 는 코드 칸을 글자로 읽으라며
+    `dtype=codes, keep_default_na=False` 를 「join 하는 모든 파일」에 권했다.
+    keep_default_na=False 는 코드 칸만이 아니라 파일 전체의 빈칸을 빈 글자로 바꿔,
+    summary_by_sigungu 의 nat_japan 같은 wide 열이 글자와 수가 섞인 칸이 되고
+    `.sum()` 이 TypeError 로 죽었다(summary_by_sido 는 경고도 없이 숫자를 이어
+    붙였다). README 의 코드 블록을 꺼내 실행하고, 평범하게 읽은 것과 비교한다.
+    """
+    print("== 7. README 의 읽기 요리법")
+    import re as _re
+    import warnings as _w
+    docs = [os.path.join(STG, "README.md")]
+    rel_readme = os.path.join(ROOT, "README.md")
+    if os.path.exists(rel_readme):
+        docs.append(rel_readme)
+    for doc in docs:
+        md = io.open(doc, encoding="utf-8").read()
+        m = _re.search(r"\*\*Read the code columns as text\.\*\*.*?```python\s*\n(.*?)```",
+                       md, _re.S)
+        label = os.path.relpath(doc, ROOT)
+        check(m is not None, "%s: 코드 칸 읽기 요리법이 있다" % label)
+        if m is None:
+            continue
+        code = m.group(1)
+        bad = []
+        for cp in all_csvs():
+            ns = {"pd": pd, "path": cp}
+            with _w.catch_warnings():
+                _w.simplefilter("error")
+                try:
+                    exec(code, ns)
+                except Exception as e:          # a warning counts as a failure
+                    bad.append("%s: %s" % (os.path.basename(cp), type(e).__name__))
+                    continue
+            got = ns.get("df")
+            plain = pd.read_csv(cp, encoding="utf-8-sig", low_memory=False)
+            codes = [c for c in ("sido_code", "sigungu_code", "adm_code") if c in got.columns]
+            for c in plain.columns:
+                if c in codes:
+                    v = got[c]
+                    if not (v.map(type) == str).all() or v.str.endswith(".0").any():
+                        bad.append("%s.%s: code column not plain text"
+                                   % (os.path.basename(cp), c))
+                elif (pd.api.types.is_numeric_dtype(plain[c])
+                      and not pd.api.types.is_numeric_dtype(got[c])):
+                    bad.append("%s.%s: numeric column read as %s"
+                               % (os.path.basename(cp), c, got[c].dtype))
+        check(not bad, "%s: 그 요리법으로 %d개 표를 모두 읽으면 코드 칸은 글자, 수 칸은 수"
+              % (label, len(all_csvs())), bad[:5])
+
+
 def main():
     inventory()
     parity()
@@ -476,6 +532,7 @@ def main():
     against_published()
     refugee_language()
     as_a_user()
+    readme_recipe()
     print()
     if FAILS:
         print("%d개 어긋남:" % len(FAILS))

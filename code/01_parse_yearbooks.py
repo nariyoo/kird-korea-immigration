@@ -734,7 +734,12 @@ def parse_sojourn(year, path):
             continue
         n = _sum_newline_cell(total_row[j])
         if n > 0:
-            records.append((year, country, "F4", "재외동포(거소)", n))
+            # The label is the harmonized F-4 name crosswalk_visa gives, the one the
+            # short-term table's F-4 column already carries. Writing the table's own
+            # "재외동포(거소)" here left it on the five 기타 rows of 2006-2010, which
+            # have no second F-4 source to take the label from in 08's collapse
+            # (2026-09-26, 4차 대조).
+            records.append((year, country, "F4", "재외동포", n))
     return pd.DataFrame(records, columns=["year", "country", "visa_code", "visa_label", "n"])
 
 
@@ -1662,8 +1667,8 @@ def load_region_country(year, path):
     # Collect both total rows and M/F rows; resolve per (sido, sigungu, country)
     # later: prefer an explicit total, else sum M+F (needed for 2019 where
     # per-sigungu rows only carry 남성/여성).
-    totals = {}   # (sido, sigungu, country) -> n  (explicit total)
-    mf_sum = {}   # (sido, sigungu, country) -> n  (sum of M+F)
+    totals = {}   # (sido, sigungu, country, printed name) -> n  (explicit total)
+    mf_sum = {}   # (sido, sigungu, country, printed name) -> n  (sum of M+F)
 
     for _, row in body.iterrows():
         sido = clean_country(row[0])
@@ -1675,13 +1680,22 @@ def load_region_country(year, path):
         if pd.isna(sigungu):
             continue
         sigungu = str(sigungu).strip()
-        # Skip 출장소 (sub-office) rows: they are subdivisions WITHIN a city whose
-        # residents are already counted in that city's "계" total row, so folding
-        # them into the parent (via canon_sigungu) and writing to totals would
-        # overwrite the real city total (e.g. 화성시 2014: 출장소 1,709 clobbering
-        # the 화성시 계 of 29,968). Dropping them keeps the city total intact.
+        # A line is resolved under its own printed name first and only then added
+        # to its canonical district, so two printed lines that land on one district
+        # add up. Until 2026-09-26 (4차 대조) `totals` was keyed by the canonical
+        # name and the later line overwrote the earlier: the residual 당진군 line
+        # of 2014-2018 (618 / 370 / 153 / 94) was replaced by 당진시's, 여주군 2014
+        # by 여주시's.
+        raw_sg = sigungu
+        # 출장소 (sub-office) lines belong to their city. They were dropped as
+        # "already inside the city row", but the province 소계, and the grand total
+        # that equals the national status table, count 화성시 동부출장소 on top of
+        # 화성시 (2014: 29,968 + 1,709; 2015: + 1).
         if "출장소" in sigungu:
-            continue
+            m_ = re.match(r"^(.+?시)", sigungu.replace(" ", ""))
+            if not m_:
+                continue
+            sigungu = m_.group(1)
         if sigungu == "소계":
             sigungu = "총계"
         if sigungu not in ("총계", "총합계"):
@@ -1691,6 +1705,14 @@ def load_region_country(year, path):
         is_mf = gender in MALE_G or gender in FEMALE_G
         if not (is_total or is_mf):
             continue
+        # Several source columns fold onto one country (영국 + 영국외지민 +
+        # 영국외지시민 + 영국해외영토시민, 홍콩 + 홍콩거주난민, 미국 + 미국인근섬).
+        # Sum them within the row first. Until 2026-09-26 each column was written
+        # straight into `totals`, so the last column of the group overwrote the
+        # others: 서울 강서구 2024 held 1 United Kingdom national against the 77 the
+        # yearbook prints, and the district files fell 1,500-5,000 people a year
+        # short of the table's own grand total (2,918 of the 3,068 in 2024 were UK).
+        row_n = {}
         for col_idx, ctry in country_cols.items():
             val = row[col_idx]
             if pd.isna(val):
@@ -1701,19 +1723,21 @@ def load_region_country(year, path):
                 continue
             if n <= 0:
                 continue
-            key = (sido, sigungu, ctry)
+            row_n[ctry] = row_n.get(ctry, 0) + n
+        for ctry, n in row_n.items():
+            key = (sido, sigungu, ctry, raw_sg)
             if is_total:
                 totals[key] = n
             else:
                 mf_sum[key] = mf_sum.get(key, 0) + n
 
-    records = []
+    summed = {}
     for key in set(totals) | set(mf_sum):
         n = totals.get(key, mf_sum.get(key, 0))
-        if n <= 0:
-            continue
-        sido, sigungu, ctry = key
-        records.append((year, sido, sigungu, ctry, n))
+        if n > 0:
+            summed[key[:3]] = summed.get(key[:3], 0) + n
+    records = [(year, sido, sigungu, ctry, n)
+               for (sido, sigungu, ctry), n in summed.items()]
 
     return pd.DataFrame(records, columns=["year", "sido", "sigungu", "country", "n"])
 

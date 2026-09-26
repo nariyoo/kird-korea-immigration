@@ -260,10 +260,14 @@ def export_dataset():
             df.loc[mask, "sido"] = nsido
             df.loc[mask, "sigungu"] = nsg
             df.loc[mask, "_renamed"] = True
-        # Drop sub-office (출장소) rows. They list a sub-area population that is
-        # also counted in the parent city's main row, so keeping them creates
-        # phantom districts and double counts at the city total.
-        df = df[~df["sigungu"].str.contains("출장소", na=False)]
+        # Sub-office (출장소) rows go to their parent city. They were dropped as
+        # "already counted in the city row" until 2026-09-26 (4차 대조), but the
+        # province 소계 of the same table counts 화성시 동부출장소 on top of 화성시
+        # (2012: 23,167 + 1,992 = the whole of 화성), so dropping them lost people.
+        _off = df["sigungu"].str.contains("출장소", na=False)
+        df.loc[_off, "sigungu"] = (df.loc[_off, "sigungu"].str.replace(" ", "", regex=False)
+                                   .str.extract(r"^(.+?시)", expand=False))
+        df = df[df["sigungu"].notna()]
         # Drop city-total rows for cities whose 일반구 rows already carry the
         # population. The full list is generic: any city that appears with both
         # a 2-word city total and 3-word "city gu" rows in the same year. The
@@ -310,9 +314,11 @@ def export_dataset():
         reg["population"] = "registered"     # 등록외국인 (long-term, >90 days)
         visa = pd.concat([stay, reg], ignore_index=True)
         visa = visa[["year", "population", "country", "visa_code", "visa_label", "n"]]
-        # Collapse rows that differ only by visa_label (2006-2010 F4 has both
-        # "재외동포" and "재외동포(거소)" rows under the same F4 code; sum the
-        # counts and keep the first label).
+        # Collapse rows that differ only by visa_label, summing the counts and
+        # keeping the first label. 2006-2010 F4 comes from two tables (the
+        # short-term table's F-4 column and the 거소신고 table); since 2026-09-26
+        # both carry the label "재외동포", and validate_release checks that each
+        # (year, visa_code) has one label.
         visa = (visa.groupby(["year", "population", "country", "visa_code"],
                               as_index=False)
                     .agg({"visa_label": "first", "n": "sum"}))
@@ -701,9 +707,8 @@ label across the whole series so each district's trend is unbroken: 부천시
 unit; 인천 남구 is carried as its post-2018 name 미추홀구; 군위군 is placed under
 대구광역시 for all years (transferred from 경상북도 in 2023); and residual rows of
 dissolved/duplicated units (청원군 after its 2014 merger into 청주시, 연기군/세종
-parse residue, gu-less city totals) are dropped. Sub-office (출장소) rows, which
-are subdivisions already counted in their city's total, are not double-counted
-(this corrects an earlier 화성시 2014 figure).
+parse residue, gu-less city totals) are dropped. Sub-office (출장소) rows are
+added to their city: the yearbook counts 화성시 동부출장소 apart from the 화성시 row.
 
 Known limitations:
 - A few sigungu lack a population denominator in administrative-transition

@@ -156,23 +156,34 @@ def fix_subnational():
     f14 = os.path.join(RAW, "출입국통계연보", "2014_출입국통계연보", "14_2장_Ⅱ_3.지역 및 국적_지역별 등록외국인 현황.xlsx")
     df = pd.read_excel(f14, header=None)
     header = [str(x).split("\n")[0] for x in df.iloc[0].tolist()]
-    ccols = {c: re.sub(r"\s+", "", header[c]) for c in range(4, df.shape[1])
+    from kird import COUNTRY_CANONICAL
+    # canonical names, as every other district row has them by now (영국외지민 is
+    # 영국, and so on); the raw header alone put a second UK label on 화성시 2014
+    ccols = {c: COUNTRY_CANONICAL.get(re.sub(r"\s+", "", header[c]), re.sub(r"\s+", "", header[c]))
+             for c in range(4, df.shape[1])
              if re.search(r"[가-힣]", str(header[c])) and re.sub(r"\s+", "", header[c]) not in ("기타", "계", "총계")}
-    for _, r in df.iterrows():
-        if str(r.iloc[1]).strip() == "화성시" and str(r.iloc[2]).strip() in ("계", "총계"):
-            nat = {}
+    # The 2014 table prints 화성시 동부출장소 (1,709) as a row of its own beside
+    # 화성시 (29,968), and 경기도's 소계 and the grand total, which equals the national
+    # status table to the person, count both: the sub-office is NOT inside the city
+    # row that year. Until 2026-09-26 (4차 대조) only the city row was read and the
+    # 1,709 were lost. Read both and add them.
+    hw_rows = [r for _, r in df.iterrows()
+               if str(r.iloc[1]).strip().replace(" ", "") in ("화성시", "화성시동부출장소")
+               and str(r.iloc[2]).strip() in ("계", "총계")]
+    if hw_rows:
+        nat = {}
+        for r_ in hw_rows:
             for c, nm in ccols.items():
-                v = r.iloc[c]
+                v = r_.iloc[c]
                 try: v = int(float(str(v).replace(",", "")))
                 except: v = 0
                 if v > 0: nat[nm] = nat.get(nm, 0) + v
-            RBS["2014"]["경기도"]["화성시"] = nat
-            rec = irec("2014", "경기도", "화성시")
-            pop = rec.get("total_pop") if rec else None
-            new = make_record("경기도", "화성시", nat, pop, rec.get("lisa") if rec else None)
-            IBS["2014"] = [x for x in IBS["2014"] if not (x["sido"] == "경기도" and x["sigungu"] == "화성시")] + [new]
-            log.append(f"화성시 2014: foreign {rec['foreign_total'] if rec else '?'} -> {new['foreign_total']:,} (share {new['foreign_share_pct']}%)")
-            break
+        RBS["2014"]["경기도"]["화성시"] = nat
+        rec = irec("2014", "경기도", "화성시")
+        pop = rec.get("total_pop") if rec else None
+        new = make_record("경기도", "화성시", nat, pop, rec.get("lisa") if rec else None)
+        IBS["2014"] = [x for x in IBS["2014"] if not (x["sido"] == "경기도" and x["sigungu"] == "화성시")] + [new]
+        log.append(f"화성시 2014: foreign {rec['foreign_total'] if rec else '?'} -> {new['foreign_total']:,} (share {new['foreign_share_pct']}%)")
 
     # ---------- 2) 인천 남구 -> 미추홀구 (merge per year) ----------
     for y in IBS:
@@ -254,6 +265,69 @@ def fix_subnational():
         ("충청남도", "당진군", 2008), ("충청남도", "천안시", 2008),
         ("충청북도", "청주시", 2008),
     ]
+    # Residual lines of abolished districts in the 2014+ tables. Several editions
+    # still print a line under a district that no longer exists, and those people
+    # are real registrations on ground that now belongs to one successor: 연기군 in
+    # 2014 (11, now 세종시) and 청원군 in 2014, 2015, 2016 and 2019 (1,798 / 74 /
+    # 665 / 118, absorbed into 청주 in July 2014). The STRAYS list below dropped
+    # them, so the district file fell short of the yearbook's own table total by
+    # that much, while visa_by_sigungu (08's _RENAMES) and the 2008-2013 block
+    # (03's REMAP) already carried the same lines on the successor. Fold them the
+    # same way here, before the strays go. (당진군 and 여주군, whose names the parser
+    # maps to 당진시 and 여주시, are added there since the same date; they stay in
+    # the list in case a line arrives under the old name.) 2026-09-26 (4차 대조).
+    FOLD = {("충청남도", "연기군"): ("세종특별자치시", "세종시"),
+            ("충청북도", "청원군"): ("충청북도", "청주시 청원구"),
+            ("충청남도", "당진군"): ("충청남도", "당진시"),
+            ("경기도", "여주군"): ("경기도", "여주시")}
+    # 화성시동부출장소 is the same kind of line in every edition that prints it
+    # (2008-2013 here; 2014 is read in step 1): 경기도's 소계 counts it on top of
+    # the 화성시 row (2012: 1,992; 2013: 1,775), so it is not inside the city row.
+    SUBOFFICE = {("경기도", "화성시동부출장소"): ("경기도", "화성시")}
+    for y in IBS:
+        fold = dict(SUBOFFICE)
+        if int(y) >= 2014:
+            fold.update(FOLD)
+        for (sido, sg), (sido2, sg2) in fold.items():
+            old = RBS.get(y, {}).get(sido, {}).get(sg)
+            if not old:
+                continue
+            tgt = RBS[y].setdefault(sido2, {}).setdefault(sg2, {})
+            for c, v in old.items():
+                tgt[c] = tgt.get(c, 0) + v
+            del RBS[y][sido][sg]
+            rec = irec(y, sido2, sg2)
+            new = make_record(sido2, sg2, tgt, rec.get("total_pop") if rec else None,
+                              rec.get("lisa") if rec else None)
+            IBS[y] = [r for r in IBS[y] if not (r["sido"] == sido2 and r["sigungu"] == sg2)] + [new]
+            log.append(f"folded residual {sido} {sg} {y} ({sum(old.values()):,}) into {sido2} {sg2}")
+            if sido != sido2:
+                # The province rows read the yearbook's own 소계, which still counts
+                # the line in the old province (연기군 2014 in 충청남도). Move it there
+                # too, as 03 does for 2012-2013, so 세종특별자치시 equals 세종시.
+                RBSD_ = region.get("by_sido", {}).get(y, {})
+                if sido in RBSD_ and sido2 in RBSD_:
+                    for c, v in old.items():
+                        RBSD_[sido][c] = RBSD_[sido].get(c, 0) - v
+                        if RBSD_[sido][c] <= 0:
+                            del RBSD_[sido][c]
+                        RBSD_[sido2][c] = RBSD_[sido2].get(c, 0) + v
+                    moved = sum(old.values())
+                    for rec_ in idx.get("by_sido", {}).get(y, []):
+                        if rec_["sido"] in (sido, sido2):
+                            # the count moves by exactly the line; the province
+                            # total keeps whatever else its 소계 holds
+                            ft = (rec_.get("foreign_total") or 0) + (moved if rec_["sido"] == sido2 else -moved)
+                            nr = make_record(rec_["sido"], "", RBSD_[rec_["sido"]],
+                                             rec_.get("total_pop"), "ns")
+                            for k_ in ("sigungu", "lisa", "foreign_total", "foreign_share_pct"):
+                                nr.pop(k_, None)
+                            rec_.update(nr)
+                            rec_["foreign_total"] = ft
+                            tp_ = rec_.get("total_pop")
+                            rec_["foreign_share_pct"] = round(100 * ft / tp_, 2) if tp_ else None
+                    log.append(f"  and at province level: {sido} -> {sido2} {y}")
+
     for y in IBS:
         yi = int(y)
         for sido, sg, from_y in STRAYS:

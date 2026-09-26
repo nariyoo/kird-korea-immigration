@@ -39,6 +39,9 @@ TARGETS = [
     os.path.join(RELEASE, "README.md"),
     os.path.join(DEPOSIT, "README.md"),
     os.path.join(GITHUB, "README.md"),
+    # the upload notes: file and variable counts against ICPSR's stated limits
+    # (2026-09-26, 4차 대조: it said "more than 1,000 columns" against 695)
+    os.path.join(RELEASE, "OPENICPSR_METADATA.md"),
 ]
 
 # The yearbook's lines that hold people but name no nationality (as 01 keeps them).
@@ -148,6 +151,65 @@ def facts():
             "%s in %d, %s %s, %s %s" % (r.country, r.year, r.sido, r.sigungu, fmt(r.n),
                                         "person" if r.n == 1 else "people")
             for r in hit.sort_values(["year", "sido", "sigungu"]).itertuples())
+    # 2026-09-26 (4차 대조): province rows against the district sums, and the district
+    # tables against the national ones. These sentences were hand-kept and described
+    # the parser's losses (UK columns overwritten, sub-office and residual lines
+    # dropped) as the yearbook's own figures.
+    sgc = sg.assign(_p=sg["sigungu_code"].map(lambda v: "" if v != v else str(v)[:2]))
+    dp = sgc.groupby(["year", "_p"])["registered_foreigners"].sum()
+    sp = sd.assign(_p=sd["sido_code"].astype(str)).groupby(["year", "_p"])["registered_foreigners"].sum()
+    j = pd.concat([dp.rename("d"), sp.rename("s")], axis=1).dropna()
+    bad_years = sorted({int(y) for (y, _), r in j.iterrows() if r["d"] != r["s"]})
+    nat_gap = (sd.groupby("year")["registered_foreigners"].sum()
+               - sg.groupby("year")["registered_foreigners"].sum()).dropna()
+    nat_gap = nat_gap[nat_gap.index.isin(bad_years)]
+    F["sido_eq_from"] = str(max(bad_years) + 1) if bad_years else str(int(j.index.get_level_values(0).min()))
+    F["sido_gap_years"] = "%d-%d" % (min(bad_years), max(bad_years)) if bad_years else "none"
+    F["sido_gap_range"] = "%s to %s" % (fmt(nat_gap.min()), fmt(nat_gap.max())) if len(nat_gap) else "0 to 0"
+    vs = rd("visa_by_sigungu.csv").groupby("year")["n"].sum()
+    ns_ = nb.groupby("year")["n"].sum()
+    F["visa_gap_2020"] = fmt(ns_[2020] - vs[2020])
+    F["visa_gap_last"] = fmt(ns_[last] - vs[last])
+    F["dist_gap_last"] = fmt(tot[("registered", last)] - ns_[last])
+    na_ = rd("national_annual.csv").set_index("year")
+    F["broad_ratio_2008"] = "%.2f" % (na_.loc[2008, "broad_total"] / na_.loc[2008, "foreign_total"])
+    F["broad_ratio_last"] = "%.2f" % (na_.loc[last, "broad_total"] / na_.loc[last, "foreign_total"])
+
+    # Against the published v1.1.0 (2026-09-26, 4차 대조: these were hand-kept and
+    # moved when the district counts did). Only when the v1.1.0 zip is present.
+    zp = os.path.join(RELEASE, "data deposit", "KIRD_openicpsr_deposit_v1.1.0.zip")
+    if os.path.exists(zp):
+        import zipfile
+        z = zipfile.ZipFile(zp)
+        pick = lambda k: next(n for n in z.namelist() if n.endswith(k))
+        o = pd.read_csv(z.open(pick("summary_national.csv")), encoding="utf-8-sig")
+        j = o.merge(rd("national_annual.csv"), on="year").dropna(
+            subset=["morans_I_share_x", "morans_I_share_y"])
+        d = (j["morans_I_share_x"] - j["morans_I_share_y"]).abs()
+        d = d[d > 0]
+        F["moran_min"], F["moran_max"] = "%.4f" % d.min(), "%.4f" % d.max()
+        F["moran_years"] = str(len(d))
+        os_ = pd.read_csv(z.open(pick("summary_by_sigungu.csv")), encoding="utf-8-sig")
+        m = os_.merge(sg, on=["year", "sido", "sigungu"])
+        dd = m["lisa_x"] != m["lisa_y"]
+        F["lisa_diff"], F["lisa_joined"] = fmt(dd.sum()), fmt(len(m))
+        F["lisa_diff_pre"] = fmt((dd & (m["year"] <= 2013)).sum())
+        F["lisa_diff_post"] = fmt((dd & (m["year"] >= 2014)).sum())
+
+    # the deposit's shape: tables, data files, and columns (= variables)
+    csvs = [os.path.join(d, f) for d in data_dirs()[:2] for f in os.listdir(d)
+            if f.endswith(".csv")]
+    top = {"national_annual.csv", "summary_by_sido.csv", "summary_by_sigungu.csv",
+           "summary_by_eupmyeondong.csv"}
+    ncol = {}
+    for p in csvs:
+        with io.open(p, encoding="utf-8-sig", newline="") as fh:
+            ncol[os.path.basename(p)] = len(next(csv.reader(fh)))
+    F["n_tables"] = str(len(csvs))
+    F["n_datafiles"] = str(sum(1 for d in data_dirs()[:2] for f in os.listdir(d)
+                               if f.endswith((".csv", ".dta"))))
+    F["vars_all"] = fmt(sum(ncol.values()))
+    F["vars_summary"] = fmt(sum(v for k, v in ncol.items() if k in top))
     return F
 
 
@@ -174,12 +236,36 @@ CLAIMS = [
     ("stay_2008", _p(r"staying 2006\s+[\d,]+\s+\([\d,]+\), 2008\s+(?P<v>[\d,]+)")),
     ("stay_2009", _p(r", 2009\s+(?P<v>[\d,]+)\s+\([\d,]+\) and 2014")),
     ("stay_2014", _p(r"\)\s+and 2014\s+(?P<v>[\d,]+)\s+\(")),
+    ("sido_eq_from", _p(r"and from (?P<v>\d{4}) it equals the sum of that")),
+    ("sido_gap_years", _p(r"province's districts in every province and year\. In (?P<v>\d{4}-\d{4}) the")),
+    ("sido_gap_range", _p(r"exceed the district sum by (?P<v>[\d,]+ to [\d,]+) people a year")),
+    ("visa_gap_2020", _p(r"0 through 2012, (?P<v>[\d,]+) in 2020 and")),
+    ("visa_gap_last", _p(r"in 2020 and (?P<v>[\d,]+) in \d{4}\. Second,")),
+    ("dist_gap_last", _p(r"itself sits (?P<v>[\d,]+) below the national total")),
+    ("broad_ratio_2008", _p(r"ran (?P<v>[\d.]+) times `registered_foreigners` in 2008")),
+    ("broad_ratio_last", _p(r"in 2008 and (?P<v>[\d.]+) times in \d{4}")),
+    ("moran_years", _p(r"`morans_I_share` differs in all (?P<v>\d+) years")),
+    ("moran_min", _p(r"\(by (?P<v>0\.\d{4}) to\s+0\.\d{4}")),
+    ("moran_max", _p(r"\(by 0\.\d{4} to\s+(?P<v>0\.\d{4})")),
+    ("lisa_diff", _p(r"`lisa`(?: differs)? in (?P<v>[\d,]+) of\s+(?:the )?[\d,]+\s+(?:matched )?district-years")),
+    ("lisa_joined", _p(r"`lisa`(?: differs)? in [\d,]+ of\s+(?:the )?(?P<v>[\d,]+)\s+(?:matched )?district-years")),
+    ("lisa_diff_pre", _p(r"(?:district-years,\s+|\. )(?P<v>[\d,]+) of (?:them|the [\d,]+ are)\s+2008-2013")),
+    ("lisa_diff", _p(r"[\d,]+ of the (?P<v>[\d,]+) are\s+2008-2013")),
+    ("lisa_diff_post", _p(r"the other (?P<v>[\d,]+) are spread over 2014-2024")),
+    ("n_tables", _p(r"and its (?P<v>\d+) tables carry")),
+    ("vars_all", _p(r"tables carry (?P<v>[\d,]+) variables between them")),
+    ("vars_summary", _p(r"variables between them \((?P<v>[\d,]+) in the four summary")),
+    ("n_datafiles", _p(r"it is the (?P<v>\d+) data files that exceed")),
 ]
+# Claims the upload notes must carry.
+REQUIRED_META = {"n_tables", "vars_all", "vars_summary", "n_datafiles"}
 
 # Claims every README that describes the data must carry (the GitHub README is a
 # shorter code-first document and carries only the file table).
 REQUIRED = {"f6_first", "f2_first", "f2_next", "f4_stay_last", "residual_min",
-            "residual_max", "respop", "district_residuals", "broad_gap"}
+            "residual_max", "respop", "district_residuals", "broad_gap",
+            "sido_eq_from", "sido_gap_years", "sido_gap_range", "visa_gap_2020",
+            "visa_gap_last", "dist_gap_last"}
 
 ROW = re.compile(r"^\|\s*`?([A-Za-z0-9_]+\.csv)`?\s*\|")
 YEARS = re.compile(r"^\s*((?:19|20)\d{2})\s*[-–]\s*((?:19|20)\d{2})\s*$")
@@ -226,10 +312,142 @@ def fix_table_line(line, name):
     return "|".join(cells), notes
 
 
+# ---------------------------------------------------------------- file tables
+# 2026-09-26 (4차 대조): the release README's two file tables were kept by hand and
+# had fallen out of step with the deposit README: national_annual sat under
+# "Breakdowns", and the four crosswalk/weights tables had no row at all. Both READMEs
+# now take their tables from this one list, between marker comments, and --check
+# fails when a README's tables miss a file its folder holds or list one it does not.
+# (file, section, grain, source); "summary" rows carry no source column.
+FILE_TABLE = [
+    ("national_annual.csv", "summary", "year (whole country)", None),
+    ("summary_by_sido.csv", "summary", "sido × year", None),
+    ("summary_by_sigungu.csv", "summary", "sido × sigungu × year", None),
+    ("summary_by_eupmyeondong.csv", "summary",
+     "sido × sigungu × eup·myeon·dong × year (+ official dong code)", None),
+    ("nationality_by_sigungu.csv", "breakdown", "sido × sigungu × nationality × year", "MOJ"),
+    ("nationality_by_sido.csv", "breakdown", "sido × nationality × year (district sums)", "MOJ"),
+    ("nationality_national.csv", "breakdown", "population × nationality × year", "MOJ"),
+    ("visa_by_sigungu.csv", "breakdown", "sido × sigungu × visa status × year", "MOJ"),
+    ("visa_by_sido.csv", "breakdown", "sido × visa status × year (district sums)", "MOJ"),
+    ("visa_national.csv", "breakdown", "population × visa status × year", "MOJ"),
+    ("visa_by_nationality.csv", "breakdown", "population × nationality × visa × year", "MOJ"),
+    ("age_sex_national.csv", "breakdown",
+     "population × nationality × age × sex × year", "MOJ"),
+    ("children_by_age.csv", "breakdown", "sido × sigungu × age (0-18) × year", "MOIS"),
+    ("multicultural_households.csv", "breakdown",
+     "… × eup·myeon·dong × household-member type × year", "MOIS"),
+    ("naturalization_annual.csv", "breakdown", "year × processing type", "MOJ"),
+    ("naturalization_by_country.csv", "breakdown",
+     "former nationality × processing type × year", "MOJ"),
+    ("naturalization_by_age.csv", "breakdown", "age band × processing type × year", "MOJ"),
+    ("ethnic_enclaves.csv", "breakdown", "year × sigungu × nationality", "derived"),
+    ("language_demand.csv", "breakdown",
+     "year × scope (national, sido, sigungu) × language", "derived"),
+    ("segregation_by_nationality.csv", "breakdown", "nationality × year", "derived"),
+    ("region_segregation.csv", "breakdown",
+     "continent of origin (`continent` column) × year", "derived"),
+    ("refugee_by_nationality.csv", "breakdown",
+     "status × nationality, cumulative 1994-2024 (deposit only)", "MOJ"),
+    ("refugee_language_demand.csv", "breakdown",
+     "status × language, cumulative 1994-2024 (deposit only)", "derived"),
+    ("diaspora_residence_by_sido.csv", "breakdown",
+     "sido × nationality × year (residence reports, not the registered-foreigner "
+     "register)", "MOJ"),
+    ("crosswalk_country.csv", "breakdown",
+     "nationality label × edition, with the harmonized name, English label and "
+     "continent (`continent` / `continent_en`: the nationality-to-continent map behind "
+     "`continent_H` and `region_segregation`)", "derived"),
+    ("crosswalk_region.csv", "breakdown",
+     "place names: province, district and sub-district renames, moves and boundary "
+     "lineage (the chains behind the continuous district labels)", "derived"),
+    ("crosswalk_visa.csv", "breakdown", "visa code × label, Korean and English", "derived"),
+    ("language_weights.csv", "breakdown",
+     "nationality × language × share, the first-language shares behind "
+     "`language_demand`", "derived"),
+]
+# Tables with no year column: what the Years cell says instead.
+YEARS_FIXED = {"crosswalk_country.csv": "2006-2024 editions",
+               "crosswalk_visa.csv": "2006-2024 editions",
+               "crosswalk_region.csv": "fixed", "language_weights.csv": "fixed",
+               "refugee_by_nationality.csv": "snapshot",
+               "refugee_language_demand.csv": "snapshot"}
+MARK = re.compile(r"(<!-- file-table:(summary|breakdown) -->)(.*?)(<!-- /file-table -->)", re.S)
+
+
+def years_cell(name):
+    if name in YEARS_FIXED:
+        return YEARS_FIXED[name]
+    d = pd.read_csv(find(name), encoding="utf-8-sig", low_memory=False,
+                    usecols=lambda c: c in ("year", "population"))
+    if name == "age_sex_national.csv":
+        g = d.groupby("population")["year"].agg(["min", "max"]).sort_values("min")
+        return "; ".join("%s %d-%d" % (k, r["min"], r["max"]) for k, r in g.iterrows())
+    return "%d-%d" % (d["year"].min(), d["year"].max())
+
+
+def render_table(section, present, nl):
+    rows = [r for r in FILE_TABLE if r[1] == section and r[0] in present]
+    if section == "summary":
+        out = ["| File | Grain | Years |", "|---|---|---|"]
+        out += ["| %s | %s | %s |" % (f, g, years_cell(f)) for f, _, g, _ in rows]
+    else:
+        out = ["| File | Grain | Years | Source |", "|---|---|---|---|"]
+        out += ["| %s | %s | %s | %s |" % (f, g, years_cell(f), src)
+                for f, _, g, src in rows]
+    return nl + nl.join(out) + nl
+
+
+def present_files(path):
+    """The tables in the folder a README describes."""
+    if os.path.normcase(os.path.dirname(path)) == os.path.normcase(RELEASE):
+        return {f for f in os.listdir(RELEASE_DATA) if f.endswith(".csv")}
+    have = set()
+    for d in (os.path.join(DEPOSIT, "data"), os.path.join(DEPOSIT, "data", "detailed_data")):
+        if os.path.isdir(d):
+            have |= {f for f in os.listdir(d) if f.endswith(".csv")}
+    return have
+
+
+def refresh_tables(path, s, nl):
+    """Rewrite the marked file tables; report files the tables miss or add."""
+    notes, problems = [], []
+    present = present_files(path)
+    unknown = sorted(present - {r[0] for r in FILE_TABLE})
+    if unknown:
+        problems.append("tables with no FILE_TABLE entry: %s" % unknown)
+    marks = list(MARK.finditer(s))
+    if marks:
+        out, last = [], 0
+        for m in marks:
+            want = render_table(m.group(2), present, nl)
+            if m.group(3) != want:
+                notes.append("file table (%s) regenerated" % m.group(2))
+            out += [s[last:m.start(3)], want]
+            last = m.end(3)
+        out.append(s[last:])
+        s = "".join(out)
+    listed = [m.group(1) for m in (ROW.match(l) for l in s.split(nl)) if m]
+    dup = sorted({f for f in listed if listed.count(f) > 1})
+    miss = sorted(present - set(listed))
+    extra = sorted(set(listed) - present)
+    if dup:
+        problems.append("files listed twice in the tables: %s" % dup)
+    if miss:
+        problems.append("files the folder holds but no table lists: %s" % miss)
+    if extra:
+        problems.append("files a table lists but the folder lacks: %s" % extra)
+    return s, notes, problems
+
+
 def refresh(path, F, check):
     s = io.open(path, encoding="utf-8", newline="").read()
     nl = "\r\n" if "\r\n" in s else "\n"
     notes, problems = [], []
+    if os.path.basename(path) == "README.md":
+        s, n0, p0 = refresh_tables(path, s, nl)
+        notes += n0
+        problems += p0
     # 1) the file table
     out = []
     for line in s.split(nl):
@@ -254,7 +472,11 @@ def refresh(path, F, check):
         if m.group("v") != want:
             notes.append("%s %r -> %r" % (key, m.group("v"), want))
             s = s[:m.start("v")] + want + s[m.end("v"):]
-    if os.path.basename(os.path.dirname(path)) != os.path.basename(GITHUB):
+    if os.path.basename(path) == "OPENICPSR_METADATA.md":
+        lost = sorted(REQUIRED_META - seen)
+        if lost:
+            problems.append("anchors not found (sentence reworded?): %s" % lost)
+    elif os.path.basename(os.path.dirname(path)) != os.path.basename(GITHUB):
         lost = sorted(REQUIRED - seen)
         if lost:
             problems.append("anchors not found (sentence reworded?): %s" % lost)

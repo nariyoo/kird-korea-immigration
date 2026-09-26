@@ -228,6 +228,41 @@ def parse_sido_2006_2013():
                         v = num(df.iloc[rr, c])
                         if v > 0: rec[nm] = rec.get(nm, 0) + v
                     out[sd] = rec
+            # 연기군 was abolished on 2012-07-01 and its whole territory became
+            # 세종특별자치시, but the 2012 and 2013 editions still print a residual
+            # 연기군 line inside 충청남도's block (89 and 13 people) and count it in
+            # 충청남도's 소계. It is the same ground as 세종, and the district files
+            # already carry it in 세종시 (03 merge_sigungu_nationality maps 연기군 to
+            # 세종시), as do the province files built from them. Move it here too, so
+            # summary_by_sido's 세종 equals its one district in every year (it was
+            # 2,271 against 2,360 in 2012 and 2,462 against 2,475 in 2013). The
+            # national total does not move. 2026-09-26 (4차 대조).
+            if "세종특별자치시" in out and "충청남도" in out:
+                cur = None
+                for rr in range(hr + 1, df.shape[0]):
+                    sd = norm_sido(df.iloc[rr, rc])
+                    if sd:
+                        cur = sd
+                    if cur != "충청남도":
+                        continue
+                    sg = str(df.iloc[rr, rc + 1]).split("\n")[0].strip()
+                    if sg != "연기군":
+                        continue
+                    tval = num(df.iloc[rr, tc])
+                    if tval <= 0:
+                        continue
+                    src, dst = out["충청남도"], out["세종특별자치시"]
+                    src["_total"] -= tval
+                    dst["_total"] += tval
+                    for c, nm in nats.items():
+                        v = num(df.iloc[rr, c])
+                        if v > 0:
+                            src[nm] = src.get(nm, 0) - v
+                            if src[nm] <= 0:
+                                del src[nm]
+                            dst[nm] = dst.get(nm, 0) + v
+                    print(f"    {os.path.basename(path)[:4]}: residual 연기군 line "
+                          f"({tval:,}) moved from 충청남도 to 세종특별자치시")
             return out
         # sum mode
         cur = None
