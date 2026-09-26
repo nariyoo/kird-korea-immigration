@@ -492,16 +492,21 @@ def check_cross_file(d):
     # 총합만 보면 못 잡는다. 2026-08-26에 nationality_by_sido.csv 2014 경기도에서
     # 71명이 사라져 있었고(튀르키예 67, 벨라루스 2, 조지아 2), 그 해 총합 차이도
     # 71뿐이라 눈에 안 띄었다. **줄 단위로** 맞춰 본다.
+    # 2026-09-26 (3차 대조): 시도 표는 시군구를 **그 해 속한 시도**(시군구 코드 앞
+    # 2자리)로 더한 것이다. 이름으로 더하면 군위군이 2008-2022년 대구에 들어가고
+    # (시군구 파일은 군위군을 모든 해 대구광역시로 적는다) 세종이 2012년 전에 시도가
+    # 된다. 그래서 (연도, 시도 코드)로 맞춘다.
     for lo, hi, keys in (("nationality_by_sigungu.csv", "nationality_by_sido.csv",
-                          ["year", "sido", "country"]),
+                          ["year", "sido_code", "country"]),
                          ("visa_by_sigungu.csv", "visa_by_sido.csv",
-                          ["year", "sido", "visa_code"])):
+                          ["year", "sido_code", "visa_code"])):
         a_, b_ = d.get(lo), d.get(hi)
         if a_ is None or b_ is None:
             continue
-        a = (a_[~a_["sigungu"].isin(AGG)].groupby(keys)["n"].sum()
-             if "sigungu" in a_.columns else a_.groupby(keys)["n"].sum())
-        b = b_.groupby(keys)["n"].sum()
+        a_ = a_[~a_["sigungu"].isin(AGG)].assign(
+            sido_code=a_["sigungu_code"].map(lambda v: _code(v)[:2]))
+        a = a_.groupby(keys)["n"].sum()
+        b = b_.assign(sido_code=b_["sido_code"].map(_code)).groupby(keys)["n"].sum()
         j = pd.concat([a.rename("lo"), b.rename("hi")], axis=1).fillna(0)
         gap = (j["lo"] - j["hi"]).abs()
         n_bad = int((gap > 0).sum())
@@ -778,6 +783,72 @@ def check_one_label_per_code(d):
            if len(v) > 1}
     check(not bad, "labels: one sigungu name per (year, sigungu_code) across every file",
           "%d codes, e.g. %s" % (len(bad), list(bad.items())[:2]))
+
+
+def _code(v):
+    """숫자로 읽힌 코드(27.0)와 빈칸(NaN)을 글자로 맞춘다."""
+    if v is None or (isinstance(v, float) and v != v):
+        return ""
+    return str(v).split(".")[0].strip()
+
+
+def check_province_labels(d):
+    """시도 이름과 시도 코드가 줄마다, 파일마다 같은 곳을 가리키는가.
+
+    2026-09-26 (3차 대조). 두 가지가 걸렸다.
+      * 세종시(시군구) 2008-2011 줄이 sido=세종특별자치시 에 sido_code=44(충청남도)를
+        달아, 한 해 한 파일에서 44 가 두 이름을 가졌다.
+      * 군위군(47720)이 법무부 시군구 파일에서는 모든 해 대구광역시, 행안부 파일
+        (children_by_age, multicultural_households, summary_by_eupmyeondong)에서는
+        2011-2022 경상북도라, 한 시군구 코드가 해마다 두 시도에 속했다.
+    그리고 crosswalk_region 의 시도 대상 이름(강원특별자치도, 전북특별자치도)이
+    자료에 한 번도 안 나오는 이름이었다.
+    """
+    pair, by_sgg, names = {}, {}, set()
+    for name, df in sorted(d.items()):
+        if not {"year", "sido", "sido_code"} <= set(df.columns):
+            continue
+        cols = ["year", "sido", "sido_code"] + (["sigungu_code"] if "sigungu_code"
+                                               in df.columns else [])
+        sub = df[cols].drop_duplicates()
+        for r in sub.itertuples(index=False):
+            y, sd, sc = int(r.year), str(r.sido), _code(r.sido_code)
+            names.add(sd)
+            pair.setdefault(("name", y, sd), {}).setdefault(sc, set()).add(name)
+            if sc:
+                pair.setdefault(("code", y, sc), {}).setdefault(sd, set()).add(name)
+            if len(cols) == 4 and _code(r.sigungu_code):
+                by_sgg.setdefault((y, _code(r.sigungu_code)), {})                       .setdefault((sd, sc), set()).add(name)
+    bad = {k: {a: sorted(b) for a, b in v.items()} for k, v in pair.items() if len(v) > 1}
+    check(not bad, "labels: one sido_code per (year, sido) and one sido per (year, "
+          "sido_code) across every file",
+          "%d, e.g. %s" % (len(bad), list(bad.items())[:2]))
+    bad = {k: {a: sorted(b) for a, b in v.items()} for k, v in by_sgg.items() if len(v) > 1}
+    check(not bad, "labels: one province per (year, sigungu_code) across every file",
+          "%d, e.g. %s" % (len(bad), list(bad.items())[:2]))
+    cw = d.get("crosswalk_region.csv")
+    if cw is not None and names:
+        tgt = set(cw.loc[cw["level"].isin(["sido", "sigungu"]), "sido"].dropna())
+        stray = sorted(tgt - names)
+        check(not stray, "crosswalk_region: every target province name is one the data "
+              "uses", "not in any file: %s" % stray)
+
+
+def check_crosswalk_country(d):
+    """crosswalk_country 의 표준 이름 하나에 영문 하나, 영문 하나에 표준 이름 하나.
+
+    2026-09-26 (3차 대조): 대만 -> 대만(unchanged)과 타이완 -> 타이완 이 둘 다
+    Taiwan 으로 실려, 어느 파일에도 없는 「대만」이 따로 선 나라처럼 보였다.
+    """
+    cw = d.get("crosswalk_country.csv")
+    if cw is None:
+        return
+    x = cw.dropna(subset=["country_en"])
+    x = x[x["country_en"].astype(str).str.strip() != ""]
+    g = x.groupby("country_en")["country"].nunique()
+    bad = sorted(g[g > 1].index)
+    check(not bad, "crosswalk_country: one standard name per English name",
+          "%s" % {e: sorted(set(x.loc[x.country_en == e, "country"])) for e in bad[:3]})
 
 
 def check_region_totals(d):
@@ -1097,6 +1168,8 @@ def main():
     check_naturalization(d)
     check_visa_eras(d)
     check_one_label_per_code(d)
+    check_province_labels(d)
+    check_crosswalk_country(d)
     check_region_totals(d)
     check_diaspora_labels(d)
     check_published_residuals(d)

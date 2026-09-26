@@ -107,6 +107,10 @@ COUNTRY_CANONICAL = {
     "러시아": "러시아(연방)",   # 2008 district table and the 2010 stay table use the short form
     "벨로루시": "벨라루스",     # newer official spelling
     "슬로바크": "슬로바키아",   # 2017 used 슬로바키아; others 슬로바크
+    # Taiwan: every table prints 타이완. 대만 is kept in COUNTRY_REGION from an earlier
+    # map; without this line crosswalk_country listed it as its own 'unchanged'
+    # nationality that no file carries (2026-09-26, 3차 대조).
+    "대만": "타이완",
     "마케도니아": "북마케도니아", # official rename 2019
     "스와질란드": "에스와티니",  # official rename 2018
     # Zaire -> DR Congo (renamed 1997). The yearbook keeps the legacy code and
@@ -1132,6 +1136,16 @@ SIDO_ALIAS = {
     "경기": "경기도", "충북": "충청북도", "충남": "충청남도",
     "경북": "경상북도", "경남": "경상남도", "전남": "전라남도",
 }
+# 배포본이 싣는 시도 이름. SIDO_ALIAS 는 경계 파일(2024 geojson)에 맞추려고 새 이름으로
+# 모으지만, 배포본은 강원도·전라북도를 개편 뒤에도 그 이름으로 싣는다(코드는 그 해의
+# 것: 42->51, 45->52). 01 과 05 의 SIDO_CANONICAL 이 자료를 이 이름으로 만들고,
+# crosswalks.region_crosswalk 가 이것으로 대상 이름을 적는다(2026-09-26 3차 대조:
+# 크로스워크가 자료에 한 번도 안 나오는 강원특별자치도·전북특별자치도를 대상으로 적었다).
+RELEASE_SIDO_NAME = {"강원특별자치도": "강원도", "전북특별자치도": "전라북도"}
+# 배포본의 세종 시군구 이름. 등록부 조회용 별칭(SGG_NAME_ALIAS)은 세종특별자치시로 모은다.
+RELEASE_SGG_NAME = {("세종특별자치시", "세종특별자치시"): "세종시"}
+
+
 def canon_sido(name: str) -> str:
     n = (name or "").strip()
     return SIDO_ALIAS.get(n, n)
@@ -1691,6 +1705,36 @@ def sigungu_code(year, sido, sigungu, release_grain=True):
     return r.code
 
 
+# 배포본이 쓰는 시도 이름 열일곱(강원도·전라북도는 개편 전 이름으로 고정).
+RELEASE_SIDO_NAMES = (
+    "서울특별시", "부산광역시", "대구광역시", "인천광역시", "광주광역시", "대전광역시",
+    "울산광역시", "세종특별자치시", "경기도", "강원도", "충청북도", "충청남도",
+    "전라북도", "전라남도", "경상북도", "경상남도", "제주특별자치도")
+
+
+def province_that_year(year, sido, sigungu):
+    """그 해 그 시군구가 실제로 속한 시도(배포본 이름).
+
+    시군구 파일은 한 시군구를 패널 내내 2024년의 시도 아래 둔다(군위군은 모든 해
+    대구광역시, 세종시는 2008년부터 세종특별자치시). 시도 파일은 그 해의 경계를
+    따른다(summary_by_sido 가 처음부터 그랬다). 둘을 잇는 것이 이 함수다. 그 해
+    시군구 코드의 앞 2자리가 가리키는 시도를 돌려준다: 2022년 군위군(47720)은
+    경상북도, 2011년 세종시(44730)는 충청남도. 코드를 못 풀면 이름을 그대로 둔다.
+    2026-09-26 (3차 대조): 시도 국적·자격 표가 이름으로 더해, 대구가 2008-2022년
+    군위군을 품고 경상북도가 잃었다(2015년 576명).
+    """
+    c = sigungu_code(year, sido, sigungu)
+    if not c:
+        return sido
+    own = sido_code(year, sido)
+    if own and own == c[:2]:
+        return sido
+    for name in RELEASE_SIDO_NAMES:
+        if sido_code(year, name) == c[:2]:
+            return name
+    return sido
+
+
 # ---- 읍면동: 그 해 경계 스냅샷 ---------------------------------------------
 _EMD_CACHE = {}
 _SEP2 = re.compile(r"[\s·.,・ㆍᆞ‧･]")
@@ -1867,9 +1911,11 @@ def add_code_columns(df, verbose_name=""):
     for k in set(sd_keys):
         sd_cache[k] = "" if not k[1] else (sido_code(*k) or "")
     sd_vals = [sd_cache[k] for k in sd_keys]
-    if sgg_vals is not None:
-        # 그 해 없던 시도 이름(2011년 세종특별자치시)은 시군구 코드 앞 2자리로 잇는다
-        sd_vals = [a or (b[:2] if b else "") for a, b in zip(sd_vals, sgg_vals)]
+    # 그 해 없던 시도(2008-2011년의 세종특별자치시)는 빈칸으로 둔다. 2026-09-26
+    # (3차 대조)까지는 시군구 코드 앞 2자리(44, 충청남도)로 이어서, 같은 해 같은
+    # 파일에서 44 가 「충청남도」와 「세종특별자치시」 두 이름을 가졌다. 시도 표
+    # (nationality_by_sido, visa_by_sido)는 이미 빈칸이었다. 시도 코드는 그 줄의
+    # 시도 이름이 그 해 가진 코드이고, 없으면 없다.
 
     cols = list(df.columns)
     df = df.assign(sido_code=sd_vals)

@@ -26,7 +26,8 @@ import json
 import os
 
 from kird import (CLEAN, COUNTRY_CANONICAL, COUNTRY_REGION, EMD_RENAME, OTHER_REGION,
-                  LANG_EN_KO, RELEASE_DATA, RELEASE_PARENT, SGG_LINEAGE,
+                  LANG_EN_KO, RELEASE_DATA, RELEASE_PARENT, RELEASE_SGG_NAME,
+                  RELEASE_SIDO_NAME, SGG_LINEAGE,
                   SGG_NAME_ALIAS, SGG_RENAME, SGG_SIDO_MOVE, SIDO_ALIAS,
                   SIDO_LINEAGE)
 
@@ -118,6 +119,14 @@ def region_crosswalk(data=None):
                      "general district folded into its city total in the release"])
     for (sd, emd), new in sorted(EMD_RENAME.items()):
         rows.append(["eupmyeondong", sd, emd, sd, new, "sub-district renamed"])
+    # 대상 칸(sido, name)은 배포본이 실제로 싣는 이름으로 적는다. SIDO_ALIAS 와
+    # SGG_NAME_ALIAS 는 경계 파일과 등록부 조회에 맞춘 새 이름(강원특별자치도,
+    # 전북특별자치도, 세종특별자치시)으로 모으는데, 자료는 강원도·전라북도·세종시를
+    # 쓴다. 원천 칸(source_sido, source_name)은 원자료 표기 그대로 둔다.
+    for r in rows:
+        r[3] = RELEASE_SIDO_NAME.get(r[3], r[3])
+        if r[0] in ("sigungu",):
+            r[4] = RELEASE_SGG_NAME.get((r[3], r[4]), r[4])
     for item in list(SIDO_LINEAGE) + list(SGG_LINEAGE):
         rows.append(["lineage", "", "", "", "", json.dumps(item, ensure_ascii=False)])
     _write(os.path.join(data, "crosswalk_region.csv"),

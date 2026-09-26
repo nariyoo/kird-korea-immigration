@@ -10,8 +10,9 @@
 
 체류외국인은 2011년부터 연감이 국적×체류자격 한 표로 싣는다. 2006-2010년은
 그런 표가 없어 등록 + 단기 + 거소신고를 합쳐 만들었지만, 그 다섯 해도 연감 2장의
-「체류외국인 현황」이 머리 총계를 찍어 두었으므로 그 값과 맞대 본다. 합성치가
-공표치보다 큰 만큼이 세 표의 겹침이다.
+「체류외국인 현황」이 머리 총계를 찍어 두었으므로 그 값과 맞대 본다. 세 표에는
+겹침이 없고, 머리 총계는 세 표 총계의 합과 사람 하나까지 같다(2006: 631,219 +
+249,542 + 29,388 = 910,149). 그래서 이 다섯 해도 같아야 통과한다.
 
 출력: 03_cleaned_data/published_total_check.csv
 """
@@ -155,19 +156,24 @@ def main():
         print()
     print("wrote", out)
 
-    # 2026-09-26 관문. 국적×체류자격 표를 그대로 읽는 해(등록 2006-, 체류 2011-)는
-    # 배포본 합이 인쇄 총계와 **같아야** 한다. 무국적·기타 줄을 버리던 동안은
-    # 해마다 106-337명 모자랐고, 그것을 「0.05% 안」이라고만 적었다. 2006-2010 체류는
-    # 세 표를 합친 값이라 겹침만큼 다르므로 보고만 한다.
-    direct = df[(df["year"] <= RELEASE_LAST_YEAR) & df["printed"].notna()
-                & ~((df["series"] == "staying") & df["year"].isin(list(HEADLINE_STAY)))]
+    # 2026-09-26 관문. 배포본 합이 인쇄 총계와 **같아야** 한다. 무국적·기타 줄을
+    # 버리던 동안은 해마다 106-337명 모자랐고, 그것을 「0.05% 안」이라고만 적었다.
+    # 2006-2010 체류(세 표를 합친 값)는 「겹침」이라는 가정으로 여기서 빠져 있었는데,
+    # 실제 차이는 반대 방향(합성치 < 공표치)이었고 거소신고 표의 기타 열을 버린
+    # 값과 해마다 같았다(3차 대조). 이제 그 다섯 해도 같아야 한다.
+    direct = df[(df["year"] <= RELEASE_LAST_YEAR) & df["printed"].notna()]
+    missing = df[(df["year"] <= RELEASE_LAST_YEAR) & df["printed"].isna()]
+    if len(missing):
+        print("FAIL: no printed total read for:",
+              ", ".join("%s %d" % (r["series"], r["year"]) for _, r in missing.iterrows()))
+        return 1
     off = direct[direct["released"] != direct["printed"]]
     if len(off):
         print("FAIL: released national total differs from the printed grand total:")
         print(off[["series", "year", "printed", "released"]].to_string(index=False))
         return 1
-    print("GATE OK: every directly read year equals the printed grand total "
-          "(%d series-years)" % len(direct))
+    print("GATE OK: every year, composed 2006-2010 staying included, equals the "
+          "printed grand total (%d series-years)" % len(direct))
     return 0
 
 

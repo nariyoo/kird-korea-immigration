@@ -347,7 +347,11 @@ def finalize_release():
     p_ca = os.path.join(DATA, "children_by_age.csv")
     d = read(p_ca)
     has_gu = set()
-    for (y, sd), grp in d.groupby(["year", "sido"]):
+    # Only the years the comment above describes. harmonize_district_labels later
+    # names 청원군's 2011-2014 rows 청주시 청원구, so a second pass of this step
+    # (resuming the pipeline at 09) read them as a gu of 청주시 and deleted the real
+    # 청주시 rows of those years, 76 of them (found 2026-09-26, 3차 대조).
+    for (y, sd), grp in d[pd.to_numeric(d["year"]) >= 2016].groupby(["year", "sido"]):
         for sgg in grp["sigungu"].unique():
             if " " in sgg and sgg.split(" ", 1)[1].endswith("구"):
                 has_gu.add((y, sd, sgg.split(" ", 1)[0]))
@@ -702,17 +706,27 @@ def harmonize_district_labels():
     kept together (the audit of 2026-09-26 found Bucheon missing from 2015 and
     2024). The code is already right, so the name is taken from the district files
     for that code and year; the rows themselves do not change.
+
+    2026-09-26 (3차 대조): the province columns (sido, sido_en, sido_code) follow the
+    same rule. The MOJ district files carry 군위군 under 대구광역시 in every year, its
+    province at the end of the panel, so the district series runs unbroken; the MOIS
+    files (children_by_age, multicultural_households, summary_by_eupmyeondong) had it
+    under 경상북도 for 2011-2022, so a join or filter on the province split one
+    district two ways. They now take the district files' province for that code and
+    year. sigungu_code stays the code in force that year (47720 to 2022).
     """
     sgg = read(os.path.join(DATA, "summary_by_sigungu.csv"))
     if "sigungu_code" not in sgg.columns:
         return
+    PCOLS = [c for c in ("sido", "sido_en", "sido_code") if c in sgg.columns]
     lab = (sgg.dropna(subset=["sigungu_code"])
-              .groupby(["year", "sigungu_code"])[["sigungu", "sigungu_en"]]
+              .groupby(["year", "sigungu_code"])[["sigungu", "sigungu_en"] + PCOLS]
               .agg(lambda v: sorted(set(v))))
-    amb = lab[lab["sigungu"].map(len) > 1]
+    amb = lab[(lab["sigungu"].map(len) > 1) | (lab["sido"].map(len) > 1)]
     if len(amb):
         raise SystemExit(f"summary_by_sigungu gives one code two names: {amb.head()}")
     name = {k: (r["sigungu"][0], r["sigungu_en"][0]) for k, r in lab.iterrows()}
+    prov = {k: tuple(r[c][0] for c in PCOLS) for k, r in lab.iterrows()}
     keys = {"summary_by_eupmyeondong.csv": ["year", "sido", "sigungu", "eupmyeondong"],
             "multicultural_households.csv": ["year", "sido", "sigungu", "eupmyeondong",
                                              "category"],
@@ -726,7 +740,20 @@ def harmonize_district_labels():
             continue
         new = [name.get((y, c)) for y, c in zip(d["year"], d["sigungu_code"])]
         m = [bool(n) and n[0] != s_ for n, s_ in zip(new, d["sigungu"])]
+        # the province the district files give that code in that year
+        pc = [c for c in PCOLS if c in d.columns]
+        newp = [prov.get((y, c)) for y, c in zip(d["year"], d["sigungu_code"])]
+        mp = [bool(n) and "sido" in pc and n[0] != s_ for n, s_ in zip(newp, d["sido"])]
+        if any(mp):
+            pchanged = sorted({(d.at[i, "sido"], newp[i][0]) for i in range(len(d)) if mp[i]})
+            for j, c in enumerate(PCOLS):
+                if c in d.columns:
+                    d.loc[mp, c] = [newp[i][j] for i in range(len(d)) if mp[i]]
+            print(f"  {os.path.basename(p)}: province of {sum(mp):,} rows set to the "
+                  f"district files' province, {pchanged}")
         if not any(m):
+            if any(mp):
+                write(d, p)
             continue
         changed = sorted({(d.at[i, "sigungu"], new[i][0]) for i in range(len(d)) if m[i]})
         d.loc[m, "sigungu"] = [new[i][0] for i in range(len(d)) if m[i]]
@@ -934,7 +961,13 @@ def build_lisa():
             for r in rows:
                 k = key_of(r.get("sido"), r.get("sigungu"))
                 a, b = cls.get((str(y), k)), clsf.get((str(y), k))
-                if a is not None and r.get("lisa") != a:
+                # A year this run did not classify is left as it is. Resuming the
+                # pipeline at 08 or 09 finds summary_by_sigungu already cut at the
+                # release year, and writing None here blanked the dashboard's 2025
+                # clusters (found 2026-09-26, 3차 대조).
+                if a is None:
+                    continue
+                if r.get("lisa") != a:
                     moved += 1
                 r["lisa"] = a
                 r["lisa_fdr"] = b
@@ -967,7 +1000,11 @@ def build_segregation():
     nat = pd.read_csv(os.path.join(DATA, "nationality_by_sigungu.csv"), encoding="utf-8-sig")
     seg = pd.read_csv(os.path.join(DATA, "segregation_by_nationality.csv"), encoding="utf-8-sig")
     reg = pd.read_csv(os.path.join(DATA, "region_segregation.csv"), encoding="utf-8-sig")
-    na = pd.read_csv(os.path.join(DATA, "national_annual.csv"), encoding="utf-8-sig")
+    # round_trip: the default float parser can move the last digit of the unrounded
+    # foreign_share_pct, so each pass of this step wrote a slightly different file
+    # and the release and deposit copies differed in the 16th digit (2026-09-26)
+    na = pd.read_csv(os.path.join(DATA, "national_annual.csv"), encoding="utf-8-sig",
+                     float_precision="round_trip")
 
     # 2026-09-26: the region of a nationality comes from kird.COUNTRY_REGION, the map
     # behind continent_H and crosswalk_country. It used to come from
@@ -1136,6 +1173,35 @@ def dictionary_facts(data):
     rs = rd("region_segregation.csv")
     F["region_other"] = format(int(rs.loc[(rs["year"] == last) & (rs["continent"] == "기타"),
                                           "total"].sum()), ",")
+    # 2026-09-26 (3차 대조): 기타 대륙에 무엇이 드는지, 국적 아닌 줄이 시군구 표에
+    # 어디 나오는지를 자료에서 읽는다. 사전이 「국적불명·국제연합·국제연합전문기구만」,
+    # 「시군구 표는 이 줄을 쓰지 않는다」고 적었는데 2014년 화성시에 무국적 1명이 있다.
+    from kird import COUNTRY_REGION, OTHER_REGION
+    nb = rd("nationality_by_sigungu.csv")
+    nb = nb[nb["n"] > 0]
+    oth = nb[nb["country"].map(lambda c: COUNTRY_REGION.get(c, OTHER_REGION)) == OTHER_REGION]
+    oth = oth[oth["year"].isin(set(rs["year"]))]
+    labs = oth.groupby("country")["n"].sum().sort_values(ascending=False).index
+    # no brackets round the years: check_dictionary_years reads a bracketed range as
+    # the file's own span
+    F["region_other_labels"] = "; ".join(
+        "%s in %s" % (c, years_text(oth.loc[oth["country"] == c, "year"].unique()))
+        for c in labs)
+    F["region_other_labels_ko"] = "; ".join(
+        "%s %s년" % (c, years_text(oth.loc[oth["country"] == c, "year"].unique())
+                     .replace(" and ", ", "))
+        for c in labs)
+    # 기타 is left out: in the 2008-2013 district tables it is the yearbook's residual
+    # of the nationalities it does not list, not the status table's 기타 line.
+    RES = ["무국적", "미등록국가", "미상", "한국"]
+    h = nb[nb["country"].isin(RES)].sort_values(["year", "sido", "sigungu"])
+    F["district_residual_en"] = ("; ".join(
+        "%s in %d, %s %s, %d %s" % (r.country, r.year, r.sido, r.sigungu, r.n,
+                                    "person" if r.n == 1 else "people")
+        for r in h.itertuples()) or "none")
+    F["district_residual_ko"] = ("; ".join(
+        "%s %d년 %s %s %d명" % (r.country, r.year, r.sido, r.sigungu, r.n)
+        for r in h.itertuples()) or "없음")
 
     dia = rd("diaspora_residence_by_sido.csv")
     k = dia[dia["country"] != "기타"].groupby("year")["country"].nunique()
@@ -1212,13 +1278,43 @@ def build_data_dictionary():
          "under renaming. The code follows the register even where the name column "
          "does not: 강원도 is 42 through 2022 and 51 from 2023, the year the register "
          "made it 강원특별자치도, and 전라북도 is 45 through 2023 and 52 from 2024 "
-         "(전북특별자치도), while sido/sido_en keep 강원도 and 전라북도 throughout. Blank "
-         "where the register has no province for that year.",
+         "(전북특별자치도), while sido/sido_en keep 강원도 and 전라북도 throughout. It is "
+         "always the code of the province named in sido, and blank where the register "
+         "has no such province that year. Two rules place a district in a province. "
+         "The district files (summary_by_sigungu, nationality_by_sigungu, "
+         "visa_by_sigungu, the sigungu scope of language_demand, ethnic_enclaves, "
+         "children_by_age, multicultural_households, summary_by_eupmyeondong) put every "
+         "district under the province it belongs to in 2024, in every year, so a "
+         "district keeps one sido and sigungu label across the panel: 군위군, which "
+         "moved from 경상북도 to 대구광역시 on 1 July 2023, carries sido 대구광역시 and "
+         "sido_code 27 in every year while its sigungu_code is the code of that year "
+         "(47720 through 2022, 27720 from 2023); 세종시 carries sido 세종특별자치시 from "
+         "2008, and for 2008-2011, before the province existed, its sido_code is blank. "
+         "The province files (summary_by_sido, nationality_by_sido, visa_by_sido, the "
+         "sido scope of language_demand, diaspora_residence_by_sido) count a district in "
+         "the province it belonged to that year, the first two digits of its "
+         "sigungu_code: 군위군 in 경상북도 through 2022, and 세종시 in 충청남도 through "
+         "2011 (there is no 세종특별자치시 row before 2012). To sum a district file to the "
+         "province files, group on year and the first two digits of sigungu_code, not "
+         "on sido.",
          "그 해 12월 31일 기준 공식 시도 코드 2자리(행정안전부 법정동코드). 이름과 무관한 "
          "시도 층 조인 키다. 이름 칸이 따르지 않는 곳에서도 코드는 대장을 따른다. 강원도는 "
          "2022년까지 42, 대장이 강원특별자치도로 바꾼 2023년부터 51이고, 전라북도는 "
          "2023년까지 45, 2024년부터 52(전북특별자치도)다. sido/sido_en 은 내내 강원도와 "
-         "전라북도로 적는다. 그 해 대장에 없는 시도는 공백."),
+         "전라북도로 적는다. 언제나 sido 칸이 적은 시도의 코드이고, 그 해 대장에 그 시도가 "
+         "없으면 공백이다. 시군구가 어느 시도에 드는지는 두 규칙을 따른다. 시군구 파일"
+         "(summary_by_sigungu, nationality_by_sigungu, visa_by_sigungu, language_demand 의 "
+         "sigungu 범위, ethnic_enclaves, children_by_age, multicultural_households, "
+         "summary_by_eupmyeondong)은 모든 해에 각 시군구를 2024년에 속한 시도 아래 둔다. "
+         "그래서 한 시군구는 패널 내내 시도·시군구 이름이 하나다. 2023년 7월 1일 경상북도에서 "
+         "대구광역시로 옮긴 군위군은 모든 해에 sido 대구광역시, sido_code 27 이고 "
+         "sigungu_code 는 그 해의 코드다(2022년까지 47720, 2023년부터 27720). 세종시는 "
+         "2008년부터 sido 세종특별자치시이고, 시도가 없던 2008-2011년의 sido_code 는 공백이다. "
+         "시도 파일(summary_by_sido, nationality_by_sido, visa_by_sido, language_demand 의 "
+         "sido 범위, diaspora_residence_by_sido)은 시군구를 그 해에 속했던 시도, 곧 "
+         "sigungu_code 앞 두 자리의 시도에 센다. 군위군은 2022년까지 경상북도, 세종시는 "
+         "2011년까지 충청남도에 들고, 2012년 전에는 세종특별자치시 행이 없다. 시군구 파일을 "
+         "시도 파일에 맞춰 더하려면 sido 가 아니라 연도와 sigungu_code 앞 두 자리로 묶는다."),
         (SIGUNGU_CODE_FILES, "sigungu_code", "string",
          "Official five-digit district code (행정안전부 법정동코드) in force on 31 December "
          "of that year: the language-neutral join key between the district and "
@@ -1384,14 +1480,16 @@ def build_data_dictionary():
          "and 미상 (Unknown) in %s, a single 기타 (Other) line in %s, when the "
          "yearbook prints no stateless line, and 한국 (Republic of Korea) in %s. They "
          "are carried so that each year adds "
-         "up to the yearbook's printed grand total; no index, crosswalk region or "
-         "district table uses them." % (F["stateless_years"], F["unreg_years"],
-                                        F["other_years"], F["korea_years"]),
+         "up to the yearbook's printed grand total. The district and province tables "
+         "come from the yearbook's district table, where the only such rows are: %s."
+         % (F["stateless_years"], F["unreg_years"], F["other_years"], F["korea_years"],
+            F["district_residual_en"]),
          "국적(한글+영문). 연보가 국적이 아닌 줄로 싣는 것도 함께 싣습니다: 무국적 "
          "(%s), 미등록국가·미상(%s), 무국적을 따로 싣지 않는 해의 기타 한 줄(%s), 한국(%s). 해마다 "
-         "연보가 인쇄한 총계와 맞도록 싣는 것이며, 어떤 지수나 권역, 시군구 표도 이 줄을 "
-         "쓰지 않습니다." % (F["stateless_years"], F["unreg_years"], F["other_years"],
-                              F["korea_years"])),
+         "연보가 인쇄한 총계와 맞도록 싣는 것입니다. 시군구·시도 표는 연보의 시군구 표에서 "
+         "오며, 거기 나오는 이런 줄은 다음뿐입니다: %s." % (F["stateless_years"],
+                              F["unreg_years"], F["other_years"], F["korea_years"],
+                              F["district_residual_ko"])),
         ("visa_by_nationality.csv", "visa_code", "string",
          "Visa/status-of-stay code, written without hyphens (E9, F4 = the source's "
          "E-9, F-4).", "체류자격(비자) 코드, 하이픈 없이 표기(E9, F4 = 원자료의 E-9, F-4)."),
@@ -1699,10 +1797,15 @@ def build_data_dictionary():
         ("nationality_by_sido.csv", "year / sido / sido_en / country / country_en / n",
          "mixed",
          "nationality_by_sigungu summed within the province, 2008-2024: registered "
-         "foreigners of that nationality in that province-year. Allocated basis "
+         "foreigners of that nationality in that province-year. A district counts in "
+         "the province it belonged to that year, the first two digits of its "
+         "sigungu_code (군위군 in 경상북도 through 2022, 세종시 in 충청남도 through "
+         "2011; see sido_code). Allocated basis "
          "(people the yearbook records without a district are absent), so province "
          "sums run slightly below the national tables.",
-         "nationality_by_sigungu 를 시도 안에서 더한 것(2008-2024). 시군구가 적히지 "
+         "nationality_by_sigungu 를 시도 안에서 더한 것(2008-2024). 시군구는 그 해 속했던 "
+         "시도, 곧 sigungu_code 앞 두 자리의 시도에 든다(군위군은 2022년까지 경상북도, "
+         "세종시는 2011년까지 충청남도; sido_code 참고). 시군구가 적히지 "
          "않은 사람이 빠지는 배분 기준이라 전국 표보다 조금 적다."),
         ("nationality_national.csv",
          "year / population / country / country_en / n", "mixed",
@@ -1716,10 +1819,11 @@ def build_data_dictionary():
          "(visa_by_nationality.country 참조). 해마다 두 기준 모두 연보가 인쇄한 총계와 "
          "같다(체류 기준은 2011년부터, 2006-2010은 세 표를 합친 값)."),
         ("visa_by_sido.csv", "year / sido / sido_en / visa_code / n", "mixed",
-         "visa_by_sigungu summed within the province, 2008-2024. Allocated basis, "
+         "visa_by_sigungu summed within the province, 2008-2024, a district counting "
+         "in the province it belonged to that year. Allocated basis, "
          "as nationality_by_sido.",
-         "visa_by_sigungu 를 시도 안에서 더한 것(2008-2024). 배분 기준은 "
-         "nationality_by_sido 와 같다."),
+         "visa_by_sigungu 를 시도 안에서 더한 것(2008-2024). 시군구는 그 해 속했던 시도에 "
+         "든다. 배분 기준은 nationality_by_sido 와 같다."),
         ("visa_national.csv",
          "year / population / visa_code / visa_label / visa_label_en / n", "mixed",
          "visa_by_nationality summed over country, 2006-2024: the published "
@@ -1751,17 +1855,18 @@ def build_data_dictionary():
          "National count of registered foreigners from that region: every nationality "
          "in nationality_by_sigungu, summed by the continent crosswalk_country assigns "
          "it (the same map continent_H uses), so it equals that sum exactly. 기타 "
-         "(Other) holds only the labels that name no country (국적불명, 국제연합, "
-         "국제연합전문기구): %s people in %d. Until the 2026-09-26 build the regions were "
+         "(Other) holds only the labels that name no country: %s; %s people in %d. "
+         "Until the 2026-09-26 build the regions were "
          "formed from segregation_by_nationality, which lists nationalities of 100 or "
          "more, and every smaller nationality fell into 기타 (2,483 people in 2024)."
-         % (F["region_other"], F["last"]),
+         % (F["region_other_labels"], F["region_other"], F["last"]),
          "그 권역의 전국 등록외국인 수. nationality_by_sigungu 의 모든 국적을 "
          "crosswalk_country 의 대륙(continent_H 와 같은 대응표)으로 더한 것이라 그 합과 "
-         "정확히 같다. 기타에는 나라가 아닌 이름(국적불명, 국제연합, 국제연합전문기구)만 "
-         "들어가며 %d년 %s명이다. 2026-09-26 빌드 전에는 권역을 "
+         "정확히 같다. 기타에는 나라가 아닌 이름만 들어간다: %s. "
+         "%d년 %s명이다. 2026-09-26 빌드 전에는 권역을 "
          "segregation_by_nationality(100명 이상 국적만 실음)에서 만들어, 그보다 작은 "
-         "국적이 모두 기타로 들어갔다(2024년 2,483명)." % (F["last"], F["region_other"])),
+         "국적이 모두 기타로 들어갔다(2024년 2,483명)."
+         % (F["region_other_labels_ko"], F["last"], F["region_other"])),
         ("region_segregation.csv", "dissimilarity_D", "float",
          "Index of dissimilarity (D) vs Koreans across districts.",
          "내국인 대비 비유사성 지수(D)."),
@@ -2274,6 +2379,35 @@ def audit_release():
 
 
 
+REGION_SEG_FIELDS = (("total", "total"), ("D", "dissimilarity_D"),
+                     ("isolation", "isolation"))
+
+
+def region_seg_mismatches(d, rs):
+    """indices.json 의 region_seg 가 region_segregation.csv 와 다른 칸의 목록.
+
+    배포본의 모든 (연도, 대륙) 쌍이 지표 파일에 있어야 하고, 세 칸이 모두 같아야
+    한다. reconcile_indices 가 옮긴 뒤 이것이 비어 있지 않으면 빌드를 멈춘다.
+    """
+    out = []
+    blk = d.get("region_seg", {})
+    for r in rs.itertuples():
+        y = str(int(r.year))
+        row = blk.get(y, {}).get(r.continent)
+        if row is None:
+            out.append((y, r.continent, "missing"))
+            continue
+        for a, b in REGION_SEG_FIELDS:
+            v = getattr(r, b)
+            if v != v:
+                continue
+            if a == "total":
+                v = int(v)
+            if row.get(a) != v:
+                out.append((y, r.continent, a, row.get(a), v))
+    return out
+
+
 def reconcile_indices():
     """기탁본과 화면이 같은 분리지수를 말하게 한다.
 
@@ -2325,7 +2459,10 @@ def reconcile_indices():
     print("  by_nationality: 기탁본 값으로 %d칸을 맞췄다" % moved
           + (", 기탁본에 없는 %d쌍은 그대로 두었다" % missing if missing else ""))
 
-    # --- 대륙별 D / isolation ---
+    # --- 대륙별 total / D / isolation ---
+    # 2026-09-26 (3차 대조): total 도 옮긴다. D 와 isolation 만 옮기던 동안, 2차에서
+    # 대륙 총계를 고친 뒤에도 화면(h_map.json regSeg)은 고친 지수에 옛 인구를 짝지어
+    # 실었다(2014-2024 118쌍 중 101쌍, 2024년 합 1,479,103 대 1,485,285).
     rp = os.path.join(DATA, "region_segregation.csv")
     if os.path.exists(rp):
         rs = pd.read_csv(rp)
@@ -2336,13 +2473,19 @@ def reconcile_indices():
                 r = relr.get((y, cont))
                 if r is None:
                     continue
-                for a, b in (("D", "dissimilarity_D"), ("isolation", "isolation")):
+                for a, b in REGION_SEG_FIELDS:
                     v = num(getattr(r, b, None))
                     if v is not None:
+                        if a == "total":
+                            v = int(v)
                         if row.get(a) != v:
                             rmoved += 1
                         row[a] = v
         print("  region_seg: %d칸을 맞췄다" % rmoved)
+        bad = region_seg_mismatches(d, rs)
+        if bad:
+            raise SystemExit("reconcile_indices: indices.json region_seg still differs "
+                             "from region_segregation.csv: %s" % bad[:10])
 
     # --- 관측 국적 수 (2026-09-26) ---
     # recount_observed_nationalities 가 이름을 합친 뒤 배포본에서 다시 센다. 그
@@ -2389,6 +2532,45 @@ def reconcile_indices():
     print("  theil_segregation_H: %d개 해를 맞췄다" % tmoved)
 
 
+def tidy_integer_columns():
+    """Write whole-number columns without a trailing .0.
+
+    pandas turns an integer column with a blank into float, and writing it back puts
+    .0 on every value: national_annual carried broad_total as 891341.0 and
+    summary_by_sido carried n_nationalities_observed as 19.0, while the deposit
+    copies (10_stage_deposit.tidy_types) carried 891341 and 19, so the release folder
+    and the deposit differed in these columns (2026-09-26, 3차 대조). The rule is the
+    deposit's: a column whose every non-blank value is a whole number is written as
+    one. Nothing else changes.
+    """
+    import csv as _csv
+    import re as _re
+    whole = _re.compile(r"^-?\d+(\.0+)?$")
+    print("")
+    print("whole-number columns written without .0:")
+    for p in files():
+        raw = open(p, encoding="utf-8-sig", newline="").read()
+        nl = "\r\n" if "\r\n" in raw[:4096] else "\n"
+        rows = list(_csv.reader(raw.splitlines()))
+        if len(rows) < 2:
+            continue
+        head, body = rows[0], rows[1:]
+        fix = []
+        for j, name in enumerate(head):
+            vals = [r[j] for r in body if j < len(r) and r[j] != ""]
+            if vals and any("." in v for v in vals) and all(whole.match(v) for v in vals):
+                fix.append(j)
+        if not fix:
+            continue
+        for r in body:
+            for j in fix:
+                if j < len(r) and r[j] != "":
+                    r[j] = r[j].split(".")[0]
+        with open(p, "w", encoding="utf-8-sig", newline="") as fh:
+            _csv.writer(fh, lineterminator=nl).writerows([head] + body)
+        print("  %s: %s" % (os.path.basename(p), ", ".join(head[j] for j in fix)))
+
+
 if __name__ == "__main__":
     finalize_release()
     build_lisa()
@@ -2400,6 +2582,7 @@ if __name__ == "__main__":
     cut_release_years()
     from crosswalks import build_all as build_crosswalks
     build_crosswalks(DATA)
+    tidy_integer_columns()
     build_data_dictionary()
     export_stata()
     audit_release()

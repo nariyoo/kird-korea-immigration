@@ -700,7 +700,10 @@ def parse_sojourn(year, path):
     if header_row is None:
         return pd.DataFrame(columns=["year", "country", "visa_code", "visa_label", "n"])
 
-    # Map columns -> country (skip the 합계/Total column)
+    # Map columns -> country (skip the 합계/Total column).
+    # 2026-09-26 (3차 대조): 등록·단기 표의 로더와 같이 VISA_DROP 을 쓴다. 이 표의
+    # 마지막 열 「기타」(2006-2010년 386/540/687/889/941명)를 DROP_NAMES 로 버려서,
+    # 세 표를 합친 2006-2010 체류 총계가 연보 2장의 머리 총계보다 꼭 그만큼 모자랐다.
     col_country = {}
     for j, v in enumerate(df.iloc[header_row].tolist()):
         if not isinstance(v, str):
@@ -708,7 +711,7 @@ def parse_sojourn(year, path):
         if norm(v) in TOTLAB:
             continue
         c = clean_country(v)
-        if c and c not in DROP_NAMES and re.search(r"[가-힣]", c):
+        if c and c not in VISA_DROP and re.search(r"[가-힣]", c):
             col_country[j] = c
 
     # Grand-total row = first row after header whose label cell is a total AND

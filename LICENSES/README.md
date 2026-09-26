@@ -1,15 +1,18 @@
 # Licensing
 
-This repository carries two sets of terms, because it holds two kinds of thing.
+This repository carries three sets of terms, because it holds three kinds of thing.
 
 | What | Terms | Text |
 |---|---|---|
 | Code in `code/` | MIT | [`../LICENSE`](../LICENSE) |
 | `README.md`, `code/README.md`, `data_dictionary.csv`, `figures/` | CC BY 4.0 | [`CC-BY-4.0.txt`](CC-BY-4.0.txt) |
+| The Pretendard typeface in `code/fonts/`, which the figure scripts draw in | SIL Open Font License 1.1 | [`../code/fonts/OFL.txt`](../code/fonts/OFL.txt) |
 
 CC BY 4.0 matches the terms the released tables carry on openICPSR, so the
 documentation travels with the deposit under one license. Creative Commons
 licenses are not written for software, which is why the pipeline itself is MIT.
+The typeface is bundled unmodified so the figures build the same on any machine;
+the OFL lets it be redistributed with software but not sold on its own.
 
 ## The released tables are not here
 

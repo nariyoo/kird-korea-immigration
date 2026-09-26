@@ -21,7 +21,7 @@ import sys
 
 import pandas as pd
 
-from kird import add_code_columns
+from kird import add_code_columns, province_that_year
 from kird import SIDO_EN
 from kird import ROOT
 from kird import COUNTRY_LANGUAGE
@@ -342,7 +342,16 @@ def export_dataset():
         #       records without a district are absent). The national tables are
         #       exact projections of the country x visa table, which is on the
         #       published national basis.
-        sido_nat = (region.groupby(["year", "sido", "country"], as_index=False)["n"]
+        # 2026-09-26 (3차 대조): the province is the one the district belonged to that
+        # year (summary_by_sido's boundaries), not the district files' continuous
+        # label. Summing on the label put 군위군 into 대구광역시 for 2008-2022 (576
+        # people in 2015, missing from 경상북도) and made 세종특별자치시 a province
+        # for 2008-2011, before it existed.
+        _pv = {k: province_that_year(*k) for k in
+               set(zip(region["year"], region["sido"], region["sigungu"]))}
+        region_p = region.assign(sido=[_pv[k] for k in zip(region["year"], region["sido"],
+                                                            region["sigungu"])])
+        sido_nat = (region_p.groupby(["year", "sido", "country"], as_index=False)["n"]
                           .sum().sort_values(["year", "sido", "country"]))
         w("nationality_by_sido.csv", add_en(sido_nat.copy(), ["sido", "country"]))
         nat_nat = (visa.groupby(["year", "population", "country"], as_index=False)["n"]
@@ -373,7 +382,12 @@ def export_dataset():
             vrdf = vrdf.sort_values(["year", "sido", "sigungu", "visa_code"])
             w("foreign_residents_by_sigungu_visa.csv", add_en(vrdf, ["sido", "sigungu"]))
             # v1.2.0: the same table with the province treated as the unit
-            sido_visa = (vrdf.groupby(["year", "sido", "visa_code"], as_index=False)["n"]
+            # the province of that year, as for nationality_by_sido above
+            _pv2 = {k: province_that_year(*k) for k in
+                    set(zip(vrdf["year"], vrdf["sido"], vrdf["sigungu"]))}
+            vrdf_p = vrdf.assign(sido=[_pv2[k] for k in zip(vrdf["year"], vrdf["sido"],
+                                                             vrdf["sigungu"])])
+            sido_visa = (vrdf_p.groupby(["year", "sido", "visa_code"], as_index=False)["n"]
                              .sum().sort_values(["year", "sido", "visa_code"]))
             w("visa_by_sido.csv", add_en(sido_visa, ["sido"]))
 
@@ -831,16 +845,20 @@ def export_language_demand():
                                          "country_language_shares.json"), encoding="utf-8"))
     AGG = {"총계", "총합계", "소계", "계"}
     for y in sorted(region_doc, key=int):
+        # the province of that year (see nationality_by_sido): 군위군 counts in
+        # 경상북도 through 2022 and 세종시 in 충청남도 through 2011
+        prov_nat = {}
         for sido, sigs in region_doc[y].items():
             if sido in AGG:
                 continue
-            nat = {}
             for sg, cs in sigs.items():
                 if sg in AGG:
                     continue
+                nat = prov_nat.setdefault(province_that_year(int(y), sido, sg), {})
                 for c, v in cs.items():
                     if v and c not in AGG:
                         nat[c] = nat.get(c, 0) + v
+        for sido, nat in sorted(prov_nat.items()):
             by_lang = {}
             for c, n in nat.items():
                 if c in shares:

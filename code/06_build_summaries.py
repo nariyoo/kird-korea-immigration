@@ -250,7 +250,7 @@ def summary_sigungu_and_sido():
                 row += [round(r.get(k, "")) if isinstance(r.get(k), float) else r.get(k, "") for k in CNT]
                 row += [pct(r.get("합계", 0), tp) if (r.get("합계") and tp) else ""]   # broad_share = broad/total_pop
                 row += derived(r)
-                row += [("TRUE" if apportioned else "FALSE") if r else ""]
+                row += [("True" if apportioned else "False") if r else ""]   # the dictionary's spelling; 10 wrote True/False and this wrote TRUE/FALSE until 2026-09-26
                 row += [u.get(IDX_SRC.get(k, k), "") for k in IDX]
                 rows.append(row)
         write("summary_by_sigungu.csv", head, rows)

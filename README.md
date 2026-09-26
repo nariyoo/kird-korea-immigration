@@ -31,6 +31,11 @@ The tables are on openICPSR at [doi.org/10.3886/E249944V1](https://doi.org/10.38
 as CSV and as labeled Stata `.dta`, with `data_dictionary.csv` and a README that documents every
 column in English and Korean. This repository holds the code and the documentation; neither the
 released tables nor the raw ministry workbooks are in it, so start from the deposit.
+Phases 1 and 2 of the pipeline build the 26 tables; phase 3 (`10_stage_deposit.py`) stages
+the deposit, which adds the two refugee tables and, on the four summary files, the top-50
+nationality, visa and language counts as wide columns (`nat_*`, `visa_*`, `lang_*`, `mc_*`,
+`n_enclaves`, and `settlement_type` on `national_annual`). The `data_dictionary.csv` here documents the 26 tables; the deposit's copy adds
+the rows for the wide columns and the refugee tables.
 
 ## 2. Released tables
 
@@ -47,24 +52,24 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `summary_by_sigungu.csv` | a district and a year | 2008-2024 | 4,240 |
 | `summary_by_eupmyeondong.csv` | a sub-district and a year | 2014-2024 | 38,619 |
 | `nationality_by_sigungu.csv` | a district, nationality and year | 2008-2024 | 173,723 |
-| `nationality_by_sido.csv` | a province, nationality and year | 2008-2024 | 24,885 |
-| `nationality_national.csv` | a population, nationality and year | 2006-2024 | 7,236 |
+| `nationality_by_sido.csv` | a province, nationality and year | 2008-2024 | 24,807 |
+| `nationality_national.csv` | a population, nationality and year | 2006-2024 | 7,283 |
 | `visa_by_sigungu.csv` | a district, visa status and year | 2008-2024 | 75,989 |
-| `visa_by_sido.csv` | a province, visa status and year | 2008-2024 | 7,083 |
+| `visa_by_sido.csv` | a province, visa status and year | 2008-2024 | 7,018 |
 | `visa_national.csv` | a population, visa status and year | 2006-2024 | 1,241 |
-| `visa_by_nationality.csv` | a population, nationality, visa and year | 2006-2024 | 236,640 |
+| `visa_by_nationality.csv` | a population, nationality, visa and year | 2006-2024 | 238,025 |
 | `age_sex_national.csv` | a population, nationality, age band, sex and year | registered 2009-2024, stay 2011-2024 | 155,903 |
-| `language_demand.csv` | a language, scope, place and year | 2006-2024 | 208,851 |
+| `language_demand.csv` | a language, scope, place and year | 2006-2024 | 208,622 |
 | `ethnic_enclaves.csv` | an enclave district, nationality and year | 2008-2024 | 739 |
 | `segregation_by_nationality.csv` | a nationality and year | 2014-2024 | 1,062 |
 | `region_segregation.csv` | a continent of origin and year | 2014-2024 | 118 |
 | `naturalization_annual.csv` | a year and processing route | 2011-2024 | 140 |
-| `naturalization_by_country.csv` | a year, former nationality and route | 2009-2024 | 15,636 |
-| `naturalization_by_age.csv` | a year, age band and route | 2009-2024 | 1,612 |
+| `naturalization_by_country.csv` | a year, former nationality and route | 2011-2024 | 13,556 |
+| `naturalization_by_age.csv` | a year, age band and route | 2011-2024 | 1,452 |
 | `children_by_age.csv` | a district, single year of age and year | 2011-2024 | 63,309 |
 | `multicultural_households.csv` | a sub-district, household category and year | 2016-2024 | 299,791 |
 | `diaspora_residence_by_sido.csv` | a province, nationality and year (F-4 residence reports) | 2008-2024 | 6,168 |
-| `crosswalk_country.csv` | a source nationality label | 2006-2024 | 225 |
+| `crosswalk_country.csv` | a source nationality label | 2006-2024 | 227 |
 | `crosswalk_region.csv` | a source place name or boundary change | fixed | 64 |
 | `crosswalk_visa.csv` | a source status code | 2006-2024 | 227 |
 | `language_weights.csv` | a nationality and first language | fixed | 4,614 |

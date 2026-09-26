@@ -100,6 +100,12 @@ def inventory():
         check(set(extra) <= {"refugee_by_nationality.csv",
                              "refugee_language_demand.csv"},
               "스테이징에만 있는 표는 난민 표 둘뿐", extra)
+        bad = release_vs_deposit(rel, STG)
+        check(not bad, "릴리스의 표와 기탁본의 같은 칸이 값까지 같다(기탁본은 wide 열만 더한다)",
+              bad[:4])
+        bad = dictionary_vs_deposit(os.path.join(ROOT, "data_dictionary.csv"),
+                                    os.path.join(STG, "data_dictionary.csv"))
+        check(not bad, "릴리스 사전과 기탁본 사전이 같은 (파일, 변수) 행에서 같다", bad[:4])
     check(docs == ["LICENSE.txt", "README.md"], "문서는 README 와 LICENSE 뿐", docs)
     check(os.path.exists(os.path.join(STG, "data_dictionary.csv")),
           "data_dictionary.csv 있음")
@@ -152,6 +158,76 @@ def parity():
 
 
 # ------------------------------------------------ 3. README 의 자료 의존 주장
+WIDE_PREFIX = ("nat_", "visa_", "lang_", "mc_")
+WIDE_EXTRA = {"n_enclaves", "settlement_type"}
+
+
+def release_vs_deposit(rel, stg):
+    """릴리스 data/ 의 표와 기탁본의 같은 표가 같은 칸에서 값까지 같은가.
+
+    2026-09-26 (3차 대조): 두 폴더의 요약 파일 넷이 같은 칸에서 달랐다(릴리스의
+    broad_apportioned 는 TRUE/FALSE, 기탁본은 True/False; national_annual 의 광의
+    수는 891341.0 대 891341; summary_by_sido 의 n_nationalities_observed 는 19.0 대 19).
+    세부 표는 바이트까지, 요약 파일은 릴리스의 모든 칸이 같아야 하고 기탁본이 더한
+    칸은 wide 열과 n_enclaves, settlement_type 뿐이어야 한다.
+    """
+    import filecmp
+    out = []
+    for f in sorted(x for x in os.listdir(rel) if x.endswith(".csv")):
+        cands = [os.path.join(stg, "data", "detailed_data", f), os.path.join(stg, "data", f)]
+        q = next((c for c in cands if os.path.exists(c)), None)
+        if q is None:
+            continue
+        if "detailed_data" in q:
+            if not filecmp.cmp(os.path.join(rel, f), q, shallow=False):
+                out.append("%s: detail table differs" % f)
+            continue
+        a = pd.read_csv(os.path.join(rel, f), encoding="utf-8-sig", dtype=str,
+                        keep_default_na=False)
+        b = pd.read_csv(q, encoding="utf-8-sig", dtype=str, keep_default_na=False)
+        miss = [c for c in a.columns if c not in b.columns]
+        more = [c for c in b.columns if c not in a.columns
+                and not c.startswith(WIDE_PREFIX) and c not in WIDE_EXTRA]
+        diff = [c for c in a.columns if c in b.columns and len(a) == len(b)
+                and not (a[c].values == b[c].values).all()]
+        if len(a) != len(b) or miss or more or diff:
+            out.append("%s: rows %d/%d, missing %s, unexpected %s, differ %s"
+                       % (f, len(a), len(b), miss, more, diff))
+    return out
+
+
+def dictionary_vs_deposit(p_rel, p_stg):
+    if not (os.path.exists(p_rel) and os.path.exists(p_stg)):
+        return []
+    a = pd.read_csv(p_rel, encoding="utf-8-sig", dtype=str, keep_default_na=False)
+    b = pd.read_csv(p_stg, encoding="utf-8-sig", dtype=str, keep_default_na=False)
+    m = a.merge(b, on=["file", "variable"], how="left", suffixes=("", "_d"))
+    out = ["%s.%s: not in the deposit dictionary" % (r.file, r.variable)
+           for r in m[m["type_d"].isna()].itertuples()]
+    for c in ("type", "description_en", "description_ko"):
+        d = m[m["type_d"].notna() & (m[c] != m[c + "_d"])]
+        out += ["%s.%s: %s differs" % (r.file, r.variable, c) for r in d.itertuples()]
+    return out
+
+
+def readme_numbers():
+    """README 들이 인용하는 수가 기탁 파일에서 다시 얻는 값과 같은가(readme_facts).
+
+    2026-09-26 (3차 대조): F-6·F-2·F-4 수, 2006-2014 전국 총계, 공개 저장소의 파일 표
+    (귀화 패널 2009-2024, 15,636행)가 2차 고침 전 빌드의 값으로 남아 있었다.
+    """
+    print("== 3a. README 의 인용 수 (readme_facts --check)")
+    import readme_facts
+    buf = io.StringIO()
+    from contextlib import redirect_stdout
+    with redirect_stdout(buf):
+        rc = readme_facts.main(["--check"])
+    out = buf.getvalue()
+    for line in out.strip().splitlines():
+        print("   " + line)
+    check(rc == 0, "README 의 인용 수가 기탁 파일과 같다", out[-400:] if rc else "")
+
+
 def readme_claims():
     print("== 3. README 의 자료 의존 주장")
     txt = io.open(os.path.join(STG, "README.md"), encoding="utf-8").read()
@@ -232,39 +308,25 @@ def readme_claims():
     check({(int(y), t): int(v) for (y, t), v in over.items()} == WANT,
           "연간표 대비 유형별 차이가 모두 다섯 이하다", dict(over))
 
-    # 세종 wide 예외: 그 해들의 차이가 세종 값과 정확히 같다
+    # wide 층 합. 2026-09-26 (3차 대조)까지는 시도 wide 열을 시도 이름으로 더해
+    # 2008-2011 세종 몫이 빠지고(시도 행이 없다) 군위군이 2022년까지 대구에 들어갔다.
+    # 이제 시군구는 그 해 속한 시도(sigungu_code 앞 두 자리)에 든다. 해마다, 시도마다
+    # 사람 하나까지 같아야 한다.
     sd = pd.read_csv(D + "summary_by_sido.csv", encoding="utf-8-sig",
                      low_memory=False)
     wide = [c for c in s.columns if c.startswith(("nat_", "visa_", "lang_"))
             and c in sd.columns]
-    lo_ = s.groupby("year")[wide].sum()
-    hi_ = sd.groupby("year")[wide].sum()
-    sj = s[s.sido == "세종특별자치시"].groupby("year")[wide].sum()
-    leak = (lo_ - hi_ - sj.reindex(lo_.index).fillna(0) *
-            (lo_.index.to_series() < 2012).values[:, None]).abs()
-    # 2012년부터는 차이가 0, 그 전에는 세종 몫과 정확히 일치해야 한다
-    ok = True
-    for y in lo_.index:
-        gap_y = (lo_.loc[y] - hi_.loc[y])
-        want = sj.loc[y] if (y < 2012 and y in sj.index) else 0
-        if not np.allclose(gap_y.fillna(0), (want if not np.isscalar(want)
-                                             else pd.Series(0, index=gap_y.index)).fillna(0)
-                           if not np.isscalar(want) else 0, atol=0.5):
-            if np.isscalar(want) or not np.allclose(gap_y.fillna(0),
-                                                    want.reindex(gap_y.index).fillna(0), atol=0.5):
-                ok = False
-    check(ok, "wide 층 합: 2012+ 정확, 2008-2011 차이 = 세종 몫")
-
-    # 2026-09-25: README 가 「52 columns in 2008, 54 in 2009, 55 in 2010, 56 in
-    # 2011」이라 적었는데 실제로는 53/55/56/57 이었다. 문장의 네 수를 자료에서 센다.
-    n_short = {}
-    for y in (2008, 2009, 2010, 2011):
-        g = (lo_.loc[y] - hi_.loc[y]).fillna(0).abs() if y in lo_.index else None
-        n_short[y] = int((g > 0.5).sum()) if g is not None else None
-    m = rx.search(r"(\d+)\s+columns in 2008, (\d+) in 2009, (\d+) in 2010, (\d+) in 2011", txt)
-    said = tuple(int(v) for v in m.groups()) if m else None
-    check(said == tuple(n_short[y] for y in (2008, 2009, 2010, 2011)),
-          "README 의 세종 wide 열 수가 자료와 같다", (said, n_short))
+    cc = lambda v: "" if v != v else str(v).split(".")[0]
+    lo_ = (s.assign(_p=s["sigungu_code"].map(lambda v: cc(v)[:2]))
+            .groupby(["year", "_p"])[wide].sum())
+    hi_ = (sd.assign(_p=sd["sido_code"].map(lambda v: cc(v).zfill(2)))
+             .groupby(["year", "_p"])[wide].sum())
+    j_ = lo_.join(hi_, lsuffix="_lo", rsuffix="_hi", how="outer").fillna(0)
+    gap_ = max(float((j_[c + "_lo"] - j_[c + "_hi"]).abs().max()) for c in wide)
+    check(gap_ < 0.5, "wide 층 합: 해마다 시도마다 시군구 합(그 해의 시도) = 시도",
+          "최대 차이 %s" % gap_)
+    check(not rx.search(r"short by exactly the 세종", txt),
+          "README 에 옛 세종 wide 예외 문장이 남아 있지 않다")
 
     # 2026-09-25: README 가 다문화 말단이 소계보다 모자란 읍면동을 「about 1,400」
     # 이라 적었는데 2024 년에 2,143 이었다. 문장의 2024 값을 자료에서 센다.
@@ -410,6 +472,7 @@ def main():
     inventory()
     parity()
     readme_claims()
+    readme_numbers()
     against_published()
     refugee_language()
     as_a_user()

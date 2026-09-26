@@ -490,17 +490,33 @@ def attach_breakdowns():
 
         # ===== summary_by_sido (aggregate sigungu-level breakdowns up to sido) =====
         K2 = ["year", "sido"]
-        s2 = pd.read_csv(f"{SRC}/summary_by_sido.csv", encoding="utf-8-sig")
+        s2 = pd.read_csv(f"{SRC}/summary_by_sido.csv", encoding="utf-8-sig",
+                         dtype={"sido_code": str})
         base_n2 = len(s2)
         orig2 = list(s2.columns)
-        nat2 = nat.groupby(K2 + ["country", "country_en"], as_index=False)["n"].sum()
-        visa2 = visa.groupby(K2 + ["visa_code"], as_index=False)["n"].sum()
-        lang2 = lang_sg.groupby(K2 + ["language", "language_en"], as_index=False)["count"].sum()
+
+        # 2026-09-26 (3차 대조): a district's values go to the province it belonged to
+        # that year, the first two digits of its sigungu_code, which is the boundary
+        # summary_by_sido's own counts use. Summing on the district files' continuous
+        # label put 군위군 into 대구광역시 for 2008-2022, so the row's nat_* columns
+        # held 576 people (2015) its registered_foreigners did not, and left 세종시
+        # 2008-2011 with no row to land on.
+        code2name = {(int(y), str(c)): n for y, c, n in s2[["year", "sido_code", "sido"]].values
+                     if isinstance(c, str) and c}
+
+        def to_prov(df):
+            pre = df["sigungu_code"].map(lambda v: "" if v != v else str(v).split(".")[0][:2])
+            return df.assign(sido=[code2name.get((int(y), p_), sd)
+                                   for y, p_, sd in zip(df["year"], pre, df["sido"])])
+
+        nat2 = to_prov(nat).groupby(K2 + ["country", "country_en"], as_index=False)["n"].sum()
+        visa2 = to_prov(visa).groupby(K2 + ["visa_code"], as_index=False)["n"].sum()
+        lang2 = to_prov(lang_sg).groupby(K2 + ["language", "language_en"], as_index=False)["count"].sum()
         lr2 = []
         s2 = pivot_merge(s2, K2, nat2, "country", "n", "nat_", lr2, "nationality (summed to sido)", "country_en", keep=keep_nat)
         s2 = pivot_merge(s2, K2, visa2, "visa_code", "n", "visa_", lr2, "visa (summed to sido)", code_labels=code_labels, keep=keep_visa)
         s2 = pivot_merge(s2, K2, lang2, "language", "count", "lang_", lr2, "language demand (summed to sido)", "language_en", keep=keep_lang)
-        nenc2 = enc.groupby(K2).size().rename("n_enclaves").reset_index()
+        nenc2 = to_prov(enc).groupby(K2).size().rename("n_enclaves").reset_index()
         s2 = s2.merge(nenc2, on=K2, how="left"); s2["n_enclaves"] = s2["n_enclaves"].fillna(0).astype(int)
         lr2.append(("n_enclaves", ("Number of enclave (district x nationality) cases in the province that year.",
                                    "그 해 그 시도의 enclave(시군구x국적) 건수.")))
@@ -519,7 +535,8 @@ def attach_breakdowns():
         wide2 = [c for c in s2.columns
                  if c not in orig2 and c != "n_enclaves" and c in s.columns]
         have = set(map(tuple, s2[K2].values.tolist()))
-        orphan = s[[not (r in have) for r in map(tuple, s[K2].values.tolist())]]
+        sp = to_prov(s)
+        orphan = sp[[not (r in have) for r in map(tuple, sp[K2].values.tolist())]]
         lo = s.groupby("year")[wide2].sum()
         hi = s2.groupby("year")[wide2].sum()
         off = (orphan.groupby("year")[wide2].sum()
@@ -564,7 +581,8 @@ def attach_breakdowns():
         # ===== national_annual — full national summary at data/ top =====
         na_src = os.path.join(SRC, "national_annual.csv")
         if os.path.exists(na_src):
-            na = pd.read_csv(na_src, encoding="utf-8-sig")  # pristine base (indices + counts)
+            na = pd.read_csv(na_src, encoding="utf-8-sig",   # pristine base (indices + counts)
+                             float_precision="round_trip")  # keeps the release's digits
             orig_na = list(na.columns)
             lrn = []
             COMP = ["broad_total", "non_naturalized", "workers", "marriage_migrants", "students",
@@ -785,11 +803,17 @@ def final_qc():
             bad = j[j["pct"].abs()>=0.5].sort_values("pct", key=abs, ascending=False).head(6)
             print("       worst rows:\n" + bad[["low","high","gap","pct"]].to_string())
 
+    # a district belongs to the province of that year, the first two digits of its
+    # sigungu_code (군위군 in 경상북도 through 2022, 세종시 in 충청남도 through 2011);
+    # the district files carry the 2024 province name, so grouping on sido is wrong
+    _c = lambda v: "" if v != v else str(v).split(".")[0]
+    sgg_p = sgg.assign(_prov=sgg["sigungu_code"].map(lambda v: _c(v)[:2]))
+    sido_p = sido.assign(_prov=sido["sido_code"].map(lambda v: _c(v).zfill(2)))
     for fam, cols in fams.items():
         print(f"-- family: {fam} ({len(cols)} cols) --")
         cmp_levels(sgg,  nat,  cols, "sigungu", "national")
         cmp_levels(sido, nat,  cols, "sido",    "national")
-        cmp_levels(sgg,  sido, cols, "sigungu-in-sido", "sido", by="sido")
+        cmp_levels(sgg_p, sido_p, cols, "sigungu-in-sido", "sido", by="_prov")
 
     print("\n-- broad categories --")
     for col in broad:
@@ -873,4 +897,9 @@ if __name__ == "__main__":
     attach_breakdowns()
     add_refugee_files()
     export_deposit_stata()
+    # 2026-09-26 (3차 대조): the numbers the three READMEs quote, and the public
+    # repository's file table, are rewritten from the staged files. They had been kept
+    # by hand and were a build behind. qc_deposit_staging checks the same with --check.
+    import readme_facts
+    readme_facts.main([])
     final_qc()

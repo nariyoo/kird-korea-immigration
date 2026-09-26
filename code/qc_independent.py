@@ -126,8 +126,15 @@ if col is None:
             col = cand
             break
 if col:
-    a = total_by(vg, ["year", "sido", "visa_code"], col)
-    b = total_by(vs, ["year", "sido", "visa_code"], col)
+    # 시도는 그 해 그 시군구가 속했던 곳, 곧 sigungu_code 앞 두 자리다. 시군구 파일은
+    # 2024년 시도 이름을 모든 해에 쓴다(군위군은 늘 대구광역시, 세종시는 2008년부터
+    # 세종특별자치시). 2026-09-26 (3차 대조).
+    for r in vg:
+        r["_p"] = (r.get("sigungu_code") or "").split(".")[0][:2]
+    for r in vs:
+        r["_p"] = (r.get("sido_code") or "").split(".")[0].zfill(2)
+    a = total_by(vg, ["year", "_p", "visa_code"], col)
+    b = total_by(vs, ["year", "_p", "visa_code"], col)
     both = set(a) & set(b)
     bad = [(k, a[k], b[k]) for k in both if abs(a[k] - b[k]) > 0.5]
     print("자격별 시군구합 대 시도값: 견준 짝 %d · 어긋난 것 %d"
