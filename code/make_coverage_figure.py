@@ -37,9 +37,11 @@ LAYOUT = [
                       ("naturalization_by_age", "MOJ")]),
 ]
 
-# 색과 글자는 두 논문의 그림이 함께 쓰는 06_paper/_tools/figstyle.py 에서 온다.
+# 색과 글자는 이 폴더의 figstyle.py 에서 온다(논문 그림의 06_paper/_tools/figstyle.py
+# 를 그대로 옮겨 둔 사본). 2026-09-25 까지는 sys.path 로 06_paper 를 가리켜서,
+# 공개 저장소를 받은 사람은 이 단계에서 ModuleNotFoundError 로 멈췄다.
 # MUTE(옅은 회색 글자)는 없앴다. 그림 안의 회색 글자는 인쇄에서 사라진다.
-sys.path.insert(0, os.path.join(os.path.dirname(RELEASE), "06_paper", "_tools"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from figstyle import FULL, INK, NAVY as MOJ, RUST as MOIS, apply  # noqa: E402
 apply()
 RULE = "#e2e8f0"

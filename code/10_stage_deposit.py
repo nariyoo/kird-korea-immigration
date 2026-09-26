@@ -193,8 +193,8 @@ def add_refugee_files():
     Language demand is derived exactly like the general language_demand.csv: each
     nationality's count is split across its country's first-language (L1) speaker
     shares from Ethnologue 24 (SIL Global 2021), Korean excluded. The counts are read
-    from refugee_data.language_demand in data.json (built by 08_add_refugee_language.py
-    off country_language_shares.json); English language labels are taken from the same
+    from refugee_data.language_demand in data.json (built by add_refugee_language() in
+    03_extend_panel.py, off country_language_shares.json); English language labels are taken from the same
     lang_ko_en.json the deposit uses.
     """
     HERE = os.path.dirname(os.path.abspath(__file__))
@@ -240,9 +240,14 @@ def add_refugee_files():
             ("난민인정", rd.get("top_recognized_nationalities", [])),
             ("인도적체류", rd.get("top_humanitarian_nationalities", [])),
         ]
+        # One label per country, the one crosswalk_country.csv and every other
+        # nationality table use. The refugee list printed Russia as 러시아, so this
+        # was the one file whose country column did not join to the crosswalk.
+        from kird import COUNTRY_CANONICAL
         for status, lst in nat_src:
             for ko, en, count, pct in lst:
-                nat_rows.append([status, STATUS_EN[status], ko, en, count, pct])
+                nat_rows.append([status, STATUS_EN[status],
+                                 COUNTRY_CANONICAL.get(ko, ko), en, count, pct])
         write_csv(os.path.join(DETAIL, "refugee_by_nationality.csv"),
                   ["status", "status_en", "country", "country_en", "count", "share_pct"],
                   nat_rows)

@@ -26,7 +26,8 @@ abstract: >-
   changes through the panel, and computes every derived measure on one basis for all years:
   foreign share of population, nationality diversity, residential segregation against Korean
   nationals, ethnic-enclave classification, and the number of speakers of each language implied
-  by the nationality composition. It emits the 27 tidy tables released in the deposit, in CSV
+  by the nationality composition. It emits the 28 tidy tables of the v1.2.0 deposit (26 built by
+  phases 1 and 2, two refugee tables added at the deposit stage), in CSV
   and labeled Stata format, alongside a bilingual data dictionary.
 authors:
   - family-names: Yoo

@@ -387,7 +387,9 @@ def recompute_from_reconciled():
                     if not tot_pop or sg_for <= 0:
                         continue
                     for c, x in cs.items():
-                        if x < ABS_FLOOR or X.get(c, 0) <= 0 or not natpop:
+                        # 기타 is the residual bin, never an enclave (the release
+                        # drops it; the dashboard now does too). 2026-09-25.
+                        if c == "기타" or x < ABS_FLOOR or X.get(c, 0) <= 0 or not natpop:
                             continue
                         lq = (x / tot_pop) / (X[c] / natpop)
                         share = x / sg_for

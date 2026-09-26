@@ -40,6 +40,18 @@ if hasattr(sys.stdout, "reconfigure"):
 # 조용한 고장이다 (2026-08-29). 다른 단계들처럼 kird 가 찾은 뿌리를 쓴다.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kird import ROOT                                        # noqa: E402
+from kird import COUNTRY_CANONICAL                           # noqa: E402
+
+
+def canon_country(name):
+    """The panel's one label per country. The yearbook's own spellings drift
+    between editions (2016 키르기스스탄, 2017- 키르기즈; 2017 태국, 2018- 타이;
+    러시아 for 러시아(연방)), and 2017 prints (타이완) and (홍콩) in brackets, so the
+    same country appeared under two names in this file and 178 rows had no English
+    name. The same map every other nationality table uses fixes both. 2026-09-25."""
+    if name.startswith("(") and name.endswith(")"):
+        name = name[1:-1]
+    return COUNTRY_CANONICAL.get(name, name)
 
 SRC = os.path.join(ROOT, "01_raw_data", "출입국통계연보")
 OUT = os.path.join(ROOT, "04_dataset_release", "data",
@@ -166,9 +178,11 @@ def parse(path, year):
             continue
         if name.startswith("국적") or name in ("시도", "구분", "시·도"):
             continue
-        if RESIDUAL.fullmatch(name):
+        # 2024 prints the residual as 「기타(Others)」; the bare pattern missed it and
+        # it went out as a nationality called 기타(Others) beside the computed 기타.
+        if RESIDUAL.fullmatch(re.sub(r"\(.*\)$", "", name)):
             continue
-        cols[j] = name
+        cols[j] = canon_country(name)
 
     out, grand = [], None
     for _, r in body.iterrows():
@@ -197,6 +211,7 @@ def parse(path, year):
     if not out:
         return None, "행을 못 읽음"
     df = pd.DataFrame(out)
+    df = df.groupby(["year", "sido", "sido_en", "country"], as_index=False)["n"].sum()
     if grand and grand > 0:
         gap = abs(df["n"].sum() - grand) / grand * 100
         if gap > 2:

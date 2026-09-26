@@ -1724,7 +1724,7 @@ def _emd_index(year):
     path = (os.path.join(SITE_DATA, "korea_emd.json") if lab == "2024"
             else os.path.join(SITE_DATA, "emd_years", "korea_emd_%s.json" % lab))
     ix = {"strict": {}, "part": {}, "loose": {},
-          "strict_c": {}, "part_c": {}, "loose_c": {}}
+          "strict_c": {}, "part_c": {}, "loose_c": {}, "districts": set()}
     with open(path, encoding="utf-8") as f:
         g = json.load(f)
     for ft in g["features"]:
@@ -1738,18 +1738,32 @@ def _emd_index(year):
         # 자료가 판마다 둘 중 하나만 적기 때문이다(2014년은 시만, 2024년은 구만).
         m = _CITY_GU.match(p["sg"])
         halves = [_emdnorm(m.group(1)), _emdnorm(m.group(2))] if m else []
+        ix["districts"].update((p["sido"], h) for h in [sg] + halves)
         for h in halves:
             ix["part"].setdefault((p["sido"], h, dong), v)
             ix["part_c"].setdefault((p["sido"], h, c), v)
-        ix["loose"].setdefault((p["sido"], dong), v)
-        ix["loose_c"].setdefault((p["sido"], c), v)
+        for ks, k in (("loose", (p["sido"], dong)), ("loose_c", (p["sido"], c))):
+            if k in ix[ks] and ix[ks][k] is not None and ix[ks][k][1] != v[1]:
+                ix[ks][k] = None            # the name is in two districts: ambiguous
+            elif k not in ix[ks]:
+                ix[ks][k] = v
+    # 2026-09-25: the province-wide lookup took the first district that had the
+    # name (setdefault). 2023 하남시 풍산동 (renamed 미사3동 in that year's boundary
+    # file) fell through to (경기도, 풍산동) and came back as 고양시 일산동구:
+    # multicultural_households carried Goyang's sigungu_code and adm_code on a
+    # Hanam row. A name held by two districts of one province now matches nothing
+    # at this step, and _look skips this step altogether when the row's own
+    # district is in the boundary file (the dong is then simply not there).
     _EMD_CACHE[lab] = ix
     return ix
 
 
 def _look(ix, sido, sg, dongs):
     """한 해 인덱스 안에서 정확 -> 반쪽 -> 시도 순으로, 이름 후보를 차례로 맞춰 본다."""
+    own = (sido, sg) in ix.get("districts", ())
     for keyset in ("strict", "part", "loose", "strict_c", "part_c", "loose_c"):
+        if own and keyset.startswith("loose"):
+            continue            # the row names a real district; never borrow another's dong
         collapsed = keyset.endswith("_c")
         for d in dongs:
             d2 = _collapse(d) if collapsed else d

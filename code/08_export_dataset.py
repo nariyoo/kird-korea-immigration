@@ -377,14 +377,16 @@ def export_dataset():
                              .sum().sort_values(["year", "sido", "visa_code"]))
             w("visa_by_sido.csv", add_en(sido_visa, ["sido"]))
 
-        # 3) Foreign residents by age x sex x country x year
-        age = pd.read_csv(os.path.join(PROC, "age_long.csv"))
-        age = age[["year", "country", "gender", "age_group", "n"]]
-        # the intermediate age_long can carry repeated (year, country, gender,
-        # age_group) rows from the multi-block source layout; collapse to one row
-        # per key (values are identical across repeats) before export.
-        age = (age.groupby(["year", "country", "gender", "age_group"], as_index=False)["n"].sum()
-                  .sort_values(["year", "country", "age_group", "gender"]))
+        # 3) Foreign residents by age x sex x country x year, on both population
+        #    bases. 03's extend_age_sex writes age_sex_long.csv from the two
+        #    yearbook tables: registered 2009-, stay 2011-. Until 2026-09-25 this
+        #    read age_long.csv, which held registered rows for 2009-2013 and stay
+        #    rows from 2014 under one unlabeled series.
+        age = pd.read_csv(os.path.join(PROC, "age_sex_long.csv"), encoding="utf-8-sig")
+        age = age[["year", "population", "country", "gender", "age_group", "n"]]
+        K = ["year", "population", "country", "gender", "age_group"]
+        age = (age.groupby(K, as_index=False)["n"].sum()
+                  .sort_values(["year", "population", "country", "age_group", "gender"]))
         w("foreign_residents_by_age_sex.csv", add_en(age, ["country"]))
 
         # 4) Resident registration population (MOIS denominator)
@@ -605,7 +607,7 @@ def export_dataset():
         """BOOTSTRAP ONLY — skipped whenever the curated README exists. The
         released README.md is curated by hand at 04_dataset_release/README.md;
         edit that file, not this text."""
-        txt = """# KIRD: Korea Immigration & Residential Diversity Dataset (2006-2024)
+        txt = """# Spatiotemporal administrative dataset of nationality, residential diversity, and language demand among immigrants in South Korea, 2006–2024
 
 **DOI:** https://doi.org/10.5281/zenodo.20355728
 
@@ -700,7 +702,7 @@ Known limitations:
 CC BY 4.0. Underlying statistics are public Korean government data.
 
 ## Citation
-Yoo, N. (2026). KIRD: Korea Immigration & Residential Diversity Dataset (2006-2024) [Data set]. Zenodo. https://doi.org/10.5281/zenodo.20355728
+Yoo, N. (2026). Spatiotemporal administrative dataset of nationality, residential diversity, and language demand among immigrants in South Korea, 2006–2024 [Data set]. Ann Arbor, MI: openICPSR. https://doi.org/10.3886/E249944V1
 """
         # The deposit README was rewritten by hand for openICPSR (DOI, split of data
         # vs code, the 2026 file list). This generated draft is the older Zenodo-era
@@ -715,7 +717,7 @@ Yoo, N. (2026). KIRD: Korea Immigration & Residential Diversity Dataset (2006-20
 
     def write_license_citation():
         cff = """cff-version: 1.2.0
-title: "KIRD: Korea Immigration & Residential Diversity Dataset (2006-2024)"
+title: "Spatiotemporal administrative dataset of nationality, residential diversity, and language demand among immigrants in South Korea, 2006–2024"
 message: If you use this dataset, please cite it as below.
 type: dataset
 authors:

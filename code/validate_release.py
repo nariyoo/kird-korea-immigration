@@ -28,6 +28,9 @@ What is checked
     segregation    dissimilarity_D, isolation, interaction_korean and
                    theil_segregation_H recomputed from the counts and resident_pop
     cross-file     district sums reconcile with the sido and national tables
+    age bases      age_sex_national carries registered 2009- and stay 2011- as
+                   two labelled series, and each sums to nationality_national
+                   for the same population, country and year
     coverage       no README or dictionary line cites a year the data lacks
 
 The Korean count convention, which the indices depend on: `resident_pop` is the
@@ -48,7 +51,7 @@ TOL = 5e-3          # 소수 셋째 자리로 실린 값이라 이만큼은 반�
 AGG = {"총계", "총합계", "소계", "계"}
 
 FILES = {
-    "age_sex_national.csv": ["year", "country", "gender", "age_group"],
+    "age_sex_national.csv": ["year", "population", "country", "gender", "age_group"],
     "children_by_age.csv": ["year", "sido", "sigungu", "age"],
     "crosswalk_country.csv": ["source_label"],
     "crosswalk_region.csv": None,
@@ -86,7 +89,7 @@ def check(ok, label, detail=""):
     if ok:
         print("  ok    %s" % label)
     else:
-        print("  FAIL  %s%s" % (label, ("  |  " + detail) if detail else ""))
+        print("  FAIL  %s%s" % (label, ("  |  " + str(detail)) if detail else ""))
         FAILED.append(label)
 
 
@@ -512,6 +515,73 @@ def check_cross_file(d):
 
 
 
+# Where the age table and the nationality table of the same edition disagree for
+# a documented reason. Keys are (population, year); the value is the total by
+# which the age table exceeds nationality_national, summed over the countries
+# that differ. Every other (population, year, country) must match exactly.
+#   stay 2022  The age table lists 홍콩거주난민 (17), which the release folds into
+#              홍콩; the status table has no such row and holds those 17 in its
+#              unnamed 기타 block, which the release drops. The status table does
+#              not say which statuses they hold, so they cannot be placed.
+# (stay 2014 used to be here: the 자격없음(0-0) column, 434 persons, was not read
+#  by the status parser. It is now read as visa code X00 and the gap is gone.)
+AGE_BASE_KNOWN = {("stay", 2022): 17}
+
+
+def check_age_bases(d):
+    """age_sex_national 은 두 모집단을 따로 싣는다. 섞이면 안 된다.
+
+    2026-09-25 까지 이 파일은 2009-2013 을 등록외국인 표에서, 2014 이후를 체류외국인
+    표에서 가져와 한 계열로 싣고 있었다. 미국이 2013년 23,990 에서 2014년 136,663 이
+    되었다. 그래서 (1) population 이 두 값만 갖는지, (2) 각 계열이 문서가 적는 해를
+    빠짐없이 갖는지, (3) 해·모집단·국적마다 T 의 연령 합이 nationality_national 과
+    같은지를 본다. 차이는 AGE_BASE_KNOWN 에 적은 원인만 봐준다.
+    """
+    a = d.get("age_sex_national.csv")
+    n = d.get("nationality_national.csv")
+    if a is None:
+        return
+    pops = set(a["population"].dropna().unique()) if "population" in a.columns else set()
+    check(pops == {"registered", "stay"},
+          "age bases: age_sex_national.population is registered / stay",
+          "found %s" % sorted(pops))
+    if pops != {"registered", "stay"}:
+        return
+    last = int(a["year"].max())
+    for pop, first in (("registered", 2009), ("stay", 2011)):
+        ys = set(a.loc[a["population"] == pop, "year"].astype(int))
+        want = set(range(first, last + 1))
+        check(ys == want, "age bases: %s covers %d-%d" % (pop, first, last),
+              "missing %s, extra %s" % (sorted(want - ys), sorted(ys - want)))
+    bands = set(a["age_group"].unique())
+    want_b = {"0-4", "5-9", "10-14", "15-19", "20-24", "25-29", "30-34", "35-39",
+              "40-44", "45-49", "50-54", "55-59", "60+"}
+    check(bands == want_b, "age bases: the 13 age bands and no others",
+          "extra %s, missing %s" % (sorted(bands - want_b), sorted(want_b - bands)))
+    if n is None:
+        return
+    t = (a[a["gender"] == "T"].groupby(["population", "year", "country"])["n"].sum())
+    m = n.set_index(["population", "year", "country"])["n"]
+    j = pd.concat([t.rename("age"), m.rename("nat")], axis=1)
+    keep = [(p == "registered" and y >= 2009) or (p == "stay" and y >= 2011)
+            for p, y, _ in j.index]
+    j = j[keep].fillna(0)
+    j["gap"] = j["age"] - j["nat"]
+    bad = j[j["gap"] != 0]
+    by = bad.groupby(level=[0, 1])["gap"].agg(["sum", "min", "size"])
+    unexplained = []
+    for (p, y), r in by.iterrows():
+        want = AGE_BASE_KNOWN.get((p, int(y)))
+        if want is None or r["sum"] != want or r["min"] < 0:
+            unexplained.append("%s %d: %+d over %d countries"
+                               % (p, y, r["sum"], r["size"]))
+    missing = [k for k in AGE_BASE_KNOWN if k not in by.index]
+    check(not unexplained and not missing,
+          "age bases: T summed over ages = nationality_national, per population, "
+          "year and country",
+          "unexplained %s; documented but absent %s" % (unexplained[:4], missing))
+
+
 def check_country_labels(d):
     """`country_en` 은 `country` 의 함수여야 하고, 그 반대도 그래야 한다.
 
@@ -599,6 +669,198 @@ def check_visa_basis(data, d):
           "the zero is left to look like missing data")
 
 
+
+def check_naturalization(d):
+    """국적별·연령별 패널을 더하면 연도별 추이 표의 귀화와 같아야 한다.
+
+    2026-09-25: 2017년 국적별 합이 11,443 으로 연도별 표의 10,086 보다 1,357 많았다.
+    그 해 연보의 중국 행이 「한국계 포함」인데 한국계중국인 행을 또 더했기 때문이다.
+    README 는 그것을 「연보의 국적 행이 대륙 소계보다 많다」고 원자료 탓으로 적고
+    있었다. 연보의 총계는 해마다 연도별 표와 같다. 그러니 차이는 0 이어야 한다.
+    """
+    ann = d.get("naturalization_annual.csv")
+    if ann is None:
+        return
+    a = ann[ann["type"] == "귀화"].set_index("year")["n"]
+    for name, raw_ok in (("naturalization_by_country.csv", {}),
+                         ("naturalization_by_age.csv", {2012: -1})):
+        df = d.get(name)
+        if df is None:
+            continue
+        sub = df[df["type"] == "귀화소계"].groupby("year")["n"].sum()
+        old = df[df["type"] == "귀화"].groupby("year")["n"].sum()
+        s = sub.combine_first(old)
+        bad = {int(y): int(s[y] - a[y]) for y in a.index if y in s.index
+               and s[y] - a[y] != raw_ok.get(int(y), 0)}
+        check(not bad, "naturalization: %s all routes summed = naturalization_annual 귀화" % name,
+              "year: gap %s" % bad)
+    c = d.get("naturalization_by_country.csv")
+    if c is not None:
+        k = c[c["type"].isin(["귀화소계", "귀화"])].pivot_table(
+            index="year", columns="country", values="n", aggfunc="sum")
+        if {"중국", "한국계중국인"} <= set(k.columns):
+            r = (k["한국계중국인"] / k["중국"]).dropna()
+            # 2017 is MOJ's own split (0.47), documented; every other year is 1.3-4.0
+            odd = {int(y): round(v, 2) for y, v in r.items()
+                   if not (1.0 <= v <= 5.0) and int(y) != 2017}
+            check(not odd, "naturalization: Korean-Chinese / China ratio within 1-5 "
+                  "(2017 documented)", odd)
+
+
+# E-8 is two statuses: 연수취업 to 2009 (carried as E8T), 계절근로 from 2021.
+VISA_ERAS = {"E8T": (None, 2009), "E8": (2021, None), "X00": (2014, 2014)}
+
+
+def check_visa_eras(d):
+    """한 코드가 제 시대 밖의 해에 값을 갖지 않는가. 2026-09-25 까지 E8 은 2006-2009
+    의 연수취업과 2021 의 계절근로를 한 줄로 잇고 「Seasonal Worker」라 불렀다."""
+    for name in ("visa_national.csv", "visa_by_nationality.csv", "visa_by_sido.csv",
+                 "visa_by_sigungu.csv"):
+        df = d.get(name)
+        if df is None:
+            continue
+        bad = []
+        for code, (lo, hi) in VISA_ERAS.items():
+            ys = set(df.loc[(df["visa_code"] == code) & (df["n"] > 0), "year"].astype(int))
+            out = sorted(y for y in ys if (lo and y < lo) or (hi and y > hi))
+            if out:
+                bad.append("%s in %s" % (code, out))
+        check(not bad, "visa eras: %s keeps each code inside its era" % name, "; ".join(bad))
+
+
+def _codes(data, name, cols=None):
+    """같은 파일을 코드 칸을 글자로 다시 읽는다. load() 는 형을 짐작하므로
+    빈칸이 있는 파일에서 42150 이 42150.0 이 된다."""
+    p = find_file(data, name)
+    if p is None:
+        return None
+    return pd.read_csv(p, encoding="utf-8-sig", usecols=cols, keep_default_na=False,
+                       dtype={"sido_code": str, "sigungu_code": str, "adm_code": str,
+                              "year": int})
+
+
+# 일반구를 둔 시. 광역시·특별시 밖에서 이 구 이름이 시 이름 없이 홀로 적히면
+# 어느 시의 구인지 이름만으로 알 수 없다(포항 남구 / 광역시의 남구).
+GENERAL_GU = {
+    "고양시": ("덕양구", "일산동구", "일산서구"), "부천시": ("소사구", "오정구", "원미구"),
+    "성남시": ("분당구", "수정구", "중원구"), "수원시": ("권선구", "영통구", "장안구", "팔달구"),
+    "안산시": ("단원구", "상록구"), "안양시": ("동안구", "만안구"),
+    "용인시": ("기흥구", "수지구", "처인구"), "전주시": ("덕진구", "완산구"),
+    "창원시": ("마산합포구", "마산회원구", "성산구", "의창구", "진해구"),
+    "천안시": ("동남구", "서북구"), "청주시": ("상당구", "서원구", "청원구", "흥덕구"),
+    "포항시": ("남구", "북구"),
+}
+
+
+def check_subdistrict_codes(data, d):
+    """읍면동 코드가 한 해 안에서 한 곳만 가리키는가, 두 표가 같은 코드를 주는가.
+
+    2026-09-25: multicultural_households 가 2023년 하남시 풍산동에 고양시 일산동구
+    풍산동의 코드(4128554000)를, 2024년 창원 성산구 중앙동에 진주 중앙동의 코드
+    (38030740)를 달고 있었다. summary_by_eupmyeondong 은 8월 26일에 상류에서 고쳤는데
+    이 표는 파이프라인이 다시 짓지 않아(쓰는 코드가 없었다) 옛 코드를 그대로 싣고
+    있었다. 두 표가 같은 동에 같은 코드를 주는지까지 본다.
+    """
+    mc = _codes(data, "multicultural_households.csv",
+                ["year", "sido", "sigungu", "sigungu_code", "eupmyeondong", "adm_code"])
+    em = _codes(data, "summary_by_eupmyeondong.csv",
+                ["year", "sido", "sigungu", "sigungu_code", "eupmyeondong", "adm_code"])
+    for name, df in (("multicultural_households.csv", mc),
+                     ("summary_by_eupmyeondong.csv", em)):
+        if df is None:
+            continue
+        u = df[df["adm_code"] != ""].drop_duplicates(
+            ["year", "sido", "sigungu", "eupmyeondong", "adm_code"])
+        dup = u[u.duplicated(["year", "adm_code"], keep=False)]
+        check(dup.empty, "sub-district codes: %s gives each adm_code to one place a year" % name,
+              "%d rows, e.g. %s" % (len(dup), dup.head(2).values.tolist()))
+        loose = []
+        for city, gus in GENERAL_GU.items():
+            bare = df[df["sigungu"].isin(gus) & ~df["sido"].str.contains("광역시|특별시")]
+            if len(bare):
+                loose.append("%s %s" % (sorted(set(bare["year"]))[0], bare["sigungu"].iloc[0]))
+        check(not loose, "sub-district codes: %s names every general gu with its city" % name,
+              "bare gu: %s" % loose[:5])
+    if mc is not None:
+        # 2016 on, a district name is one district: one sigungu_code per (year, name).
+        # The 2023 하남시 풍산동 row carried 고양시 일산동구's 41285 beside 하남시's
+        # 41450; the (year, adm_code) check above caught the dong code, not this.
+        many = mc.groupby(["year", "sido", "sigungu"])["sigungu_code"].nunique()
+        many = many[many > 1]
+        check(many.empty, "sub-district codes: multicultural_households gives each "
+              "district name one sigungu_code a year", str(list(many.index[:4])))
+    if mc is not None and em is not None:
+        k = ["year", "sigungu_code", "eupmyeondong"]
+        j = mc.drop_duplicates(k + ["adm_code"]).merge(
+            em.drop_duplicates(k), on=k, how="inner", suffixes=("", "_emd"))
+        bad = j[j["adm_code"] != j["adm_code_emd"]]
+        check(bad.empty, "sub-district codes: multicultural_households and "
+              "summary_by_eupmyeondong give the same dong the same adm_code",
+              "%d disagree, e.g. %s" % (len(bad), bad.head(2)[k + ["adm_code", "adm_code_emd"]]
+                                        .values.tolist()))
+
+
+def check_children_grain(data, d):
+    """children_by_age 는 시군구 요약과 같은 단위로 한 줄씩이어야 한다.
+
+    2026-09-25: 2024년 부천시가 소사구·오정구·원미구 세 줄로 실려 모두 41190 을 달고
+    있었다. 이름 열쇠로는 유일해서 기존 검사를 통과했다. 코드로 본다.
+    """
+    ca = _codes(data, "children_by_age.csv", ["year", "sigungu", "sigungu_code", "age"])
+    sg = _codes(data, "summary_by_sigungu.csv", ["year", "sigungu_code"])
+    if ca is None:
+        return
+    n = int(ca.duplicated(["year", "sigungu_code", "age"]).sum())
+    check(n == 0, "children grain: children_by_age unique on year+sigungu_code+age",
+          "%d duplicates, e.g. %s" % (n, ca[ca.duplicated(["year", "sigungu_code", "age"],
+                                                          keep=False)].head(3).values.tolist()))
+    if sg is not None:
+        have = set(zip(sg["year"], sg["sigungu_code"]))
+        # 2016 년 전에는 일반구 시를 시 단위로 싣는다(사전에 적힌 대로). 그 뒤로는
+        # 요약과 같은 단위여야 한다.
+        extra = sorted({(y, c) for y, c in zip(ca["year"], ca["sigungu_code"])
+                        if y >= 2016 and (y, c) not in have})
+        check(not extra, "children grain: from 2016 every children_by_age district is a summary_by_sigungu district",
+              "%d (year, code) not in the summary, e.g. %s" % (len(extra), extra[:4]))
+
+
+def check_dictionary_years(data, d):
+    """사전에 괄호로 적은 연도 범위가 그 파일의 실제 범위와 같은가.
+
+    2026-09-25: nationality_by_sigungu.n 이 「(2009-2024)」라고 적고 있었는데 파일은
+    2008년부터다. visa_by_sigungu.n 은 영문이 2008-2024, 국문이 「2008 및
+    2017-2024」로 서로 달랐다. 변수 하나, 파일 하나를 설명하는 줄에서 괄호 안의
+    범위가 하나뿐이면 그 범위를 파일과 맞대고, 국문의 범위가 영문과 같은지도 본다.
+    """
+    p = os.path.join(data, "data_dictionary.csv")
+    if not os.path.exists(p):
+        p = os.path.join(os.path.dirname(data), "data_dictionary.csv")
+    if not os.path.exists(p):
+        return
+    dic = pd.read_csv(p, encoding="utf-8-sig", keep_default_na=False)
+    rng = re.compile(r"\(((?:19|20)\d{2})\s*[-\u2013]\s*((?:19|20)\d{2})\)")
+    bad = []
+    for _, r in dic.iterrows():
+        f = str(r["file"]).strip()
+        if "/" in f or f not in d or "year" not in d[f].columns:
+            continue
+        en = rng.findall(str(r["description_en"]))
+        ko = rng.findall(str(r["description_ko"]))
+        if en and sorted(set(en)) != sorted(set(ko)):
+            bad.append("%s.%s en %s ko %s" % (f, r["variable"], en, ko))
+        if len(set(en)) != 1:
+            continue
+        a, b = map(int, en[0])
+        ys = d[f]["year"].dropna().astype(int)
+        if "population" in d[f].columns:      # 모집단마다 범위가 다른 표는 넘긴다
+            continue
+        if (a, b) != (int(ys.min()), int(ys.max())):
+            bad.append("%s.%s says %d-%d, file %d-%d"
+                       % (f, r["variable"], a, b, ys.min(), ys.max()))
+    check(not bad, "dictionary years: every (YYYY-YYYY) in a one-file row matches the file",
+          "; ".join(bad[:4]))
+
+
 def main():
     data = sys.argv[1] if len(sys.argv) > 1 else \
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -619,9 +881,15 @@ def main():
     check_segregation(d)
     check_theil(d)
     check_cross_file(d)
+    check_age_bases(d)
     check_country_labels(d)
     check_coverage_text(data, d)
     check_visa_basis(data, d)
+    check_subdistrict_codes(data, d)
+    check_children_grain(data, d)
+    check_dictionary_years(data, d)
+    check_naturalization(d)
+    check_visa_eras(d)
     print()
     if FAILED:
         print("%d of %d checks FAILED:" % (len(FAILED), CHECKED))

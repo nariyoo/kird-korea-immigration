@@ -180,8 +180,24 @@ DROP_CONTAINS = (
 )
 
 
+# E-8 names two different statuses in this panel. The 2006-2009 editions print it
+# as 연수취업 (trainee employment, 69,595 registered in 2006); that status was
+# abolished and its holders re-coded under E-9 (the 2012 stay table still shows
+# 「과거연수취업 (E-9-96)」). No edition prints an E-8 column from 2010 to 2020.
+# From the 2021 edition E-8 is 계절근로 (seasonal worker). One code across both
+# eras drew one "Seasonal Worker" line from 2006, so the old status is carried
+# under its own code, E8T, for every year up to 2009.
+E8_TRAINEE_LAST_YEAR = 2009
+
+
+def split_e8(df, year_col="year", code_col="visa_code"):
+    m = (df[code_col] == "E8") & (df[year_col].astype(int) <= E8_TRAINEE_LAST_YEAR)
+    df.loc[m, code_col] = "E8T"
+    return df
+
+
 # Sub-codes that should NOT be collapsed (real 2-digit codes, not 1-digit + sub-letter)
-NO_COLLAPSE = {"D10", "E10", "ETC"}
+NO_COLLAPSE = {"D10", "E10", "ETC", "X00", "E8T"}
 
 
 # 실제로 접힌 하위 코드를 적어 둔다. 기탁본의 crosswalk_visa.csv 가 이걸 싣는다.
@@ -197,6 +213,11 @@ def collapse_visa_code(code):
     """
     if not isinstance(code, str) or code in NO_COLLAPSE:
         return code
+    # two-digit majors with a sub-code: E10-1, D10-2 (2006-2009 editions)
+    m = re.match(r"^([A-Z]\d{2})-([0-9A-Z]+)$", code)
+    if m:
+        VISA_COLLAPSED[code] = m.group(1)
+        return m.group(1)
     m = re.match(r"^([A-Z])(\d)([A-Z0-9]+)?$", code)
     if m and m.group(3):
         parent = f"{m.group(1)}{m.group(2)}"
@@ -225,6 +246,13 @@ def parse_visa_header(s):
     s = s.strip()
     if not s or s in STRUCT_COLS:
         return None, None
+    # 2014 stay table only: 「자격없음(0-0)」, people the register records with no
+    # status of stay (434 in 2014). The status regex needs a letter, so this column
+    # was silently dropped and nationality_national stay 2014 fell 434 short of the
+    # printed total. It is its own code, X00, family X; not ETC, which is the
+    # separate 기타 (SOFA / treaty) column.
+    if re.match(r"^자격\s*없음", s):
+        return "X00", "자격없음"
     m = VISA_HDR_RE.match(s)
     if m:
         code = m.group(1).replace("-", "").upper()
@@ -319,8 +347,19 @@ def _detect_legacy_header(df, max_scan=15):
       - 2006: visa code embedded in cell like '문화\\n예술\\n(D-1)' (Korean +
         parenthesized code in the same cell).
     """
-    code_in_parens_re = re.compile(r"\(([A-Z])-?(\d{1,2})(?:-(\d+))?\)")
-    bare_code_re = re.compile(r"^\s*([A-Z])-?(\d{1,2})([A-Z]?)\s*$")
+    # Sub-codes carry letters as well as digits: (E-9-A) ... (E-9-K) in 2006,
+    # D-2-A, E-9-2, H-2-B in the 2008-2009 short-stay tables. The earlier patterns
+    # took digits only, so those columns were never read (57,899 registered
+    # foreigners on E-9-A..K in 2006 alone).
+    code_in_parens_re = re.compile(r"\(([A-Z])-?(\d{1,2})(?:-([0-9A-Z]{1,2}))?\)")
+    bare_code_re = re.compile(r"^\s*([A-Z])-?(\d{1,2})(?:-?([0-9A-Z]{1,2}))?\s*$")
+
+    def _mk(letter, num, sub):
+        # D-3-1 -> D31, D-2-A -> D2A, E-10-1 -> E10-1 (a two-digit major keeps a
+        # hyphen so E10-1 cannot be read as E1 + sub-code 01)
+        if not sub:
+            return f"{letter}{num}"
+        return f"{letter}{num}-{sub}" if len(num) == 2 else f"{letter}{num}{sub}"
 
     best_row = None
     best_cols = {}
@@ -332,17 +371,14 @@ def _detect_legacy_header(df, max_scan=15):
             # Try embedded paren first (2006 format)
             m = code_in_parens_re.search(v)
             if m:
-                if m.group(3):
-                    code = f"{m.group(1)}{m.group(2)}{m.group(3)}"  # D-3-1 → D31
-                else:
-                    code = f"{m.group(1)}{m.group(2)}"
+                code = _mk(m.group(1), m.group(2), m.group(3))
                 label = re.sub(r"\(.+?\)", "", v).replace("\n", "").replace(" ", "").strip() or code
                 cols_in_row[j] = (code, label)
                 continue
             # Try bare code (2007-2013 format)
             m2 = bare_code_re.match(v.strip())
             if m2:
-                code = f"{m2.group(1)}{m2.group(2)}{m2.group(3)}"
+                code = _mk(m2.group(1), m2.group(2), m2.group(3))
                 cols_in_row[j] = (code, code)
                 continue
             # 'Others' / 'Etc' / '기타' column in 2013, etc.
@@ -373,7 +409,7 @@ def load_legacy(year, path):
         raise ValueError(f"No visa columns found in {path}")
 
     # If the row above the code row has Korean text, use it for labels
-    bare_code_re = re.compile(r"^\s*[A-Z]-?\d{1,2}[A-Z]?\s*$")
+    bare_code_re = re.compile(r"^\s*[A-Z]-?\d{1,2}(?:-?[0-9A-Z]{1,2})?\s*$")
     if header_row > 0:
         label_hdr = df.iloc[header_row - 1].tolist()
         for j in list(visa_cols.keys()):
@@ -408,68 +444,59 @@ def load_legacy(year, path):
     # Drop the global 총계 / Grand-Total row (sometimes ends with English name)
     body = body[~body["_country"].astype(str).str.contains("Grand-Total|소계", na=False, regex=True)]
 
-    # Drop pure-duplicate sub-codes: some legacy yearbooks (2007-2008) list a
-    # category total column (e.g. D-3 산업연수) AND its complete sub-breakdown
-    # (D31...) summing to the EXACT same value, so keeping both double-counts.
-    # This is GATED by the file's own 총계/Grand-Total row: dedup only when the
-    # all-column national sum overshoots the authoritative grand total. This
-    # avoids mis-dropping years (e.g. 2006) where parent==sub is coincidental
-    # and both are genuinely additive.
-    # Locate the grand-total column from the header (총계/Grand-Total/합계/Total)
+    # Every legacy table carries a per-country total column. It decides, family by
+    # family, whether sub-code columns are a breakdown of a parent column already
+    # read (drop them) or additional people (keep them):
+    #   2006-2008 D-3 산업연수 print the parent AND its D-3-1..6 breakdown, and the
+    #   2012 stay table prints D-9 twice -> the parent equals the rest -> drop;
+    #   2006 E-9-A..K (음식업·간병가사·건설업 특례) and the 2008-2009 short-stay
+    #   D-2 / E-9 / H-2 sub-columns sit beside their parent -> keep.
+    # The earlier rule dropped duplicates only when the national sum overshot the
+    # grand total by 0.5%, and it looked for the total column under the exact
+    # header 「총계」, which the 2006 files print as 「총 계」, so 2006 counted D-3
+    # twice (+59,806) and dropped E-9-A..K (-57,899). 2026-09-25.
     total_col = None
     for hr_scan in (header_row, header_row - 1):
         if hr_scan < 0:
             continue
         for j, v in enumerate(df.iloc[hr_scan].tolist()):
-            if isinstance(v, str) and v.strip() in ("총계", "Grand-Total", "합계", "Total"):
+            if isinstance(v, str) and re.sub(r"\s", "", v) in (
+                    "총계", "Grand-Total", "합계", "Total"):
                 total_col = j
                 break
         if total_col is not None:
             break
+    if total_col is None:
+        raise ValueError(f"{year}: no per-country total column in {path}")
 
-    grand_total = None
-    for _, r in df.iloc[header_row + 1:].iterrows():
-        c0 = r[0] if 0 < len(r) else None
-        c1 = r[1] if 1 < len(r) else None
-        nm = " ".join(str(x) for x in (c0, c1) if isinstance(x, str))
-        if "총계" in nm or "grand-total" in nm.lower():
-            if total_col is not None and total_col < len(r):
-                grand_total = _sum_newline_cell(r[total_col])
-            break
+    col_total = {j: sum(_sum_newline_cell(v) for v in body[j]) for j in visa_cols}
+    fam = {}
+    for j, (c, _) in visa_cols.items():
+        fam.setdefault(collapse_visa_code(c), []).append(j)
+    drop = set()
+    for parent, js in fam.items():
+        pars = [j for j in js if visa_cols[j][0] == parent]
+        if not pars or len(js) == 1:
+            continue
+        top = max(pars, key=lambda j: col_total[j])
+        others = [j for j in js if j != top]
+        if col_total[top] > 0 and col_total[top] == sum(col_total[j] for j in others):
+            drop |= set(others)
+    visa_cols = {j: v for j, v in visa_cols.items() if j not in drop}
 
-    parent_sum, sub_sum, all_sum = {}, {}, 0
-    col_total = {}
-    for col_idx, (code, label) in visa_cols.items():
-        s = sum(_sum_newline_cell(row[col_idx]) for _, row in body.iterrows())
-        col_total[col_idx] = s
-        all_sum += s
-        parent = collapse_visa_code(code)
-        (parent_sum if parent == code else sub_sum)[parent] = \
-            (parent_sum if parent == code else sub_sum).get(parent, 0) + s
-    if grand_total and all_sum > grand_total * 1.005:
-        dup_parents = {p for p, sv in sub_sum.items()
-                       if sv > 0 and parent_sum.get(p, 0) == sv}
-        if dup_parents:
-            visa_cols = {j: (c, l) for j, (c, l) in visa_cols.items()
-                         if not (collapse_visa_code(c) != c and collapse_visa_code(c) in dup_parents)}
-
-    # Some legacy editions repeat the EXACT SAME visa code in two adjacent
-    # columns (e.g. 2012 staying lists "D-9" twice), so summing both
-    # double-counts. When the all-column sum overshoots the authoritative grand
-    # total, keep only the largest-valued column for each *exact* code and drop
-    # the duplicates. NB: group by the exact detected code, NOT the collapsed
-    # parent, so genuine distinct sub-codes (D31, D32 → parent D3) are still
-    # summed rather than mistaken for duplicates.
-    if grand_total and all_sum > grand_total * 1.001:
-        by_code = {}
-        for j, (c, l) in visa_cols.items():
-            by_code.setdefault(c, []).append(j)
-        if any(len(js) > 1 for js in by_code.values()):
-            keep = {}
-            for code, js in by_code.items():
-                best = max(js, key=lambda j: col_total.get(j, 0))
-                keep[best] = visa_cols[best]
-            visa_cols = keep
+    # GATE: the status columns read must add up to the table's own total, country by
+    # country. A column the header patterns miss, or a breakdown counted twice,
+    # stops the build here instead of shifting a national series.
+    kr = body[body["_country"].astype(str).str.contains(r"[가-힣]", regex=True)]
+    bad = []
+    for _, r in kr.iterrows():
+        s_ = sum(_sum_newline_cell(r[j]) for j in visa_cols)
+        t_ = _sum_newline_cell(r[total_col])
+        if s_ != t_:
+            bad.append((r["_country"], s_, t_))
+    if bad:
+        raise ValueError(f"{year} {os.path.basename(path)}: status columns do not add "
+                         f"up to the row total for {len(bad)} countries, e.g. {bad[:4]}")
 
     records = []
     for _, row in body.iterrows():
@@ -574,6 +601,20 @@ def load_modern(year, path):
     body["_country"] = body[country_col].apply(clean_country)
     body = body[body["_country"].notna()]
     body = body[~body["_country"].isin(DROP_NAMES)]
+
+    # GATE: every header right of the total column must be a status the parser
+    # reads, and a row's statuses must add up to its total (col 3: 소계 / 총합계).
+    # The 2014 stay table's 「자격없음(0-0)」 went unread for years because nothing
+    # checked this. 2026-09-25.
+    unc = [(i, h) for i, h in enumerate(header_row)
+           if i > 3 and isinstance(h, str) and h.strip() and i not in visa_cols]
+    if unc:
+        raise ValueError(f"{year} {os.path.basename(path)}: status columns not read {unc}")
+    vis = body[list(visa_cols)].apply(pd.to_numeric, errors="coerce").fillna(0).sum(axis=1)
+    tot = pd.to_numeric(body[3], errors="coerce").fillna(0)
+    if (vis != tot).any():
+        raise ValueError(f"{year} {os.path.basename(path)}: {int((vis != tot).sum())} rows "
+                         f"where the statuses do not add up to the row total")
 
     # Build long rows (sum across genders for 2018; otherwise one row per country)
     records = []
@@ -700,6 +741,7 @@ def build_long(files):
     # Collapse pre-2010 sub-codes (D2A→D2, E61→E6, F5B→F5, H2C→H2, ...)
     # so we can compare across years on the same axis.
     long["visa_code"] = long["visa_code"].apply(collapse_visa_code)
+    long = split_e8(long)
     # Drop empty rows from defective parses
     long = long[long["visa_code"].astype(bool)]
     # Re-aggregate after collapse
@@ -717,7 +759,7 @@ def build_long(files):
         "D5": "취재", "D6": "종교", "D7": "주재", "D8": "기업투자",
         "D9": "무역경영", "D10": "구직",
         "E1": "교수", "E2": "회화지도", "E3": "연구", "E4": "기술지도",
-        "E5": "전문직업", "E6": "예술흥행", "E7": "특정활동", "E8": "계절근로",
+        "E5": "전문직업", "E6": "예술흥행", "E7": "특정활동", "E8": "계절근로", "E8T": "연수취업 (구 E-8, 2009년까지)",
         "E9": "비전문취업", "E10": "선원취업",
         "F1": "방문동거", "F2": "거주", "F3": "동반", "F4": "재외동포",
         "F5": "영주", "F6": "결혼이민",
@@ -725,6 +767,7 @@ def build_long(files):
         "H1": "관광취업", "H2": "방문취업",
         "T1": "관광상륙",
         "ETC": "분류외 (SOFA·협정 등)",
+        "X00": "자격없음 (0-0)",  # 2014 stay edition only
         "E0": "협정활동",  # 2007-2009 only
     }
     long["visa_label"] = long["visa_code"].map(
@@ -1133,7 +1176,7 @@ CANONICAL_LABELS_KO = {
     "D5": "취재", "D6": "종교", "D7": "주재", "D8": "기업투자",
     "D9": "무역경영", "D10": "구직",
     "E1": "교수", "E2": "회화지도", "E3": "연구", "E4": "기술지도",
-    "E5": "전문직업", "E6": "예술흥행", "E7": "특정활동", "E8": "계절근로",
+    "E5": "전문직업", "E6": "예술흥행", "E7": "특정활동", "E8": "계절근로", "E8T": "연수취업 (구 E-8, 2009년까지)",
     "E9": "비전문취업", "E10": "선원취업",
     "F1": "방문동거", "F2": "거주", "F3": "동반", "F4": "재외동포",
     "F5": "영주", "F6": "결혼이민",
@@ -1141,6 +1184,7 @@ CANONICAL_LABELS_KO = {
     "H1": "관광취업", "H2": "방문취업",
     "T1": "관광상륙",
     "ETC": "분류외 (SOFA·협정 등)",
+    "X00": "자격없음 (0-0)",
     "E0": "협정활동",
 }
 
@@ -1349,8 +1393,16 @@ VISA_INFO = {
         "max_stay_ko": "최초 1-3년 (최대 5년까지 연장)",
         "max_stay_en": "1–3 years initially (extendable up to 5)",
     },
+    "E8T": {
+        "purpose_ko": "연수취업: 산업연수를 마친 외국인의 취업 (2009년까지, 뒤에 E-9 으로 흡수)",
+        "purpose_en": "Trainee employment: work after industrial training (to 2009, later folded into E-9)",
+        "eligibility_ko": "산업연수(D-3) 과정 이수자",
+        "eligibility_en": "Completed industrial training (D-3)",
+        "max_stay_ko": "연보 2006-2009년판에만 실림",
+        "max_stay_en": "Printed in the 2006-2009 editions only",
+    },
     "E8": {
-        "purpose_ko": "농업·어업 분야 한시적 계절근로",
+        "purpose_ko": "농업·어업 분야 한시적 계절근로 (2021년판부터)",
         "purpose_en": "Seasonal agricultural/fisheries labor",
         "eligibility_ko": "지자체-해외 자치단체 MOU 기반 모집",
         "eligibility_en": "Recruited via MOU between Korean and foreign local governments",
@@ -2320,7 +2372,10 @@ def compute_indices(region_df, pop_df):
         sigungu_foreign = sg_ctry.groupby(["sido", "sigungu"])["n"].sum().to_dict()
         for _, row in sg_ctry.iterrows():
             sido, sigungu, country, x = row["sido"], row["sigungu"], row["country"], row["n"]
-            if x < 200:
+            # 기타 is the yearbook's residual bin, not a nationality, so it is never an
+            # enclave (09_finish_release drops it from the release; the dashboard used
+            # to keep it and flagged 1-2 more a year in 2009-2013). 2026-09-25.
+            if x < 200 or country == "기타":
                 continue
             sg_for = sigungu_foreign.get((sido, sigungu), 0)
             if sg_for <= 0:
@@ -3242,7 +3297,8 @@ def export_json(stay_long, reg_long, out_path):
         "E1": "Professor", "E2": "Foreign Language Instructor", "E3": "Researcher",
         "E4": "Technical Instructor", "E5": "Specialized Occupation",
         "E6": "Arts & Entertainment", "E7": "Specially Designated Activities",
-        "E8": "Seasonal Worker", "E9": "Non-professional Employment",
+        "E8": "Seasonal Worker", "E8T": "Trainee Employment (former E-8, to 2009)",
+        "E9": "Non-professional Employment",
         "E10": "Crew Employment",
         "F1": "Visiting Cohabitation", "F2": "Residential", "F3": "Dependent Family",
         "F4": "Overseas Korean", "F5": "Permanent Residence", "F6": "Marriage Migration",
@@ -3250,6 +3306,7 @@ def export_json(stay_long, reg_long, out_path):
         "H1": "Working Holiday", "H2": "Visiting Employment",
         "T1": "Tourist Landing",
         "ETC": "Unclassified (SOFA · Treaty)",
+        "X00": "No status (0-0)",
         "E0": "Treaty Activity",
     }
 

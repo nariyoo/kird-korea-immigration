@@ -15,8 +15,15 @@ import os
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
-D = (r"G:/My Drive/03 Research/03 Immigration NLP/KIRD Dashboard"
-     r"/04_dataset_release/data")
+# 2026-09-19: 여기에 G: 드라이브 절대 경로가 박혀 있었다. 프로젝트가
+# 드롭박스로 옮겨간 뒤로 이 검사는 한 번도 돌지 못했다(폴더 없음).
+# 제 자리에서 찾고, 인자로 다른 폴더를 줄 수도 있게 둔다.
+HERE = os.path.dirname(os.path.abspath(__file__))
+_ARGS = [a for a in sys.argv[1:] if not a.startswith("-")]
+D = (os.path.abspath(_ARGS[0]) if _ARGS
+     else os.path.join(os.path.dirname(HERE), "data"))
+if not os.path.isdir(D):
+    raise SystemExit("자료 폴더가 없다: %s" % D)
 findings = []
 
 
@@ -24,8 +31,16 @@ def note(sev, key, msg):
     findings.append((sev, key, msg))
 
 
+def _path(name):
+    # 기탁본은 요약 넷을 data/ 에, 나머지를 data/detailed_data/ 에 둔다. 둘 다 본다.
+    for base in (D, os.path.join(D, "detailed_data")):
+        if os.path.exists(os.path.join(base, name)):
+            return os.path.join(base, name)
+    return os.path.join(D, name)
+
+
 def load(name):
-    with io.open(os.path.join(D, name), encoding="utf-8-sig", newline="") as fh:
+    with io.open(_path(name), encoding="utf-8-sig", newline="") as fh:
         return list(csv.DictReader(fh))
 
 
@@ -39,7 +54,8 @@ def num(v):
         return None
 
 
-files = sorted(f for f in os.listdir(D) if f.endswith(".csv"))
+files = sorted(f for base in (D, os.path.join(D, "detailed_data")) if os.path.isdir(base)
+               for f in os.listdir(base) if f.endswith(".csv"))
 print("파일 %d개" % len(files))
 
 # ------------------------------------------------------------ 1. 열쇠 유일성
@@ -51,12 +67,16 @@ KEYS = {
     "visa_by_sido.csv": ["year", "sido", "visa_code"],
     "visa_by_sigungu.csv": ["year", "sido", "sigungu", "visa_code"],
     "nationality_national.csv": ["year", "population", "country"],
+    "age_sex_national.csv": ["year", "population", "country", "gender", "age_group"],
     "nationality_by_sido.csv": ["year", "sido", "country"],
     "nationality_by_sigungu.csv": ["year", "sido", "sigungu", "country"],
     "diaspora_residence_by_sido.csv": ["year", "sido", "country"],
     "national_annual.csv": ["year"],
     "region_segregation.csv": ["year", "continent"],
     "segregation_by_nationality.csv": ["year", "country"],
+    # 2026-09-25: 이름 열쇠로는 유일했는데 코드로는 겹쳤다(2024 부천시 세 구가 모두
+    # 41190). 코드 열쇠로 다시 센다.
+    "children_by_age.csv": ["year", "sigungu_code", "age"],
 }
 for f, keys in KEYS.items():
     rows = load(f)
@@ -65,6 +85,24 @@ for f, keys in KEYS.items():
     if dup:
         note("고쳐야 함", "열쇠 중복",
              "%s: %d개 열쇠가 두 번 이상 (%s …)" % (f, len(dup), dup[0]))
+
+# 1b. 읍면동 코드: 한 해 안에서 한 코드가 두 곳을 가리키면 안 된다 (2023 하남시
+#     풍산동이 고양 일산동구 풍산동의 코드를, 2024 창원 성산구 중앙동이 진주 중앙동의
+#     코드를 달고 있었다). 빈 코드는 세지 않는다.
+for f in ("multicultural_households.csv", "summary_by_eupmyeondong.csv"):
+    if f not in files:
+        continue
+    place = collections.defaultdict(set)
+    for r in load(f):
+        c = (r.get("adm_code") or "").strip()
+        if c:
+            place[(r["year"], c)].add((r["sido"], r["sigungu"], r["eupmyeondong"]))
+    dup = {k: v for k, v in place.items() if len(v) > 1}
+    if dup:
+        k = sorted(dup)[0]
+        note("고쳐야 함", "코드 중복",
+             "%s: adm_code %d개가 한 해에 두 곳 이상 (%s %s -> %s)"
+             % (f, len(dup), k[0], k[1], sorted(dup[k])))
 
 # ------------------------------------------------------------ 2. 층 사이의 합
 def total_by(rows, level, valcol, extra=None):
@@ -164,3 +202,6 @@ for sev, k, m in findings:
     print("  [%s] %-10s %s" % (sev, k, m[:150]))
 if not findings:
     print("  독립 검산에서 걸린 것 없음")
+
+# 고쳐야 할 것이 하나라도 있으면 1 로 끝난다 (관문으로 쓸 수 있게). 2026-09-25.
+sys.exit(1 if any(s == "고쳐야 함" for s, _, _ in findings) else 0)

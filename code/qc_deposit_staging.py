@@ -36,17 +36,22 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
+ROOT = os.path.dirname(HERE)          # 04_dataset_release
+# 2026-09-19: 아래 기본 경로가 ROOT 밑에 폴더 이름을 한 번 더 붙이고
+# 있었다. 인자 없이 돌리면 README.md 를 못 찾아 죽고, 인자를 주고 돌리면
+# inventory 의 `rel` 이 없는 폴더를 가리켜 **릴리스 대 스테이징 대조가
+# 조용히 건너뛰어졌다.** 그 대조야말로 2026-08-31 에 diaspora 가 빠진 것을
+# 잡으려고 넣은 검사다. 빠진 표를 잡는 검사가 빠져 있었다.
 
 # 받은 사람이 그대로 돌릴 수 있어야 한다. 인자로 준 폴더를 보고, 없으면 작업
 # 트리의 스테이징을 본다. 내려받은 기탁본 폴더를 주면 그 자리에서 검증된다.
 _ARGS = [a for a in sys.argv[1:] if not a.startswith("-")]
 STG = (os.path.abspath(_ARGS[0]) if _ARGS
-       else os.path.join(ROOT, "04_dataset_release", "data deposit",
+       else os.path.join(ROOT, "data deposit",
                          "kird_openicpsr_deposit_staging"))
 # 이전 판과의 대조는 그 zip 이 있을 때만 한다(선택).
 PUBZIP = (os.path.abspath(_ARGS[1]) if len(_ARGS) > 1
-          else os.path.join(ROOT, "04_dataset_release", "data deposit",
+          else os.path.join(ROOT, "data deposit",
                             "KIRD_openicpsr_deposit_v1.1.0.zip"))
 
 FAILS = []
@@ -82,7 +87,9 @@ def inventory():
     # 기대 개수가 27 로 박혀 있어 27 개인 것이 맞다고 답했다. 작업 트리에서
     # 돌릴 때는 릴리스 폴더와 이름을 맞대어 본다. 받은 사람이 기탁본만 가지고
     # 돌릴 때는 그 폴더가 없으므로 이 검사는 건너뛴다.
-    rel = os.path.join(ROOT, "04_dataset_release", "data")
+    rel = os.path.join(ROOT, "data")
+    if not os.path.isdir(rel):
+        print("  --   릴리스 폴더가 없어 대조를 건너뛴다: %s" % rel)
     if os.path.isdir(rel):
         want = {f for f in os.listdir(rel) if f.endswith(".csv")}
         have = {os.path.basename(f) for f in csvs}
@@ -200,7 +207,7 @@ def readme_claims():
     check(set(blanks) == {"theil_segregation_H", "ethnic_koreans"},
           "national_annual 2008 빈칸은 theil 과 ethnic_koreans 뿐", blanks)
 
-    # 귀화 화해: 다섯 초과 넷 (2017 선택 -10 · 판정 -7, 2018 상실 -8, 2019 상실 +7)
+    # 귀화 화해: 국적별 표를 유형마다 더하면 연간표와 다섯 이내로 맞는다
     ann = pd.read_csv(DD + "naturalization_annual.csv", encoding="utf-8-sig")
     byc = pd.read_csv(DD + "naturalization_by_country.csv", encoding="utf-8-sig")
     norm = lambda t: str(t).replace(" ", "")
@@ -211,11 +218,14 @@ def readme_claims():
     both = a.index.intersection(b.index)
     gap = (b[both] - a[both])
     over = gap[gap.abs() > 5]
-    WANT = {(2017, "국적선택"): -10, (2017, "국적판정"): -7, (2018, "국적상실"): -8,
-            (2019, "국적상실"): 7, (2019, "국적취득(재취득)"): 18,
-            (2024, "국적취득(인지)"): 8, (2024, "국적취득(재취득)"): 16}
+    # 2026-09-25: 전에는 일곱 칸이 다섯을 넘었고 README 가 그것을 「원자료가
+    # 그렇다」고 적었다. 실제로는 파서가 2017년 중국 행의 「한국계 포함」을 무시하고
+    # 2014-2018 년의 「취득인지」·「재취득」 칸을 읽지 않았으며, 2019 년과 2024 년의
+    # 기타를 두 번 세고 있었다. 고친 뒤로는 어느 칸도 다섯을 넘지 않는다(2018 년
+    # 네 유형에서 1-5).
+    WANT = {}
     check({(int(y), t): int(v) for (y, t), v in over.items()} == WANT,
-          "연간표 대비 다섯 초과가 문서의 일곱 자리 그대로", dict(over))
+          "연간표 대비 유형별 차이가 모두 다섯 이하다", dict(over))
 
     # 세종 wide 예외: 그 해들의 차이가 세종 값과 정확히 같다
     sd = pd.read_csv(D + "summary_by_sido.csv", encoding="utf-8-sig",
@@ -239,6 +249,38 @@ def readme_claims():
                                                     want.reindex(gap_y.index).fillna(0), atol=0.5):
                 ok = False
     check(ok, "wide 층 합: 2012+ 정확, 2008-2011 차이 = 세종 몫")
+
+    # 2026-09-25: README 가 「52 columns in 2008, 54 in 2009, 55 in 2010, 56 in
+    # 2011」이라 적었는데 실제로는 53/55/56/57 이었다. 문장의 네 수를 자료에서 센다.
+    n_short = {}
+    for y in (2008, 2009, 2010, 2011):
+        g = (lo_.loc[y] - hi_.loc[y]).fillna(0).abs() if y in lo_.index else None
+        n_short[y] = int((g > 0.5).sum()) if g is not None else None
+    m = rx.search(r"(\d+)\s+columns in 2008, (\d+) in 2009, (\d+) in 2010, (\d+) in 2011", txt)
+    said = tuple(int(v) for v in m.groups()) if m else None
+    check(said == tuple(n_short[y] for y in (2008, 2009, 2010, 2011)),
+          "README 의 세종 wide 열 수가 자료와 같다", (said, n_short))
+
+    # 2026-09-25: README 가 다문화 말단이 소계보다 모자란 읍면동을 「about 1,400」
+    # 이라 적었는데 2024 년에 2,143 이었다. 문장의 2024 값을 자료에서 센다.
+    mc = pd.read_csv(DD + "multicultural_households.csv", encoding="utf-8-sig",
+                     low_memory=False)
+    fam = {"결혼이민자귀화자_소계": ["결혼이민자", "귀화자등"],
+           "자녀_소계": ["자녀_귀화인지외국국적", "자녀_국내출생"],
+           "기타동거인_소계": ["기타동거인_내국인", "기타동거인_외국인"]}
+    g = mc[mc["year"] == 2024].pivot_table(
+        index=["sido", "sigungu", "eupmyeondong"], columns="category",
+        values="n", aggfunc="sum")
+    short = np.zeros(len(g), bool)
+    for sub, leaves in fam.items():
+        L = g.reindex(columns=leaves).fillna(0).sum(axis=1)
+        S = g.reindex(columns=[sub]).iloc[:, 0]
+        short |= (S.notna() & (L < S)).values
+    m = rx.search(r"\(([\d,]+) of ([\d,]+)\s+in 2024\)", txt)
+    said = tuple(int(v.replace(",", "")) for v in m.groups()) if m else None
+    check(said == (int(short.sum()), len(g)),
+          "README 의 다문화 소계 부족 읍면동 수(2024)가 자료와 같다",
+          (said, (int(short.sum()), len(g))))
 
 
 # --------------------------------------------------- 4. 공개된 v1.1.0 대비
@@ -282,6 +324,14 @@ def refugee_language():
           rl[rl["status"] == "인도적체류"]["language"].tolist()[:8])
     en_gap = rl[rl["language_en"].astype(str).str.contains("[가-힣]", regex=True)]
     check(len(en_gap) == 0, "영문 칸에 한글이 없다", en_gap["language_en"].tolist())
+    # 2026-09-25: 난민 국적표만 러시아를 「러시아」로 적어 crosswalk_country 의 표준
+    # 이름(러시아(연방))과 붙지 않았다. 다른 국적표와 같이 표준 이름만 쓰는지 본다.
+    rn = pd.read_csv(os.path.join(STG, "data", "detailed_data",
+                                  "refugee_by_nationality.csv"), encoding="utf-8-sig")
+    cw = pd.read_csv(os.path.join(STG, "data", "detailed_data",
+                                  "crosswalk_country.csv"), encoding="utf-8-sig")
+    off = sorted(set(rn["country"]) - set(cw["country"]))
+    check(not off, "난민 국적표의 국적이 모두 crosswalk_country 의 표준 이름이다", off)
 
 
 # --------------------------------------------------- 6. 쓰는 사람의 자리

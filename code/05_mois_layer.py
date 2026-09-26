@@ -223,6 +223,27 @@ def split_sub_gu(name: str):
     return None
 
 
+def resolve_sigungu_row(name, city_ctx):
+    """A district row of the 2016+ 읍면동 and 다문화 sheets -> (sigungu, new city_ctx).
+
+    Most editions print a general district with its city glued on ('창원시성산구'),
+    which split_sub_gu takes apart. The 2024 edition prints the city once
+    ('창원시', '포항시', '전주시') and then its general districts bare ('성산구',
+    '남구', '완산구'), so the city was lost: nine districts came out as '성산구' or
+    '남구', unlike every other year and every other file, and a bare 남구 cannot be
+    told from the 남구 of a metropolitan city by name. Remember the last city row
+    that has general districts and put it back on the bare ones. 2026-09-25.
+    """
+    sub = split_sub_gu(name)
+    if sub:
+        return sub[0] + " " + sub[1], sub[0]
+    if name in GU_BY_CITY:
+        return name, name
+    if city_ctx and name in GU_BY_CITY.get(city_ctx, ()):
+        return city_ctx + " " + name, city_ctx
+    return name, None
+
+
 def strip_gu_prefix(name: str, sigungu) -> str:
     """Drop a 일반구 the source printed in front of a 읍면동 name.
 
@@ -973,6 +994,7 @@ def _parse_eupmyeondong_sheet_2016plus(path: Path, year: int, sheet: str) -> lis
     rows = []
     current_sido = None
     current_sigungu = None
+    city_ctx = None
     for i in range(start, len(df)):
         name = clean_region_name(df.iat[i, 0])
         if not name:
@@ -985,16 +1007,11 @@ def _parse_eupmyeondong_sheet_2016plus(path: Path, year: int, sheet: str) -> lis
         if kind == "sido":
             current_sido = canon_sido(name)
             current_sigungu = None
+            city_ctx = None
             continue
 
         if kind == "sigungu":
-            # detect sub-gu under parent 시
-            sub = split_sub_gu(name)
-            if sub:
-                parent, gu = sub
-                current_sigungu = parent + " " + gu
-            else:
-                current_sigungu = name
+            current_sigungu, city_ctx = resolve_sigungu_row(name, city_ctx)
             continue
 
         if kind == "eupmyeondong":
@@ -1046,6 +1063,7 @@ def _parse_multicultural_sheet(path: Path, year: int, sheet: str) -> list[dict]:
     rows = []
     current_sido = None
     current_sigungu = None
+    city_ctx = None
     for i in range(start, len(df)):
         name = clean_region_name(df.iat[i, 0])
         if not name:
@@ -1057,10 +1075,10 @@ def _parse_multicultural_sheet(path: Path, year: int, sheet: str) -> list[dict]:
         if kind == "sido":
             current_sido = canon_sido(name)
             current_sigungu = None
+            city_ctx = None
             continue
         if kind == "sigungu":
-            sub = split_sub_gu(name)
-            current_sigungu = (sub[0] + " " + sub[1]) if sub else name
+            current_sigungu, city_ctx = resolve_sigungu_row(name, city_ctx)
             continue
         if kind == "eupmyeondong":
             if current_sido == "세종특별자치시" and current_sigungu is None:

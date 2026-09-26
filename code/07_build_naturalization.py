@@ -85,6 +85,11 @@ def build_panel():
              "귀화소계", "일반귀화", "간이귀화", "특별귀화", "수반취득", "귀화",
              "국적회복", "국적판정", "국적상실", "국적이탈", "국적취득(인지)",
              "국적취득(재취득)", "국적취득", "국적선택", "국적보유"]
+    # 2014-2018 print the two acquisition routes under short headers; without the
+    # alias those columns were silently dropped from both panels
+    TYPE_ALIAS = {"취득인지": "국적취득(인지)", "재취득": "국적취득(재취득)"}
+    # a parent row footnoted "한국계 포함" (2017) already contains this subgroup row
+    KOREAN_SUB = {"중국": "한국계중국인", "러시아(연방)": "한국계러시아인"}
 
     CANON, REGION = COUNTRY_CANONICAL, COUNTRY_REGION
 
@@ -122,7 +127,7 @@ def build_panel():
     def header_row(df):
         """Row index whose cells name the processing types."""
         for r in range(min(8, len(df))):
-            cells = {norm(v) for v in df.iloc[r].tolist()}
+            cells = {TYPE_ALIAS.get(norm(v), norm(v)) for v in df.iloc[r].tolist()}
             if sum(1 for c in cells if c in TYPES and c not in ("총계", "총합계", "합계", "계")) >= 2:
                 return r
         return None
@@ -133,17 +138,22 @@ def build_panel():
         hr = header_row(df)
         if hr is None:
             return []
-        head = [norm(v) for v in df.iloc[hr].tolist()]
+        head = [TYPE_ALIAS.get(norm(v), norm(v)) for v in df.iloc[hr].tolist()]
         type_cols = {c: head[c] for c in range(len(head)) if head[c] in TYPES}
         if not type_cols:
             return []
         first_type = min(type_cols)
-        rows, band = [], 0
+        # footnotes such as "1) 한국계 포함, 2) 한국계러시아인 포함" (2017)
+        notes = {m for r in range(df.shape[0]) for c in range(min(3, df.shape[1]))
+                 for m, _ in re.findall(r"(\d)\)([^,\d]*포함)", norm(df.iat[r, c]))}
+        recs = []
         for r in range(hr + 1, df.shape[0]):
             labels = [norm(df.iat[r, c]) for c in range(first_type)]
             vals = {t: num(df.iat[r, c]) for c, t in type_cols.items()}
-            if not any(v is not None for v in vals.values()):
-                continue
+            if any(v is not None for v in vals.values()):
+                recs.append((labels, vals))
+        rows, band, folded = [], 0, set()
+        for i, (labels, vals) in enumerate(recs):
             if kind == "age":
                 # bands come in publication order; the source labels them four
                 # different ways, so position is the only stable key
@@ -154,24 +164,48 @@ def build_panel():
                 unit = AGE_BANDS[band]
                 band += 1
             else:
-                # 2009-2013 print the English name in a second label column, so the
-                # unit is the Korean one: everything in this project keys on it
-                name = next((l for l in labels
-                             if l and re.search(r"[가-힣]", l)
-                             and l not in TOTAL_LABELS and not is_total(l)
-                             and not is_aggregate(l)), None)
-                if not name:
-                    continue
-                # a bracketed label is a memo row for a group already counted in the
-                # line above it (2017 prints (타이완) and (홍콩) inside 중국), so adding
-                # it would double count
-                if name.startswith("("):
-                    continue
-                name = re.sub(r"\d\)$", "", name)          # footnote markers: 중국1)
-                unit = CANON.get(name, name)
+                # the rightmost filled label is the row's own: 2019 and 2024 repeat
+                # the continent (and 기타) in the first column on every row
+                last = next((l for l in reversed(labels) if l), "")
+                if is_total(last) or is_aggregate(last) or last in TOTAL_LABELS:
+                    # a 기타 subtotal with no rows under it (2014, 2017, 2018, 2020,
+                    # 2021) is itself the residual unit
+                    nxt = recs[i + 1][0] if i + 1 < len(recs) else None
+                    nlast = next((l for l in reversed(nxt) if l), "") if nxt else ""
+                    if any(l.startswith("기타") for l in labels) and (
+                            nxt is None or is_total(nlast) or is_aggregate(nlast)):
+                        unit = "기타"
+                    else:
+                        continue
+                else:
+                    # 2009-2013 print the English name in a second label column, so
+                    # the unit is the Korean one: everything in this project keys on it
+                    name = next((l for l in reversed(labels)
+                                 if l and re.search(r"[가-힣]", l)
+                                 and l not in TOTAL_LABELS and not is_total(l)
+                                 and not is_aggregate(l)), None)
+                    if not name:
+                        continue
+                    m = re.search(r"(\d)\)$", name)            # footnote markers: 중국1)
+                    name = re.sub(r"\d\)$", "", name)
+                    # 2017 brackets (타이완) and (홍콩); they are separate units and the
+                    # 아시아주 소계 (9,942) only closes with them added
+                    if name.startswith("(") and name.endswith(")"):
+                        name = name[1:-1]
+                    unit = CANON.get(name, name)
+                    if m and m.group(1) in notes:
+                        folded.add(unit)
             for t, v in vals.items():
                 if v is not None:
                     rows.append((unit, t, v))
+        # take the 한국계 subgroup back out of a parent printed "한국계 포함", so 중국
+        # means China excluding Korean-Chinese in every edition
+        for parent in folded:
+            child = KOREAN_SUB.get(parent)
+            sub = {t: v for u, t, v in rows if u == child}
+            if sub:
+                rows = [(u, t, v - sub.get(t, 0)) if u == parent else (u, t, v)
+                        for u, t, v in rows]
         return rows
 
 
@@ -187,10 +221,21 @@ def build_panel():
                 agg = {}
                 for unit, t, v in rows:
                     agg[(unit, t)] = agg.get((unit, t), 0) + v
+                # an edition with no 한국계 row (2018) folds it into the parent with no
+                # split printed; key it apart so no series mixes the two definitions
+                if kind == "country":
+                    present = {u for u, _ in agg}
+                    for parent, child in KOREAN_SUB.items():
+                        if parent in present and child not in present:
+                            combo = f"{parent}+{child}"
+                            agg = {((combo if u == parent else u), t): v
+                                   for (u, t), v in agg.items()}
                 # 귀화소계 = 일반 + 간이 + 특별 + 수반취득, the definition the annual
                 # table uses for 귀화; derive it where the edition splits the routes
                 units = {u for u, _ in agg}
                 for u in units:
+                    if (u, "귀화소계") in agg:
+                        continue        # printed 2014-2018; derive only where absent
                     parts = [agg.get((u, t)) for t in ("일반귀화", "간이귀화", "특별귀화", "수반취득")]
                     if any(p is not None for p in parts):
                         agg[(u, "귀화소계")] = sum(p or 0 for p in parts)
@@ -218,6 +263,9 @@ def build_panel():
             ["naturalization_data"]["annual"]
         cdf, adf = pd.DataFrame(out_c), pd.DataFrame(out_a)
 
+        # 원자료 자체의 어긋남. 2012년판 연령표의 칸 합이 제 총계보다 1 적다.
+        AGE_RAW_RESIDUAL = {(2012, -1)}
+
         def natz_of(df, y):
             sub = df[df.year == y]
             return int(sub[sub.type == "귀화소계"].n.sum() or sub[sub.type == "귀화"].n.sum())
@@ -232,11 +280,17 @@ def build_panel():
             da = a_ - ref if ref else None
             print(f"  {y:<6}{(ref if ref else '-'):>9}{c:>12,}"
                   f"{(dc if dc is not None else '-'):>7}{a_:>10,}{(da if da is not None else '-'):>7}")
-            if ref and abs(dc) > 10:
-                off.append((y, dc))
+            # 2026-09-25: 관문. 전에는 10 명을 넘을 때만 「NOTE」를 찍고 넘어갔다.
+            # 그래서 2017년 +1,357(중국 행이 「한국계 포함」인데 한국계중국인을 또
+            # 더했다)이 「원자료가 그렇다」는 설명과 함께 실렸다. 원자료의 총계는
+            # 연도별 추이 표와 해마다 같다. 차이는 파서의 몫이므로 0 이어야 한다.
+            if ref and dc != 0:
+                off.append((y, "country", dc))
+            if ref and da != 0 and (y, da) not in AGE_RAW_RESIDUAL:
+                off.append((y, "age", da))
         if off:
-            print(f"\n  NOTE {off}: that edition's own country rows do not sum to its printed\n"
-                  f"  continent subtotals. Published as issued.")
+            raise SystemExit(f"naturalization panels do not reconcile to the annual "
+                             f"귀화 series: {off}")
 
     main()
 
@@ -281,6 +335,8 @@ def export_panels():
     COUNTRY_EN.setdefault("북한", "North Korea")
     COUNTRY_EN.setdefault("한국", "Republic of Korea")
     COUNTRY_EN.setdefault("케이맨제도", "Cayman Islands")
+    COUNTRY_EN.setdefault("중국+한국계중국인", "China incl. Korean-Chinese (2018 edition prints no split)")
+    COUNTRY_EN.setdefault("러시아(연방)+한국계러시아인", "Russia incl. Korean-Russian (2018 edition prints no split)")
 
 
     def w(fn, head, rows):

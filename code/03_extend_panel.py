@@ -5,8 +5,9 @@ turns that into the panel: local Moran clusters onto every district-year, the
 province series back to 2006 with its diversity columns, the national series
 (undocumented residents, national language demand), one label per country with
 the language series recomputed on the merged names, the district-by-visa panel,
-refugee language demand, and the 2008-2013 district and age backfills out of the
-pre-2014 table family.
+refugee language demand, the 2008-2013 district backfill out of the pre-2014
+table family, and the nationality x age x sex table on both population bases
+(registered 2009-, staying 2011-).
 
 Section order is execution order and it matters: the spatial clusters must come
 before the backfills, whose new records carry no cluster of their own, and the
@@ -433,10 +434,25 @@ def build_undocumented():
     RAW = os.path.join(ROOT, "01_raw_data")
     OUT = os.path.join(ROOT, "05_dashboard", "data", "undocumented.json")
 
+    # 2014-2018년판은 「남미주계」와 「오세아니아주계」와 「기타계」를 쓰는데 이
+    # 표에 그 셋이 없어서 **다섯 해 내내 두세 줄이 조용히 버려지고 있었다**
+    # (2014년 대륙 합이 총계보다 1,645 적었다). 화면이 최신 해만 싣고 있어서
+    # 눈에 띌 자리가 없었다. 아래 `by_continent` 합 관문이 이제 그것을 막는다.
     CONTI = {"아시아주": "아시아", "아시아주계": "아시아", "북아메리카주": "북아메리카", "북미주계": "북아메리카",
-             "남아메리카주": "남아메리카", "중남미주계": "남아메리카", "유럽주": "유럽", "구주계": "유럽",
+             "남아메리카주": "남아메리카", "중남미주계": "남아메리카", "남미주계": "남아메리카",
+             "유럽주": "유럽", "구주계": "유럽",
              "유럽주계": "유럽", "아프리카주": "아프리카", "아프리카주계": "아프리카",
-             "오세아니아주": "오세아니아", "대양주계": "오세아니아", "기타": "기타", "신원미상": "기타"}
+             "오세아니아주": "오세아니아", "대양주계": "오세아니아", "오세아니아주계": "오세아니아",
+             "기타": "기타", "기타계": "기타", "신원미상": "기타",
+             # 2016년판은 「무  국  적」(사이에 공백)을 한 줄로 싣는다.
+             # 79명이라 대륙 합이 총계보다 그만큼 적었다.
+             "무국적": "기타", "국적불명": "기타"}
+
+    def _sq(x):
+        """줄 이름의 공백을 지운다. 「무  국  적」처럼 글자 사이를 벌려
+        놓은 해가 있다."""
+        return re.sub(r"\s+", "", str(x))
+
     CONTI_EN = {"아시아": "Asia", "북아메리카": "N. America", "남아메리카": "S. America",
                 "유럽": "Europe", "아프리카": "Africa", "오세아니아": "Oceania", "기타": "Other"}
 
@@ -449,7 +465,10 @@ def build_undocumented():
         project already uses for a residual status.
         """
         s = str(col)
-        m = re.search(r"([A-H])\s*-?\s*(\d{1,2})", s)
+        # 글자를 A-H 로 잡고 있었다. 연보에 **관광상륙(T-1)** 칸이 있어서
+        # 2015년과 2016년에 한 명씩이 조용히 버려졌다. 자격 합이 총계보다
+        # 1 적었고, 화면이 상위 열 개만 실어서 드러날 자리가 없었다.
+        m = re.search(r"([A-Z])\s*-?\s*(\d{1,2})", s)
         if m:
             return m.group(1) + m.group(2)
         if "소계" in s or "합계" in s or "총" in s:
@@ -481,8 +500,13 @@ def build_undocumented():
         df = pd.read_excel(f, header=0)
         cols = list(df.columns)
         c_cont, c_sex, c_tot = cols[0], cols[1], cols[2]
+        # 2019-2024년판은 대륙 이름을 「총계」 줄에만 적고 남성·여성 줄은 비워 둔다
+        # (병합 셀). 채우지 않으면 아래의 「총합계 + 남성」이 한 번도 맞지 않아 전국
+        # 남녀가 2019-2024년 내내 0으로 남았다(화면 첫 쪽 표가 0을 실었다). 2026-09-25.
+        df[c_cont] = df[c_cont].ffill()
         vmap = {c: vcode(c) for c in cols[3:] if vcode(c)}
         rec = {"total": 0, "male": 0, "female": 0, "by_visa": {}, "by_continent": {}}
+        cm = cf = 0
         for _, r in df.iterrows():
             cont, sex = str(r[c_cont]).strip(), str(r[c_sex]).strip()
             if cont == "총합계" and rec["total"] == 0:
@@ -495,6 +519,16 @@ def build_undocumented():
                 rec["female"] = num(r[c_tot])
             elif sex == "총계" and cont in CONTI:
                 rec["by_continent"][CONTI[cont]] = rec["by_continent"].get(CONTI[cont], 0) + num(r[c_tot])
+            elif sex == "남성" and cont in CONTI:
+                cm += num(r[c_tot])
+            elif sex == "여성" and cont in CONTI:
+                cf += num(r[c_tot])
+        # 2019년판에는 전국 남녀 줄이 없다. 대륙 줄을 더한다.
+        if not rec["male"] and not rec["female"]:
+            rec["male"], rec["female"] = cm, cf
+        if rec["male"] + rec["female"] != rec["total"]:
+            raise SystemExit("남녀 합 %d 이 총계 %d 과 다르다 (%s)"
+                             % (rec["male"] + rec["female"], rec["total"], f))
         return rec
 
     def parse_mid(f):
@@ -519,8 +553,8 @@ def build_undocumented():
                 rec["male"] = num(r[c_sub])
             elif is_total and "F" in sex:
                 rec["female"] = num(r[c_sub])
-            if nat_raw in CONTI:
-                rec["by_continent"][CONTI[nat_raw]] = num(r[c_tot])
+            if _sq(nat_raw) in CONTI:
+                rec["by_continent"][CONTI[_sq(nat_raw)]] = num(r[c_tot])
         return rec
 
     files = find_files()
@@ -535,6 +569,25 @@ def build_undocumented():
             else:
                 continue  # 2011-2013 multi-header handled separately if needed
             if rec["total"] > 0:
+                vs = sum(rec["by_visa"].values())
+                if vs != rec["total"]:
+                    raise SystemExit(
+                        "%d: 자격 합 %d 이 총계 %d 과 %+d 다르다. 연보의 칸 "
+                        "이름에서 코드를 못 얻었을 수 있다" % (y, vs, rec["total"],
+                                                    vs - rec["total"]))
+                cs = sum(rec["by_continent"].values())
+                gap = cs - rec["total"]
+                # 2014년판은 연보 제 대륙 줄의 합이 제 총계보다 1 많다
+                # (198,568+3,727+1,059+1,872+587+2,851+115 = 208,779 대
+                # 208,778). 원본의 어긋남이므로 그대로 싣고 소리만 낸다.
+                # 몇 줄이 통째로 빠지면 차이가 천 단위가 되므로 거기서 멈춘다.
+                if abs(gap) > 2:
+                    raise SystemExit(
+                        "%d: 대륙 합 %d 이 총계 %d 과 %+d 다르다. 연보가 쓰는 "
+                        "대륙 이름이 CONTI 에 없을 수 있다 (%s)"
+                        % (y, cs, rec["total"], gap, sorted(rec["by_continent"])))
+                if gap:
+                    print("  %d: 대륙 합이 총계와 %+d (연보 원본의 어긋남)" % (y, gap))
                 data[y] = rec
                 print(f"{y}: total={rec['total']:>7} visa_codes={len(rec['by_visa'])} cont={len(rec['by_continent'])}")
         except Exception as e:
@@ -558,6 +611,420 @@ def build_undocumented():
     print("wrote", OUT)
 
 
+
+
+def build_undocumented_duration():
+    """Parse the duration-of-overstay table (연보 6장 Ⅰ_2) into undocumented.json.
+
+    The status-on-entry table (Ⅰ_1) was the only one read. This one says **how
+    long** each person has been out of status, and from 2014 on, when the
+    yearbook dropped the nationality rows, it is the most informative axis the
+    source still publishes. It also reaches back to 2010, four years earlier
+    than the status table.
+
+    The buckets are disjoint despite the "이하" wording: 「2개월이하」 means more
+    than one month and at most two. They sum to the year's grand total exactly,
+    in every year from 2010 to 2025, which is the check below.
+
+    Three layouts:
+    - 2019-2025  [대륙, 성별, 총합계, <bucket cols>], one row per sex
+    - 2014-2018  the same but every cell holds the three sexes joined by newlines
+    - 2010-2013  as 2014-2018
+
+    Only the national grand-total row is kept; the page does not use the
+    continent split of this table.
+    """
+    import glob as _glob
+    RAW = os.path.join(ROOT, "01_raw_data")
+    OUT = os.path.join(ROOT, "05_dashboard", "data", "undocumented.json")
+    if not os.path.exists(OUT):
+        raise SystemExit("run build_undocumented() first: %s" % OUT)
+
+    def num(x):
+        s = str(x).replace(",", "").strip()
+        if not s or s == "nan":
+            return 0
+        try:
+            return int(float(s))
+        except Exception:
+            return 0
+
+    YB = os.path.join(RAW, "출입국통계연보", "*")
+    files = {}
+    for f in (_glob.glob(os.path.join(YB, "*체류기간별 불법체류*외국인 현황.xls*"))
+              + _glob.glob(os.path.join(YB, "*체류기간별_불법체류*"))):
+        m = re.search(r"(20\d\d)", os.path.basename(f)) or re.search(r"(20\d\d)", f)
+        if m:
+            files[int(m.group(1))] = f
+
+    BUCKET = re.compile(r"^\d+(개월|년)(이하|초과)$")
+    out = {}
+    for y in sorted(files):
+        df = pd.read_excel(files[y], header=None)
+        hdr = next((i for i in range(min(8, len(df)))
+                    if any("개월이하" in str(x) for x in df.iloc[i].tolist())), None)
+        if hdr is None:
+            print("  %d: no header row in the duration table" % y)
+            continue
+        cols = [str(x).strip() for x in df.iloc[hdr].tolist()]
+        cells = [(j, c) for j, c in enumerate(cols) if BUCKET.match(c)]
+        row = next((r for _, r in df.iloc[hdr + 1:].iterrows()
+                    if str(r[0]).strip() in ("계", "총합계", "총계")), None)
+        if row is None:
+            print("  %d: no grand-total row in the duration table" % y)
+            continue
+        # 2014-2018 join the three sexes into one cell with newlines; the first
+        # line is the total. Reading the cell whole gives a number ten times too
+        # big and no check would notice, so split first.
+        vals = {}
+        for j, c in cells:
+            raw = str(row[j])
+            vals[c] = num(raw.split("\n")[0] if "\n" in raw else raw)
+        out[str(y)] = vals
+
+    d = json.load(open(OUT, encoding="utf-8"))
+    kept, skipped = 0, []
+    for ys, rec in d["national"].items():
+        v = out.get(ys)
+        if not v:
+            skipped.append(ys)
+            continue
+        s = sum(v.values())
+        if s != rec["total"]:
+            raise SystemExit(
+                "%s: duration buckets sum to %d, the year's total is %d"
+                % (ys, s, rec["total"]))
+        rec["by_duration"] = v
+        kept += 1
+    d["duration_note_ko"] = ("칸은 서로 겹치지 않습니다. 「2개월이하」는 1개월을 "
+                             "넘고 2개월까지입니다.")
+    d["duration_note_en"] = ("The buckets are disjoint: 2 months or less means "
+                             "over one month and up to two.")
+    json.dump(d, open(OUT, "w", encoding="utf-8"), ensure_ascii=False)
+    print("duration added for %d years%s" % (
+        kept, (", no table for " + ", ".join(skipped)) if skipped else ""))
+
+
+
+def build_undocumented_country():
+    """Parse 표 6-4 국가별 불법체류 외국인 현황 out of the yearbook PDF.
+
+    **This table is not in the Excel bundle.** The yearbook ships its statistical
+    tables as an Excel zip, and chapter 6 of that zip has exactly two files, by
+    status on entry and by length of overstay. The narrative PDF carries four
+    more, and one of them is the nationality split, every year, top ten plus a
+    residual. Reading only the Excel bundle is why this project believed for a
+    while that the yearbook stopped publishing nationality after 2013.
+
+    The 2025 edition prints five years at once (2021-2025), so one PDF gives the
+    whole recent panel. The extracted lines are regular:
+
+        태국 142,677 147,481 152,265 137,035 115,851 32.4%
+
+    The sum of the countries equals the year's grand total, which is the check.
+
+    공공데이터포털 15112636 (법무부_불법체류 외국인 현황) carries the same table for
+    2010-2022 as a CSV, and the overlapping years agree exactly; that file is the
+    way to extend this back before 2021 if the longer panel is ever wanted.
+    """
+    import csv
+    import io
+    import pypdf
+    RAW = os.path.join(ROOT, "01_raw_data")
+    OUT = os.path.join(ROOT, "05_dashboard", "data", "undocumented.json")
+    pdfs = sorted(glob.glob(os.path.join(
+        RAW, "출입국통계연보", "*", "*통계연보(전체).pdf")))
+    if not pdfs:
+        print("no yearbook PDF; skipping the nationality table")
+        return
+    src = pdfs[-1]
+
+    def num(s):
+        return int(str(s).replace(",", ""))
+
+    # 뽑아낸 글에 제어문자가 섞여 있다. 2025년판은 나라마다 둘째 수 뒤에
+    # BEL()이 붙어 있어 공백으로 안 읽히고 줄이 통째로 안 걸린다.
+    ctrl = re.compile("[" + "".join(chr(c) for c in list(range(0, 9)) + [11, 12] + list(range(14, 32))) + "]")
+
+    rdr = pypdf.PdfReader(src)
+    page = None
+    for pg in rdr.pages:
+        t = ctrl.sub(" ", pg.extract_text() or "")
+        if "국가별 불법체류" in t and "합계" in t:
+            page = t
+            break
+    if page is None:
+        raise SystemExit("표 6-4 를 %s 에서 못 찾았다" % os.path.basename(src))
+
+    # 연도는 「구분 2021년 … 2025년」 머리줄에서만 읽는다. 쪽 전체에서 긁으면
+    # 바로 위 문장의 「2025년 말 기준 …」이 먼저 잡혀 차례가 뒤집힌다.
+    head = next((l for l in page.split(chr(10))
+                 if l.strip().startswith("구분") and "년" in l), "")
+    years = re.findall(r"(20\d\d)년", head)
+    if len(years) < 2:
+        raise SystemExit("표 6-4 의 연도 머리줄을 못 읽었다: %r" % head)
+
+    # 나라 줄: 이름 + 연도 수만큼의 수 + 구성비. 합계 줄도 같은 모양이다.
+    row = re.compile(r"^(합계|[가-힣A-Za-z·\s]+?)\s+((?:[\d,]+\s+){%d})"
+                     r"([\d.]+%%)?\s*$" % len(years))
+    tot, by = {}, {}
+    for line in page.split("\n"):
+        m = row.match(line.strip())
+        if not m:
+            continue
+        name = m.group(1).strip()
+        vals = [num(x) for x in m.group(2).split()]
+        if name == "합계":
+            tot = dict(zip(years, vals))
+        else:
+            by[name] = dict(zip(years, vals))
+    if not tot or not by:
+        raise SystemExit("표 6-4 를 읽었으나 합계 %d, 나라 %d" % (len(tot), len(by)))
+
+    # 연보 PDF 는 다섯 해만 싣는다. 그 앞 해는 공공데이터포털 15112636 이
+    # 같은 표를 2010-2022년 CSV 로 싣는다(01_raw_data/공공데이터포털/… 의
+    # 출처.md). 겹치는 해는 나라마다 같아야 하고, 다르면 멈춘다.
+    portal = {}
+    pc = os.path.join(RAW, "공공데이터포털", "법무부_불법체류 외국인 현황_20221231",
+                      "법무부_국적별 불법체류 외국인 현황(2010~2022).csv")
+    if os.path.exists(pc):
+        rowsp = list(csv.reader(io.open(pc, encoding="utf-8")))
+        names = [c.strip() for c in rowsp[0][1:]]
+        for r in rowsp[1:]:
+            portal[r[0].strip()] = {k: num(v) for k, v in zip(names, r[1:])
+                                    if str(v).strip()}
+        for y in sorted(set(portal) & set(by and years or [])):
+            a = {k: v[y] for k, v in by.items() if v.get(y)}
+            if a and a != portal[y]:
+                raise SystemExit("%s: 포털 CSV 와 연보 PDF 가 다르다 %s"
+                                 % (y, {k: (portal[y].get(k), a.get(k))
+                                        for k in set(a) | set(portal[y])
+                                        if portal[y].get(k) != a.get(k)}))
+        print("  포털 CSV %d해와 맞대어 봤다 (겹치는 해 어긋남 0)" % len(portal))
+
+    d = json.load(open(OUT, encoding="utf-8"))
+    added = []
+    for y in sorted(set(years) | set(portal)):
+        pairs = [[k, v[y]] for k, v in by.items() if v.get(y)]
+        src_name = "연보 PDF"
+        if not pairs and y in portal:
+            pairs = [[k, v] for k, v in portal[y].items() if v]
+            src_name = "포털 CSV"
+        s = sum(v for _, v in pairs)
+        if y in tot and int(tot[y]) != s:
+            raise SystemExit("%s: 나라 합 %d 이 표의 합계 %d 과 다르다"
+                             % (y, s, tot[y]))
+        rec = d["national"].get(y)
+        if rec is None:
+            continue
+        if rec["total"] != s:
+            raise SystemExit("%s: 나라 합 %d 이 연보 총계 %d 과 다르다"
+                             % (y, s, rec["total"]))
+        # 「기타」는 상위 열 나라를 뺀 나머지다. 나라가 아니므로 끝에 둔다.
+        pairs.sort(key=lambda kv: (kv[0] == "기타", -kv[1]))
+        rec["by_country"] = pairs
+        added.append(y + ("*" if src_name == "포털 CSV" else ""))
+    d["country_note_ko"] = ("연보 6장 표 6-4. 상위 열 나라와 나머지를 「기타」로 "
+                            "묶은 것입니다. 엑셀 통계표에는 없고 연보 본문에만 "
+                            "있습니다.")
+    d["country_note_en"] = ("Yearbook ch.6 table 6-4: the ten largest "
+                            "nationalities and a residual. It is in the "
+                            "narrative PDF, not the Excel tables.")
+    json.dump(d, open(OUT, "w", encoding="utf-8"), ensure_ascii=False)
+    print("nationality added for %s (* = 포털 CSV, 나머지는 %s)"
+          % (", ".join(added), os.path.basename(src)))
+
+
+def build_undocumented_age():
+    """Parse 표 6-3 연령별 불법체류 외국인 현황 out of the yearbook PDF.
+
+    Age is the one axis the yearbook publishes for this population that says
+    something the visa and duration tables cannot: the people out of status are
+    overwhelmingly of working age, and a third of them are in their thirties.
+
+    **It is a single-year snapshot.** The table is printed 기준 the edition's own
+    31 December, with no back years, so each edition carries exactly one column
+    set. Only the 2025 PDF is in this repository, so only 2025 gets the split.
+    That is a property of the source, not a gap to fill by interpolation.
+
+    The buckets sum to the year's grand total, which is the check.
+    """
+    import pypdf
+    RAW = os.path.join(ROOT, "01_raw_data")
+    OUT = os.path.join(ROOT, "05_dashboard", "data", "undocumented.json")
+    pdfs = sorted(glob.glob(os.path.join(
+        RAW, "출입국통계연보", "*", "*통계연보(전체).pdf")))
+    if not pdfs:
+        print("no yearbook PDF; skipping the age table")
+        return
+    src = pdfs[-1]
+    ctrl = re.compile("[" + "".join(chr(c) for c in list(range(0, 9)) + [11, 12]
+                                    + list(range(14, 32))) + "]")
+    rdr = pypdf.PdfReader(src)
+    page = None
+    for pg in rdr.pages:
+        t = ctrl.sub(" ", pg.extract_text() or "")
+        if "연령별 불법체류" in t and "세 이상" in t:
+            page = t
+            break
+    if page is None:
+        raise SystemExit("표 6-3 를 %s 에서 못 찾았다" % os.path.basename(src))
+
+    # 기준 해는 제목의 「2025.12.31. 기준」에서 읽는다. 쪽 어디서나 긁으면 쪽
+    # 번호나 본문의 다른 해가 먼저 잡힌다.
+    ttl = next((l for l in page.split(chr(10)) if "연령별 불법체류" in l), "")
+    my = re.search(r"(20\d\d)\.\s*12", ttl)
+    if not my:
+        raise SystemExit("표 6-3 의 기준 해를 못 읽었다: %r" % ttl)
+    year = my.group(1)
+
+    # 머리줄과 값줄이 따로 뽑혀 나온다. 「계 19세 이하 …」 다음 줄이 값이다.
+    lines = [l.strip() for l in page.split(chr(10))]
+    hi = next((i for i, l in enumerate(lines)
+               if l.startswith("계") and "세 이상" in l), None)
+    if hi is None:
+        raise SystemExit("표 6-3 의 머리줄을 못 찾았다")
+    labels = re.findall(r"19세 이하|\d+-\d+세|\d+세 이상", lines[hi])
+    vals = []
+    for l in lines[hi + 1:hi + 4]:
+        vals = [int(x.replace(",", "")) for x in re.findall(r"[\d,]+", l)]
+        if len(vals) == len(labels) + 1:
+            break
+    if len(vals) != len(labels) + 1:
+        raise SystemExit("표 6-3 의 값줄을 못 읽었다: 칸 %d, 수 %d"
+                         % (len(labels), len(vals)))
+    tot, nums = vals[0], vals[1:]
+    if sum(nums) != tot:
+        raise SystemExit("표 6-3: 연령 칸 합 %d 이 계 %d 과 다르다"
+                         % (sum(nums), tot))
+
+    d = json.load(open(OUT, encoding="utf-8"))
+    rec = d["national"].get(year)
+    if rec is None:
+        raise SystemExit("%s년이 undocumented.json 에 없다" % year)
+    if rec["total"] != tot:
+        raise SystemExit("%s: 연령표의 계 %d 이 연보 총계 %d 과 다르다"
+                         % (year, tot, rec["total"]))
+    rec["by_age"] = list(zip(labels, nums))
+    d["age_note_ko"] = ("연보 6장 표 6-3. 연보가 그해 12월 31일 기준 한 해만 "
+                        "싣습니다.")
+    d["age_note_en"] = ("Yearbook ch.6 table 6-3. The yearbook prints one year "
+                        "only, as of 31 December.")
+    json.dump(d, open(OUT, "w", encoding="utf-8"), ensure_ascii=False)
+    print("age added for %s (%d buckets, %s)"
+          % (year, len(nums), os.path.basename(src)))
+
+
+def build_undocumented_registered():
+    """Parse 표 6-5 연도별 등록외국인 중 불법체류 외국인 현황 out of the PDF.
+
+    This is a different population from the headline count, and the difference
+    matters. The headline 357,598 counts everyone out of status, most of whom
+    entered visa-free or on a short-term permit and never registered. Table 6-5
+    counts only people who **did** register and later fell out of status:
+    128,813 of 1,604,920 registered foreigners in 2025, which is the 8.0% the
+    yearbook calls 불법체류율 for this subgroup.
+
+    Dividing the headline count by the registered total, as the ratio chart on
+    the page does for the 등록 대비 line, answers a different question and gives
+    22.3%. Both are defensible; they are not the same number and the page should
+    carry the published one too.
+
+    The edition prints five years at once. Two checks: 합법체류 + 불법체류 equals
+    등록외국인 in every year, and 등록외국인 matches the registered series this
+    repository already carries.
+    """
+    import pypdf
+    RAW = os.path.join(ROOT, "01_raw_data")
+    OUT = os.path.join(ROOT, "05_dashboard", "data", "undocumented.json")
+    pdfs = sorted(glob.glob(os.path.join(
+        RAW, "출입국통계연보", "*", "*통계연보(전체).pdf")))
+    if not pdfs:
+        print("no yearbook PDF; skipping the registered-overstay table")
+        return
+    src = pdfs[-1]
+    ctrl = re.compile("[" + "".join(chr(c) for c in list(range(0, 9)) + [11, 12]
+                                    + list(range(14, 32))) + "]")
+    rdr = pypdf.PdfReader(src)
+    page = None
+    for pg in rdr.pages:
+        t = ctrl.sub(" ", pg.extract_text() or "")
+        if "등록외국인 중 불법체류" in t and "불법체류율" in t:
+            page = t
+            break
+    if page is None:
+        raise SystemExit("표 6-5 를 %s 에서 못 찾았다" % os.path.basename(src))
+
+    head = next((l for l in page.split(chr(10))
+                 if l.strip().startswith("구분") and "년" in l), "")
+    years = re.findall(r"(20\d\d)년", head)
+    if len(years) < 2:
+        raise SystemExit("표 6-5 의 연도 머리줄을 못 읽었다: %r" % head)
+
+    want = {"등록외국인": "reg", "합법체류": "legal", "불법체류": "undoc"}
+    got = {}
+    for line in page.split(chr(10)):
+        line = line.strip()
+        for ko, key in want.items():
+            if not line.startswith(ko) or key in got:
+                continue
+            nums = [int(x.replace(",", ""))
+                    for x in re.findall(r"\b[\d,]{4,}\b", line)]
+            if len(nums) >= len(years):
+                got[key] = dict(zip(years, nums[:len(years)]))
+    missing = sorted(set(want.values()) - set(got))
+    if missing:
+        raise SystemExit("표 6-5 에서 %s 줄을 못 읽었다" % missing)
+
+    for y in years:
+        a, b, c = got["legal"][y], got["undoc"][y], got["reg"][y]
+        if a + b != c:
+            raise SystemExit("%s: 합법 %d + 불법 %d 이 등록외국인 %d 과 다르다"
+                             % (y, a, b, c))
+
+    # 이 저장소가 이미 싣고 있는 등록외국인 수와 맞대어 본다. 해가 어긋나면
+    # 수만 단위로 벌어지므로 그것을 잡는 것이 이 검사의 목적이다.
+    #
+    # **똑같기를 바라면 안 된다.** 이 저장소의 등록외국인은 국적별 표를 더한
+    # 것이고 그 표에는 나라 192개만 있다. 연보의 총계에는 국적불명·무국적
+    # 나머지가 들어 있어서 해마다 170~200명쯤 더 크다(2025년 195명, 0.012%).
+    # 그 차이는 자료 구조에서 오는 것이라 없앨 수 없다. 그래서 0.1%를 넘을
+    # 때만 멈춘다 — 해를 잘못 읽으면 그 한계를 한참 넘는다.
+    dat = os.path.join(ROOT, "05_dashboard", "data", "data.json")
+    if os.path.exists(dat):
+        reg = json.load(open(dat, encoding="utf-8"))["populations"]["reg"]["data"]["ALL"]
+        gaps = []
+        for y in years:
+            mine = sum((reg.get(y) or {}).values())
+            if not mine:
+                continue
+            gap = got["reg"][y] - mine
+            if abs(gap) > 0.001 * got["reg"][y]:
+                raise SystemExit(
+                    "%s: 연보의 등록외국인 %d 과 이 저장소의 %d 이 %d 만큼 다르다"
+                    % (y, got["reg"][y], mine, gap))
+            gaps.append(gap)
+        if gaps:
+            print("  등록외국인 수를 이 저장소 값과 맞대어 봤다 "
+                  "(국적불명 나머지만큼 %d~%d명 차이)" % (min(gaps), max(gaps)))
+
+    d = json.load(open(OUT, encoding="utf-8"))
+    for y in years:
+        rec = d["national"].get(y)
+        if rec is None:
+            continue
+        rec["registered"] = {"reg": got["reg"][y], "legal": got["legal"][y],
+                             "undoc": got["undoc"][y],
+                             "rate": round(100.0 * got["undoc"][y]
+                                           / got["reg"][y], 1)}
+    d["registered_note_ko"] = ("연보 6장 표 6-5. 외국인등록을 한 뒤 기간을 넘긴 "
+                               "사람만 셉니다. 등록한 적 없이 초과 체류하는 "
+                               "사람은 여기 들지 않습니다.")
+    d["registered_note_en"] = ("Yearbook ch.6 table 6-5. It counts only people "
+                               "who registered and later fell out of status, "
+                               "not those who never registered.")
+    json.dump(d, open(OUT, "w", encoding="utf-8"), ensure_ascii=False)
+    print("registered-overstay added for %s" % ", ".join(years))
 
 def build_national_language():
     """National estimated-language series for the Overview tab, 2006-2024.
@@ -893,6 +1360,12 @@ def build_visa_sigungu():
         if not f:
             print(year, "FILE NOT FOUND"); continue
         parsed = harmonize_boundaries(parse_year(f))
+        # E-8 in the 2008-2009 editions is 연수취업, not the 계절근로 of 2021 on;
+        # 01_parse_yearbooks.split_e8 carries it as E8T, and so does this panel.
+        if year <= 2009:
+            for rec in parsed.values():
+                if "E8" in rec:
+                    rec["E8T"] = rec.get("E8T", 0) + rec.pop("E8")
         tot = sum(sum(r.values()) for r in parsed.values())
         print(f"{year}: {len(parsed)} districts, sum={tot:,}  [{os.path.basename(f)[:40]}]")
         if parsed:
@@ -1403,201 +1876,387 @@ def merge_sigungu_nationality():
 
 
 def extend_age_sex():
-    """Extend foreign_residents_by_age_sex back to 2009-2013 by parsing the
-    '국적 및 연령별 등록외국인 현황' yearbook tables. 2008 is skipped because its
-    5-year buckets start at 0-5 (not 0-4), incompatible with the 13-band convention.
+    """Nationality x age x sex, on the two population bases the yearbook uses.
 
-    Source layout 2009-2013:
-      col with header '국적'   -> Korean country name
-      col with header '연령'   -> English country name (header label is misleading)
-      col with header '총계'   -> Grand-Total (single integer)
-      col with header '성별'   -> sex marker, newline-stacked (e.g. '남(M)
-    여(F)')
-      col with header '합계'   -> total, newline-stacked T/M/F values
-      cols with '~세' / '세'   -> age band columns, newline-stacked values
+    The yearbook publishes this cross-tabulation twice, for two populations, and
+    the release carries both with a `population` column, the way
+    nationality_national.csv already does:
 
-    The newline stacking varies: total/aggregate rows have T/M/F, country rows
-    typically have just M/F. T is computed as M+F.
+      registered  국적(지역) 및 연령별 등록외국인 현황   2009-LAST_YEAR
+                  (2장 Ⅲ-2 through the 2013 edition, 2장 Ⅱ-2 from 2014)
+      stay        국적(지역) 및 연령별 체류외국인 현황   2011-LAST_YEAR
+                  (2장 Ⅱ-2 in 2011-2013, 2장 Ⅰ-2 from 2014). Stay adds the
+                  short-term sojourners and the F-4 residence reports to the
+                  registered population, so the two bases are never mixed.
+
+    Until 2026-09-25 the released file mixed them: 2009-2013 came from the
+    registered table (this function) and 2014 on from the stay table (01's
+    load_age), so the United States went from 23,990 in 2013 to 136,663 in 2014
+    with no change in the population behind it.
+
+    2008 stays out. Its edition prints the bands 0~5, 6~10, ... 56~60, 61+
+    (checked again on 2026-09-25 against 2장_Ⅲ_2 of the 2008 edition), which
+    cannot be folded into the 13 bands 0-4 ... 55-59, 60+. The stay table starts
+    with the 2011 edition; the 2009 and 2010 editions carry only the registered
+    and short-term tables.
+
+    Three layouts:
+      2009-2013  one row per nationality, T/M/F stacked in each cell with
+                 newlines; country rows carry M/F only.
+      2014-2018  one row per sex, the nationality on its (M) row, markers
+                 (T)/(M)/(F); country rows carry M/F only.
+      2019-      대륙 | 국적 | 성별 (총계/남성/여성), a 총계 row per nationality
+                 from 2020. From the 2022 edition the stay table (not the
+                 registered one) prints a 제3의성 row, counted in 총계 but not
+                 carried here, so M + F falls short of T by 3-9 persons a year.
+    Where the source has no T row, T = M + F. Bands from 60 up fold into 60+ if
+    an edition ever prints them. Aggregates (continent subtotals, 계/총계),
+    무국적 and 기타 are dropped, as every other nationality table in the release
+    drops them. Zero cells are not written.
+
+    Gates, all against the raw tables:
+      - every row's age bands sum to the row total the table prints;
+      - the parsed persons plus the dropped residual rows (무국적, 기타, ...)
+        equal the table's printed grand total, per edition and population;
+      - the stay series for 2014-LAST_YEAR equals 01's age_long.csv cell by cell,
+        so the release and the dashboard read one parse.
 
     Writes (in place):
-      03_cleaned_data/age_long.csv (append 2009-2013 rows)
-      site/data/age.json (add 2009-2013 to data and extend years list)
+      03_cleaned_data/age_sex_long.csv  population, year, country, gender,
+                                        age_group, n; 08 exports it
+      03_cleaned_data/age_long.csv      back to what 01 wrote (stay, 2014-)
+      05_dashboard/data/age.json        rebuilt from the stay series alone,
+                                        2011-LAST_YEAR
     """
     warnings.filterwarnings("ignore")
+    from kird import COUNTRY_CANONICAL
 
-    from kird import ROOT  # noqa: E402
-    HERE = os.path.dirname(os.path.abspath(__file__))
     SITE = os.path.join(ROOT, "05_dashboard", "data")
     PROC = os.path.join(ROOT, "03_cleaned_data")
-    RAW = os.path.join(ROOT, "01_raw_data")
+    YB = os.path.join(ROOT, "01_raw_data", "출입국통계연보")
 
-    AGE_BANDS = ['0-4', '5-9', '10-14', '15-19', '20-24', '25-29', '30-34',
-                 '35-39', '40-44', '45-49', '50-54', '55-59', '60+']
+    BANDS = ['0-4', '5-9', '10-14', '15-19', '20-24', '25-29', '30-34',
+             '35-39', '40-44', '45-49', '50-54', '55-59', '60+']
+    GRAND = {"계", "총계", "총합계"}
+    # Rows that hold persons but are not a nationality: dropped, but counted for
+    # the grand-total gate.
+    RESID = {"기타", "기타국", "기타국가", "기타지역", "무국적", "국적불명", "미상",
+             "미등록국가", "한국"}
+    # Not nationalities. Matched after whitespace is removed.
+    DROP = GRAND | RESID | {
+        "소계", "합계", "Grand-Total", "Sub-Total", "무국적계",
+        "아시아주계", "아시아주", "북아메리카주계", "북아메리카주", "북아메리카",
+        "남아메리카주계", "남아메리카주", "남아메리카", "아메리카주계",
+        "유럽주계", "유럽주", "유럽", "오세아니아주계", "오세아니아주", "오세아니아",
+        "아프리카주계", "아프리카주", "아프리카", "기타주계", "기타계",
+        "북아메리카계", "남아메리카계", "북미주계", "북미주", "남미주계", "남미주",
+        "중남미", "중남미주계", "구소련계", "구소련", "한국계외국인주계"}
+    SEX = {"계(T)": "T", "(T)": "T", "T": "T", "계": "T", "총계": "T", "총합계": "T",
+           "남(M)": "M", "(M)": "M", "M": "M", "남": "M", "남성": "M",
+           "여(F)": "F", "(F)": "F", "F": "F", "여": "F", "여성": "F"}
 
-    # Aggregate-row markers (region groupings, totals) to skip
-    SKIP_NAMES = {"총계", "총합계", "아시아주계", "아시아 주계", "북아메리카주계",
-                  "남아메리카주계", "아메리카주계", "유럽주계", "오세아니아주계",
-                  "아프리카주계", "기타주계", "중남미", "남아메리카주", "북아메리카주",
-                  "북미주계", "남미주계", "중남미주계", "오세아니아 주계",
-                  "유럽 주계", "아프리카 주계", "북미 주계", "남미 주계",
-                  "Asia", "Europe", "Oceania", "Africa", "Americas", "Others",
-                  "Grand-Total", "Sub-Total", "Total", "Korean Diaspora",
-                  "한국계 외국인주계", "기타 주계"}
+    def canon(name):
+        if not isinstance(name, str):
+            return None
+        c = re.sub(r"\s+", "", name.split("\n")[0])
+        if not c or c == "nan":
+            return None
+        if c.startswith("(") and c.endswith(")"):
+            c = c[1:-1]
+        return COUNTRY_CANONICAL.get(c, c)
 
+    def is_agg(c):
+        return c in DROP or c.endswith("총계") or c.endswith("총합계")
 
-    def norm_band(h):
-        """Convert source band labels ('0~4세', '5 - 9세', '60세 이상') to canonical."""
-        s = str(h).split("\n")[0].strip()
-        if not s: return None
-        s2 = s.replace(" ", "").replace("세", "")
-        m = re.match(r"(\d+)[~\-](\d+)", s2)
+    def band(h):
+        """'0~4세', '5 - 9세', '0세~4세', '60세이상' -> canonical band. Anything
+        from 60 up folds into 60+; a band that cannot be folded is marked '!'."""
+        s = str(h).split("\n")[0].replace(" ", "").replace("세", "")
+        m = re.match(r"^(\d+)[~∼\-](\d+)$", s)
         if m:
-            return f"{m.group(1)}-{m.group(2)}"
-        if "이상" in s or "+" in s2:
-            m2 = re.match(r"(\d+)", s2)
-            if m2:
-                return f"{m2.group(1)}+"
-        return None
+            a, b = int(m.group(1)), int(m.group(2))
+        else:
+            m = re.match(r"^(\d+)(?:이상|\+)$", s)
+            if not m:
+                return None
+            a, b = int(m.group(1)), None
+        if a >= 60:
+            return "60+"
+        lab = "%d-%d" % (a, b) if b is not None else "%d+" % a
+        return lab if lab in BANDS else "!" + lab
 
-
-    def split_lines(cell):
-        """Parse newline-stacked numeric cell. Returns list of ints."""
+    def ints(cell):
         if cell is None or (isinstance(cell, float) and pd.isna(cell)):
             return []
         out = []
         for line in str(cell).split("\n"):
             s = line.replace(",", "").strip()
-            if not s:
-                continue
-            try:
+            if s == "-":
+                out.append(0)
+            elif s:
                 out.append(int(float(s)))
-            except Exception:
-                pass
         return out
 
+    def age_cols(header, first=0):
+        cols = {i: band(v) for i, v in enumerate(header)
+                if i >= first and band(v)}
+        bad = sorted({b for b in cols.values() if b.startswith("!")})
+        if bad:
+            raise SystemExit("age bands %s do not fold into the 13 bands" % bad)
+        return cols
 
-    def parse_year(path, year):
+    def parse_stacked(path, year):
+        """2009-2013. Returns (rows, residual persons, printed grand total)."""
         df = pd.read_excel(path, header=None)
-        # find header row by presence of '국적' and '성별'
-        hr = None
-        for r in range(min(8, df.shape[0])):
-            row = [str(c) for c in df.iloc[r].tolist()]
-            if any("국적" in c for c in row) and any("성별" in c for c in row):
-                hr = r; break
-        if hr is None:
-            return []
-        header = df.iloc[hr].tolist()
-        # Locate columns by header keyword
-        cols = {"country_ko": None, "country_en": None, "total": None,
-                "sex": None, "sum": None}
-        age_cols = {}  # col_idx -> canonical band
-        for c, v in enumerate(header):
-            s = str(v) if pd.notna(v) else ""
-            if "국적" in s and cols["country_ko"] is None: cols["country_ko"] = c
-            elif "연령" in s and cols["country_en"] is None: cols["country_en"] = c
-            elif "총계" in s or "Grand-Total" in s: cols["total"] = c
-            elif "성별" in s: cols["sex"] = c
-            elif "합계" in s or "Total" in s and cols["sum"] is None: cols["sum"] = c
-            else:
-                band = norm_band(s)
-                if band: age_cols[c] = band
-        if not age_cols or cols["sex"] is None or cols["country_ko"] is None:
-            return []
-
-        rows = []
+        hr = next(r for r in range(8)
+                  if any("국적" in str(c) for c in df.iloc[r])
+                  and any("성별" in str(c) for c in df.iloc[r]))
+        hdr = df.iloc[hr].tolist()
+        c_ko = next(i for i, v in enumerate(hdr) if "국적" in str(v))
+        c_sx = next(i for i, v in enumerate(hdr) if "성별" in str(v))
+        c_tot = next(i for i, v in enumerate(hdr)
+                     if str(v).strip().startswith("합계"))
+        ages = age_cols(hdr)
+        rows, resid, grand = [], 0, None
         for r in range(hr + 1, df.shape[0]):
-            ck = str(df.iat[r, cols["country_ko"]]).split("\n")[0].strip() if pd.notna(df.iat[r, cols["country_ko"]]) else ""
-            if not ck or ck in SKIP_NAMES:
+            c = canon(df.iat[r, c_ko])
+            if not c:
                 continue
-            # English country name (or fallback)
-            ce = ""
-            if cols["country_en"] is not None and pd.notna(df.iat[r, cols["country_en"]]):
-                ce = str(df.iat[r, cols["country_en"]]).split("\n")[0].strip()
-            # Determine sex order by reading sex column
-            sex_cell = df.iat[r, cols["sex"]] if pd.notna(df.iat[r, cols["sex"]]) else ""
-            sex_lines = [s.strip() for s in str(sex_cell).split("\n") if s.strip()]
-            # Map sex marker to gender code
-            sex_order = []
-            for sl in sex_lines:
-                if sl in ("계(T)", "T", "(T)", "총계", "Total", "Grand-Total", "계"):
-                    sex_order.append("T")
-                elif sl in ("남(M)", "(M)", "M", "남", "남성", "Male"):
-                    sex_order.append("M")
-                elif sl in ("여(F)", "(F)", "F", "여", "여성", "Female"):
-                    sex_order.append("F")
-            if not sex_order:
-                # default: assume M, F if exactly 2 values per cell, or T,M,F if 3
+            sl = [SEX[s.strip()] for s in str(df.iat[r, c_sx]).split("\n")
+                  if s.strip() in SEX]
+            if not sl:
                 continue
-            # Read each age column
-            for c, band in age_cols.items():
-                vals = split_lines(df.iat[r, c])
-                if len(vals) != len(sex_order):
+            tv = dict(zip(sl, ints(df.iat[r, c_tot])))
+            t_row = tv.get("T", tv.get("M", 0) + tv.get("F", 0))
+            if c in GRAND:
+                grand = t_row
+            if is_agg(c):
+                if c in RESID:
+                    resid += t_row
+                continue
+            acc = {}
+            for i, b in ages.items():
+                v = ints(df.iat[r, i])
+                if len(v) != len(sl):
+                    raise SystemExit("%d %s %s: %d values for %d sexes"
+                                     % (year, c, b, len(v), len(sl)))
+                d = dict(zip(sl, v))
+                d.setdefault("T", d.get("M", 0) + d.get("F", 0))
+                for g in ("T", "M", "F"):
+                    acc[(g, b)] = acc.get((g, b), 0) + d.get(g, 0)
+            got = sum(acc.get(("T", b), 0) for b in BANDS)
+            if got != t_row:
+                raise SystemExit("%d %s: bands sum to %d, the row prints %d"
+                                 % (year, c, got, t_row))
+            rows += [(year, c, g, b, n) for (g, b), n in acc.items()]
+        return rows, resid, grand
+
+    def parse_rows(path, year):
+        """2014-. One row per sex. Returns (rows, residual persons, grand total)."""
+        df = pd.read_excel(path, sheet_name=0, header=None)
+        hdr = df.iloc[0].tolist()
+        ages = age_cols(hdr, first=4)
+        modern = str(hdr[0]).replace(" ", "") == "대륙"
+        cc = 1 if modern else 0
+        cur = None
+        per = {}        # (country, sex) -> [row total, {band: n}]
+        grand, resid, subs = {}, {}, {}
+        # The trailing 기타 block (기타계, 기타, 기타 총계, 기타 | 총계) is a leaf
+        # from 2020 on: 169-282 persons with nothing listed under it. In 2019 it
+        # heads 무국적 / 미등록국가 / 국제연합 instead. Its own total counts as
+        # residual only when nothing is listed under it.
+        ETC = ("기타계", "기타", "기타총계")
+        etc, etc_kids, in_etc, etc_row = {}, False, False, False
+        for r in range(1, df.shape[0]):
+            c0, c1 = df.iat[r, 0], df.iat[r, cc]
+            if modern:
+                k0 = canon(c0) if pd.notna(c0) else None
+                k1 = canon(c1) if pd.notna(c1) else None
+                if k0 is not None:
+                    in_etc = k0 in ETC
+                # etc_row: this row is the 기타 block's own total (its 총계 row
+                # or the 남성/여성 rows that continue it, whose name cells are
+                # blank); a nationality listed under it ends that.
+                if k1 is not None and k1 != "총계":
+                    etc_row = False
+                    etc_kids = etc_kids or in_etc
+                elif k0 is not None or k1 == "총계":
+                    etc_row = in_etc
+                if k0 == "총합계" and k1 in (None, "총계"):
+                    # the grand total: 총합계 | (blank) or 총합계 | 총계 (2025)
+                    cur = "총합계"
+                elif k1 is not None:
+                    # a nationality, or a continent subtotal printed as
+                    # 아시아주 | 총계 (2019, 2022-); 총계 is dropped below
+                    cur = "__sub__" if k1 == "총계" else k1
+                elif k0 is not None:
+                    # A continent block starts with the nationality cell blank.
+                    # Its 남성/여성 rows leave both name cells empty and must not
+                    # inherit the previous nationality (the 2020 기타계 fault
+                    # fixed in 01's load_age).
+                    cur = k0
+            elif pd.notna(c0):
+                cur = canon(c0)
+            g = SEX.get(str(df.iat[r, 2]).strip())
+            if cur is None or g is None:
+                continue
+            v = ints(df.iat[r, 3])
+            t_row = v[0] if v else 0
+            if modern and etc_row:
+                etc[g] = etc.get(g, 0) + t_row
+                if cur == "__sub__":
+                    subs[g] = subs.get(g, 0) + t_row
+                continue
+            if cur == "총합계" or (not modern and cur in GRAND):
+                grand[g] = t_row
+                continue
+            if cur == "__sub__":
+                subs[g] = subs.get(g, 0) + t_row
+                continue
+            if is_agg(cur):
+                # In 2014-2018 기타계 is a leaf row holding the residual persons
+                # (183 in 2018); from 2019 it heads a block that lists 무국적 and
+                # the rest separately.
+                if cur in RESID or (not modern and cur == "기타계"):
+                    resid.setdefault(cur, {})
+                    resid[cur][g] = resid[cur].get(g, 0) + t_row
+                continue
+            slot = per.setdefault((cur, g), [0, {}])
+            slot[0] += t_row
+            for i, b in ages.items():
+                v = ints(df.iat[r, i])
+                slot[1][b] = slot[1].get(b, 0) + (v[0] if v else 0)
+        # The 2019 registered sheet prints no grand-total row, only the
+        # continent subtotals (아시아주 | 총계 ...); their sum is its total.
+        # 2014-2018 print a (T) row only for the grand total and aggregates.
+        grand = grand or subs
+        if etc and not etc_kids:
+            resid["기타"] = etc
+        g_tot = grand.get("T", grand.get("M", 0) + grand.get("F", 0)) \
+            if grand else None
+        # per residual row: its 총계 if printed, else M + F (2019's 미상 prints
+        # a 여성 row alone)
+        r_tot = sum(d.get("T", d.get("M", 0) + d.get("F", 0))
+                    for d in resid.values())
+        rows = []
+        for c in sorted({k[0] for k in per}):
+            for g in ("T", "M", "F"):
+                if (c, g) in per:
+                    tot, bands = per[(c, g)]
+                elif g == "T":
+                    tot = sum(per.get((c, s), [0])[0] for s in ("M", "F"))
+                    bands = {b: sum(per.get((c, s), [0, {}])[1].get(b, 0)
+                                    for s in ("M", "F")) for b in BANDS}
+                else:
                     continue
-                mf = dict(zip(sex_order, vals))
-                m = mf.get("M", 0); f = mf.get("F", 0); t = mf.get("T", m + f)
-                if t == 0 and m == 0 and f == 0:
-                    continue
-                rows.append((year, ck, ce, "T", band, t))
-                if m: rows.append((year, ck, ce, "M", band, m))
-                if f: rows.append((year, ck, ce, "F", band, f))
-        return rows
+                if sum(bands.values()) != tot:
+                    raise SystemExit("%d %s %s: bands sum to %d, the row prints %d"
+                                     % (year, c, g, sum(bands.values()), tot))
+                rows += [(year, c, g, b, n) for b, n in bands.items()]
+        return rows, r_tot, g_tot
 
+    def find(year, pop):
+        pat = {"registered": "*국적*연령별*등록외국인*",
+               "stay": "*국적*연령별*체류외국인*"}[pop]
+        g = [p for p in glob.glob(os.path.join(YB, "%d_*" % year, pat))
+             if "단기" not in os.path.basename(p)]
+        if len(g) != 1:
+            raise SystemExit("%d %s: expected one age table, found %s"
+                             % (year, pop, [os.path.basename(p) for p in g]))
+        return g[0]
 
-    # Run for 2009-2013
-    all_rows = []
-    for y in range(2009, 2014):
-        # the yearbooks live at 01_raw_data/출입국통계연보/<year>_출입국통계연보/
-        YB = os.path.join(RAW, "출입국통계연보")
-        g = glob.glob(os.path.join(YB, f"{y}_*/2장_Ⅲ_2.국적및연령별*등록*"))
-        if not g:
-            g = glob.glob(os.path.join(YB, f"{y}_*/*_2장_Ⅲ_2.국적및연령별*등록*"))
-        if not g:
-            print(y, "FILE NOT FOUND"); continue
-        rows = parse_year(g[0], y)
-        n_countries = len({r[1] for r in rows})
-        total_T = sum(r[5] for r in rows if r[3] == "T")
-        print(f"{y}: {len(rows)} rows, {n_countries} countries, sum T={total_T:,}  [{os.path.basename(g[0])[:38]}]")
-        all_rows.extend(rows)
+    FIRST = {"registered": 2009, "stay": 2011}
+    # Where the table's printed grand total exceeds the sum of its own rows.
+    # Five stay tables do this by one to four persons: 2014 prints 계 1,797,618
+    # while its (M) and (F) rows add up to 1,797,614, and 2019 prints 총합계
+    # 2,524,656 over 남성 + 여성 rows of 2,524,655 with no per-nationality 총계
+    # row to say where the extra person sits (checked against the raw sheets on
+    # 2026-09-25). The rows are carried as printed; any other gap stops.
+    KNOWN_GAP = {("stay", 2014): 4, ("stay", 2015): 3, ("stay", 2016): 2,
+                 ("stay", 2018): 1, ("stay", 2019): 1}
+    out = []
+    print("\nnationality x age x sex, two bases:")
+    for pop in ("registered", "stay"):
+        for y in range(FIRST[pop], LAST_YEAR + 1):
+            p = find(y, pop)
+            rows, resid, grand = (parse_stacked if y <= 2013 else parse_rows)(p, y)
+            tot = sum(n for (_, _, g, _, n) in rows if g == "T")
+            gap = None if grand is None else grand - tot - resid
+            want = KNOWN_GAP.get((pop, y), 0)
+            print("  %-10s %d  %3d nationalities  T %10s + residual %5s = "
+                  "printed %10s  %s  [%s]"
+                  % (pop, y, len({r[1] for r in rows}), format(tot, ","),
+                     format(resid, ","), format(grand or 0, ","),
+                     "ok" if gap == 0 else ("known %+d" % gap if gap == want
+                                            else "GAP %s" % gap),
+                     os.path.basename(p)[:36]))
+            if gap != want:
+                raise SystemExit("%s %d: parsed %d + residual %d != printed %s"
+                                 % (pop, y, tot, resid, grand))
+            out += [(pop,) + r for r in rows]
 
-    # Validation: sum of country T vs by_visa registered national for the year
-    print("\nValidation (sum_T vs national registered):")
-    dd = json.load(open(os.path.join(SITE, "data.json"), encoding="utf-8"))
-    reg_all = dd["populations"]["reg"]["data"]["ALL"]
-    for y in range(2009, 2014):
-        nat = sum(reg_all.get(str(y), {}).values())
-        tot = sum(r[5] for r in all_rows if r[0] == y and r[3] == "T")
-        pct = 100 * (tot - nat) / nat if nat else 0
-        print(f"  {y}: national={nat:,}  sum_T={tot:,}  ({pct:+.2f}%)")
+    K = ["population", "year", "country", "gender", "age_group"]
+    long = pd.DataFrame(out, columns=K + ["n"])
+    long = long.groupby(K, as_index=False)["n"].sum()
+    long = long[long["n"] != 0]
+    order = {b: i for i, b in enumerate(BANDS)}
+    long = (long.assign(_b=long["age_group"].map(order))
+                .sort_values(["population", "year", "country", "_b", "gender"])
+                .drop(columns="_b").reset_index(drop=True))
 
-    # Append to age_long.csv (dedup just in case)
+    # The stay series from 2014 must be the one 01 parsed for the dashboard.
     csv = os.path.join(PROC, "age_long.csv")
-    existing = pd.read_csv(csv)
-    new = pd.DataFrame(all_rows, columns=["year", "country", "country_en", "gender", "age_group", "n"])
-    combined = pd.concat([existing[~existing.year.isin(range(2009, 2014))], new], ignore_index=True)
-    combined = combined.sort_values(["year", "country", "gender", "age_group"])
-    combined.to_csv(csv, index=False)
-    print(f"\nappended to {csv} (now {len(combined):,} rows, was {len(existing):,})")
+    base = pd.read_csv(csv, encoding="utf-8-sig")
+    base = base[base["year"] >= 2014][["year", "country", "gender", "age_group", "n"]]
+    b = base.groupby(["year", "country", "gender", "age_group"])["n"].sum()
+    b = b[b != 0]
+    s = (long[(long["population"] == "stay") & (long["year"] >= 2014)]
+         .set_index(["year", "country", "gender", "age_group"])["n"])
+    j = pd.concat([b.rename("p01"), s.rename("here")], axis=1).fillna(0)
+    diff = j[j["p01"] != j["here"]]
+    if len(diff):
+        raise SystemExit("stay 2014-: %d cells differ from 01's age_long.csv, "
+                         "e.g.\n%s" % (len(diff), diff.head().to_string()))
+    print("  stay 2014-%d equals 01's age_long.csv (%s nonzero cells)"
+          % (LAST_YEAR, format(len(j), ",")))
 
-    # Update site/data/age.json
+    long.to_csv(os.path.join(PROC, "age_sex_long.csv"), index=False,
+                encoding="utf-8-sig")
+    print("  wrote age_sex_long.csv: %s rows" % format(len(long), ","))
+    print(long.groupby(["year", "population"]).size().unstack(1).to_string())
+    # age_long.csv is 01's stay parse. The registered 2009-2013 rows this
+    # function used to append are what mixed the two bases; take them out.
+    base.to_csv(csv, index=False, encoding="utf-8-sig")
+
+    # The dashboard's age.json is labelled 체류외국인. It is rewritten here from
+    # the stay series, 2011-LAST_YEAR, and nothing else. It used to carry the
+    # registered 2009-2013 rows next to 01's stay rows, and 01's rows kept only
+    # the last of several source classes that fold into one nationality
+    # (미국 + 미국인근섬, 영국 + 영국외지민, 홍콩 + 홍콩거주난민, ...), so 38
+    # country-years in 2014-2025 were wrong; 미국 2025 read T = 1. The series
+    # here sums the classes. Every band is written, zeros included, so each
+    # nationality's table lists all 13 bands; within a nationality the bands
+    # keep the lexical order 01 wrote, which is what breaks ties when a summary
+    # names the largest band.
     age_json = os.path.join(SITE, "age.json")
     aj = json.load(open(age_json, encoding="utf-8"))
-    for y in range(2009, 2014):
-        aj["data"].setdefault(str(y), {})
-        yr_rows = [r for r in all_rows if r[0] == y]
-        for (_, ck, _, g, band, n) in yr_rows:
-            if g not in ("M", "F"):
-                continue  # T written below from M+F to match the 2014+ schema
-            aj["data"][str(y)].setdefault(ck, {})
-            aj["data"][str(y)][ck].setdefault(band, {})
-            aj["data"][str(y)][ck][band][g] = n
-        # Fill T = M + F per band so the JSON schema is uniform with 2014-2024
-        # (dashboard JS reads .T directly).
-        for ck, bands in aj["data"][str(y)].items():
-            for band, cell in bands.items():
-                cell["T"] = (cell.get("M") or 0) + (cell.get("F") or 0)
-    aj["years"] = sorted(set(aj.get("years", []) + list(range(2009, 2014))))
+    st = long[long["population"] == "stay"]
+    data = {}
+    for (y, c), grp in st.groupby(["year", "country"]):
+        v = {(r.age_group, r.gender): int(r.n) for r in grp.itertuples()}
+        data.setdefault(str(y), {})[c] = {
+            b: {g: v.get((b, g), 0) for g in ("M", "F", "T")} for b in sorted(BANDS)}
+    aj["data"] = data
+    aj["years"] = [int(y) for y in data]
+    aj["age_groups"] = BANDS
+    first, last = aj["years"][0], aj["years"][-1]
+    aj["population"] = "stay"
+    aj["source_ko"] = ("법무부 출입국·외국인정책 통계연보 · 국적 및 연령별 체류외국인 "
+                       "(%d~%d)" % (first, last))
+    aj["source_en"] = ("KIS Yearbook · Staying foreign residents by nationality "
+                       "and age (%d–%d)" % (first, last))
     json.dump(aj, open(age_json, "w", encoding="utf-8"), ensure_ascii=False)
-    print(f"updated {age_json}: years now {aj['years'][0]}-{aj['years'][-1]}")
+    print("  age.json: stay basis, %d-%d" % (first, last))
 
 
 if __name__ == "__main__":
@@ -1605,6 +2264,10 @@ if __name__ == "__main__":
     parse_sido_2006_2013()
     add_sido_diversity()
     build_undocumented()
+    build_undocumented_duration()
+    build_undocumented_country()
+    build_undocumented_age()
+    build_undocumented_registered()
     build_national_language()
     merge_country_names()
     build_visa_sigungu()

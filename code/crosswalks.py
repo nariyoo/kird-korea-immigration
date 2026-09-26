@@ -146,6 +146,12 @@ def visa_crosswalk(data=None):
     for code in sorted(set(labels) | set(folded)):
         parent = folded.get(code, code)
         ko, en = labels.get(parent, labels.get(code, ("", "")))
+        if code == "E8T":
+            # 연보는 이 자격을 E-8 로 싣는다(2006-2009년판). 같은 코드를 2021년판부터
+            # 계절근로가 다시 쓰므로 이 자료는 옛 자격을 E8T 로 따로 싣는다.
+            rows.append(["E8 (2006-2009 editions)", "E8T", ko, en,
+                         "same source code, different status: 연수취업 to 2009"])
+            continue
         rows.append([code, parent, ko, en,
                      "sub-code collapsed to parent" if parent != code else "unchanged"])
     _write(os.path.join(data, "crosswalk_visa.csv"),

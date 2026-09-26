@@ -1,4 +1,7 @@
-# KIRD: Korea Immigration and Residential Diversity
+# KIRD: build pipeline for the spatiotemporal administrative dataset of nationality, residential diversity, and language demand among immigrants in South Korea, 2006–2024
+
+**KIRD** (Korea Immigration and Residential Diversity) is the short name of the dataset;
+the openICPSR title is "Spatiotemporal administrative dataset of nationality, residential diversity, and language demand among immigrants in South Korea, 2006–2024".
 
 [![Data](https://img.shields.io/badge/data-openICPSR-b31b1b.svg)](https://doi.org/10.3886/E249944V1)
 [![DOI](https://img.shields.io/badge/DOI-10.3886%2FE249944V1-informational.svg)](https://doi.org/10.3886/E249944V1)
@@ -6,7 +9,8 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
 KIRD is a harmonized panel of foreign residents in South Korea, built from the annual
-statistical yearbooks of two ministries and released as 27 tidy tables. It reports how many
+statistical yearbooks of two ministries and released as 28 tidy tables (version 1.2.0: 26 built by
+phases 1 and 2 of this pipeline, and two cumulative refugee tables added when the deposit is staged). It reports how many
 foreign residents lived in each district each year, which nationalities they held, which visas
 they were on, and a set of derived measures: the foreign share of the population, nationality
 diversity, residential segregation against Korean nationals, ethnic-enclave districts, and the
@@ -31,7 +35,8 @@ released tables nor the raw ministry workbooks are in it, so start from the depo
 ## 2. Released tables
 
 Four summary tables give one row per place per year; the province and district tables carry the
-derived indices beside the counts, and the sub-district table carries the MOIS counts alone. The other twenty-three hold the breakdowns those summaries aggregate; from v1.2.0 the nationality
+derived indices beside the counts, and the sub-district table carries the MOIS counts alone. The other twenty-four hold the breakdowns those summaries aggregate,
+the harmonization rules as tables, and the two refugee snapshots; from v1.2.0 the nationality
 and visa breakdowns exist at all three levels (district, province, national), and `language_demand`
 carries a `sido` scope, so no level has to be reconstructed from another.
 
@@ -46,18 +51,25 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `nationality_national.csv` | a population, nationality and year | 2006-2024 | 7,236 |
 | `visa_by_sigungu.csv` | a district, visa status and year | 2008-2024 | 75,989 |
 | `visa_by_sido.csv` | a province, visa status and year | 2008-2024 | 7,083 |
-| `visa_national.csv` | a population, visa status and year | 2006-2024 | 1,240 |
-| `visa_by_nationality.csv` | a population, nationality, visa and year | 2006-2024 | 236,379 |
-| `age_sex_national.csv` | a nationality, age band, sex and year | 2009-2024 | 100,828 |
-| `language_demand.csv` | a language, scope, place and year | 2006-2024 | 208,849 |
+| `visa_national.csv` | a population, visa status and year | 2006-2024 | 1,241 |
+| `visa_by_nationality.csv` | a population, nationality, visa and year | 2006-2024 | 236,640 |
+| `age_sex_national.csv` | a population, nationality, age band, sex and year | registered 2009-2024, stay 2011-2024 | 155,903 |
+| `language_demand.csv` | a language, scope, place and year | 2006-2024 | 208,851 |
 | `ethnic_enclaves.csv` | an enclave district, nationality and year | 2008-2024 | 739 |
 | `segregation_by_nationality.csv` | a nationality and year | 2014-2024 | 1,062 |
 | `region_segregation.csv` | a continent of origin and year | 2014-2024 | 118 |
 | `naturalization_annual.csv` | a year and processing route | 2011-2024 | 140 |
-| `naturalization_by_country.csv` | a year, former nationality and route | 2009-2024 | 14,641 |
-| `naturalization_by_age.csv` | a year, age band and route | 2009-2024 | 1,532 |
-| `children_by_age.csv` | a district, single year of age and year | 2011-2024 | 63,347 |
+| `naturalization_by_country.csv` | a year, former nationality and route | 2009-2024 | 15,636 |
+| `naturalization_by_age.csv` | a year, age band and route | 2009-2024 | 1,612 |
+| `children_by_age.csv` | a district, single year of age and year | 2011-2024 | 63,309 |
 | `multicultural_households.csv` | a sub-district, household category and year | 2016-2024 | 299,791 |
+| `diaspora_residence_by_sido.csv` | a province, nationality and year (F-4 residence reports) | 2008-2024 | 6,168 |
+| `crosswalk_country.csv` | a source nationality label | 2006-2024 | 225 |
+| `crosswalk_region.csv` | a source place name or boundary change | fixed | 64 |
+| `crosswalk_visa.csv` | a source status code | 2006-2024 | 227 |
+| `language_weights.csv` | a nationality and first language | fixed | 4,614 |
+| `refugee_by_nationality.csv` | a status and nationality, cumulative (deposit only) | 1994-2024 | 30 |
+| `refugee_language_demand.csv` | a status and language, cumulative (deposit only) | 1994-2024 | 60 |
 
 Districts are the units the Ministry of Justice publishes, roughly 250 per year, including the
 general districts of large cities such as 안산시 단원구. Sub-district files use that year's
@@ -85,6 +97,15 @@ broken out by nationality.
 The two are not interchangeable and their sum counts the same people twice. Nationally
 `broad_total` ran 1.05 times `registered_foreigners` in 2008 and 1.74 times in 2024. The gap widens
 as naturalizations and Korean-born children accumulate, so the choice of definition moves the trend as well as the level.
+
+**MOJ staying foreigners** (`population = stay` in `nationality_national`, `visa_national`,
+`visa_by_nationality` and `age_sex_national`) are the registered population plus short-term
+sojourners and F-4 residence reports. The national tables carry both bases side by side, and a sum over `n`
+that does not filter `population` counts the registered population twice. In `age_sex_national`
+the registered series runs 2009-2024 and the staying series 2011-2024, the first year the yearbook
+prints the staying table by nationality and age; through v1.1.0 that file joined registered
+2009-2013 onto staying 2014-2024 without a label, so the United States went from 23,990 to 136,663
+between 2013 and 2014.
 
 ![MOJ registered and MOIS broad-definition counts, compared](figures/moj_vs_mois.png)
 
@@ -120,7 +141,8 @@ Moran's I of the district foreign share on queen contiguity, the spatial cluster
 
 An **ethnic enclave** is a district where one nationality has a location quotient of at least 2 and
 makes up at least 30 per cent of that district's foreign population, with an absolute floor of 200
-people. The location quotient alone would flag a nationally rare nationality on a small local
+people of that nationality (200 or more). The residual 기타 (Other) category is never flagged, and
+each district-nationality pair is one enclave, so `n_enclaves` counts pairs rather than districts. The location quotient alone would flag a nationally rare nationality on a small local
 cluster, and the share alone would flag a district with few foreign residents of any kind.
 
 `language_demand` converts the nationality composition into implied speakers using mother-tongue
@@ -138,14 +160,16 @@ in the population.
 
 ## 5. Pipeline
 
-`code/run_pipeline.py` is the complete step list in dependency order: ten numbered steps in three
-phases, `kird.py`, the one module they all import, and the unnumbered checkers and helpers the
-tables below describe.
+`code/run_pipeline.py` is the complete step list in dependency order: ten numbered steps and one
+unnumbered builder in three phases, `kird.py`, the one module they all import, and the unnumbered
+checkers and helpers the tables below describe. With the raw inputs in place, phases 1 and 2
+followed by phase 3 regenerate every file of the deposit; `raw_input_manifest.csv` in this
+repository lists those inputs with their sizes and SHA-256 hashes (it holds no raw data).
 
 | Phase | Steps | What it does |
 |---|---|---|
-| 1 | `01_parse_yearbooks` `02_language_reference` `03_extend_panel` `04_reconcile_districts` `05_mois_layer` | reads the raw ministry workbooks and writes the harmonized panel |
-| 2 | `06_build_summaries` `07_build_naturalization` `08_export_dataset` `09_finish_release` `make_coverage_figure` `sync_repo_figures` | turns the panel into the released tables (`09` must print `AUDIT CLEAN`) and rebuilds the repository figures |
+| 1 | `01_parse_yearbooks` `02_language_reference` `03_extend_panel` `04_reconcile_districts` `05_mois_layer --reparse` `05_mois_layer` | reads the raw ministry workbooks and writes the harmonized panel |
+| 2 | `06_build_summaries` `07_build_naturalization` `08_export_dataset` `build_diaspora_residence` `09_finish_release` `make_coverage_figure` `sync_repo_figures` | turns the panel into the released tables (`09` must print `AUDIT CLEAN`) and rebuilds the repository figures |
 | 3 | `10_stage_deposit` | stages the openICPSR deposit (wide summaries, `.dta` pairs, its own gate) |
 
 ![From the two ministry sources to the released tables](figures/pipeline_flowchart.png)
@@ -208,24 +232,28 @@ the yearbook's district table does not place every registered foreigner in a dis
 `national_annual.foreign_total` is documented as the district sum, so the two agree within the data
 even though the national total in the yearbook is marginally higher.
 
-The province tables carry the yearbook's own province rows, so they differ from a sum of the
-districts by a few thousand people a year. Both figures are the publisher's.
+`summary_by_sido.registered_foreigners` carries the yearbook's own province rows, so it differs from
+a sum of the districts by 903 to 6,828 people a year nationally (2008-2024). Both figures are the
+publisher's. The province nationality and visa tables and every other province count are district
+sums.
 
-Districts in a boundary-change year sometimes have no population denominator, because the Ministry
-of Justice and the Ministry of the Interior adopted the change in different years. Those rows carry
-a null denominator.
+`resident_pop` is present for every district in every year; where the Ministry of Justice and the
+Ministry of the Interior adopted a boundary change in different years, the population is carried on
+the district label the panel uses.
 
 The panel ends in 2024, the last year both ministries have published. The 2025 Ministry of Justice
 yearbook is out; the matching MOIS foreign-resident statistics are not, so a 2025 row would carry
 MOJ counts against empty broad-definition columns.
 
 The naturalization panels are assembled from every yearbook edition, since each one publishes only
-its own year at country and age level. They reconcile to the separately published annual totals
-within five
-cases a year in most years. Joining the tables on space-normalized type labels, seven
-year-type cells exceed that: 2017 국적선택 -10 and 국적판정 -7, 2018 국적상실 -8,
-2019 국적상실 +7 and 국적취득(재취득) +18, 2024 국적취득(인지) +8 and 국적취득(재취득) +16.
-The 2017 edition's own country rows also exceed its printed continent subtotals by 1,357. The figures are published as issued.
+its own year at country and age level. Summed over countries or ages, naturalizations equal the
+separately published annual totals in every year from 2011 (by age, 2012 is one short, as printed),
+and every other processing type is within five cases. The 2017 edition prints China "한국계 포함"
+beside a Korean-Chinese row, so the subgroup is taken back out of China; the 2018 edition prints no
+split, so 2018 carries the combined units `중국+한국계중국인` and `러시아(연방)+한국계러시아인`.
+
+E-8 is two statuses: 연수취업 in the 2006-2009 editions (carried as `E8T`) and 계절근로 from 2021
+(`E8`). No edition prints E-8 from 2010 to 2020.
 
 ## 8. Sources
 
