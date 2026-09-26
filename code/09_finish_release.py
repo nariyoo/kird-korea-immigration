@@ -209,8 +209,12 @@ def finalize_release():
         print("national_annual.csv: n_enclaves resynced to ethnic_enclaves.csv")
 
     # ---- step 1e: lisa — one convention for island districts across all years ----
-    # The 2008-2013 builder labels the eight no-neighbor island districts "ns" while
-    # the 2014+ path left them blank; harmonize to "ns" (matches Methods).
+    # The 2008-2013 builder labels the no-neighbor island districts "ns" while the
+    # 2014+ path left them blank; harmonize to "ns" (matches Methods). The set below
+    # was written for an older adjacency with eight islands. In the current
+    # 03_cleaned_data/adjacency.json six have no neighbour (영도구, 강화군, 완도군,
+    # 울릉군, 거제시, 남해군); 옹진군 touches 파주시 and 진도군 신안군, so for those two
+    # build_lisa computes a class and this step only fills blanks.
     ISLANDS = {("부산광역시", "영도구"), ("인천광역시", "강화군"), ("인천광역시", "옹진군"),
                ("전라남도", "완도군"), ("전라남도", "진도군"), ("경상북도", "울릉군"),
                ("경상남도", "거제시"), ("경상남도", "남해군")}
@@ -864,7 +868,8 @@ def build_lisa():
     없이는 우연히 12곳가량이 걸린다.
 
     순열은 99,999회다. 999회면 최소 p 가 0.001 이라 BH 의 첫 문턱(0.05/242)보다
-    커서, 보정을 걸면 군집이 있든 없든 0곳이 된다.
+    커서, 보정을 걸면 군집이 있든 없든 0곳이 된다. (지금 경계의 인접표로 2024년 이웃이 있는 시군구는
+    244곳이라 그 문턱은 0.05/244 다.)
 
     이웃이 없는 시군구(도서)는 통계가 정의되지 않으므로 ns 로 둔다. 값이 비는
     자리는 남기지 않는다.
@@ -1559,7 +1564,7 @@ def build_data_dictionary():
          "MOJ 국적구성 기반 다양성·집중·균등 지표(정의는 README). 2008/2009~. 지수는 "
          "층마다 그 단위를 하나로 보고 다시 계산하며, 아래 층의 평균이 아니다."),
         ("summary_by_sido.csv / summary_by_sigungu.csv", "index_base_k", "integer",
-         "Number of categories the diversity indices are computed over: the top 19 nationalities of that year plus one residual bin. It is 20 wherever at least 20 nationalities are present, so it describes the index basis, not the unit. Carried the name n_nationalities through v1.1.0.", "다양성 지수를 계산한 칸 수. 그 해 상위 19개국과 잔여 한 칸이며, 국적이 20개 이상인 곳은 모두 20이다. 그 지역의 성질이 아니라 지수의 밑변이다. v1.1.0 까지 n_nationalities 라는 이름으로 실렸다."),
+         "Number of categories the diversity indices are computed over: those of the year's national top 19 nationalities present in the unit, plus one residual bin. It is at most 20: 20 for the country in every year and for every province from 2014, and less wherever some of the national top 19 are absent. It describes the index basis, not the unit. Carried the name n_nationalities through v1.1.0.", "다양성 지수를 계산한 칸 수. 그 해 전국 상위 19개국 가운데 그 단위에 있는 나라와 잔여 한 칸이며, 최대 20이다. 전국은 해마다, 시도는 2014년부터 20이고, 전국 상위 19개국 가운데 빠진 나라가 있는 곳은 20보다 작다. 그 지역의 성질이 아니라 지수의 밑변이다. v1.1.0 까지 n_nationalities 라는 이름으로 실렸다."),
         ("summary_by_sido.csv / summary_by_sigungu.csv", "n_nationalities_observed",
          "integer", "Distinct nationalities the source lists for that unit and year, with the residual bin and the columns that name no nationality (무국적, 미등록국가, 기타) excluded. Capped at 19 for 2008-2013, when the yearbook publishes only the top 19 plus a residual at the district level; full detail from 2014.", "그 단위·그 해에 연감이 싣는 국적 수(잔여 칸과 국적 아닌 칸, 곧 무국적·미등록국가·기타 제외). 연감이 시군구 단위에서 전체 국적을 싣기 시작한 해가 2014년이라 2008-2013 은 19에서 막힌다."),
         ("summary_by_sigungu.csv", "lisa", "string",
@@ -2166,7 +2171,7 @@ def build_data_dictionary():
          "Moran's I of the district foreign-share surface (spatial autocorrelation).",
          "시군구 외국인비율의 Moran's I(공간 자기상관)."),
         ("national_annual.csv", "index_base_k", "integer",
-         "Number of categories the diversity indices are computed over: the top 19 nationalities of that year plus one residual bin. It is 20 wherever at least 20 nationalities are present, so it describes the index basis, not the unit. Carried the name n_nationalities through v1.1.0.", "다양성 지수를 계산한 칸 수. 그 해 상위 19개국과 잔여 한 칸이며, 국적이 20개 이상인 곳은 모두 20이다. 그 지역의 성질이 아니라 지수의 밑변이다. v1.1.0 까지 n_nationalities 라는 이름으로 실렸다."),
+         "Number of categories the diversity indices are computed over: those of the year's national top 19 nationalities present in the unit, plus one residual bin. It is at most 20: 20 for the country in every year and for every province from 2014, and less wherever some of the national top 19 are absent. It describes the index basis, not the unit. Carried the name n_nationalities through v1.1.0.", "다양성 지수를 계산한 칸 수. 그 해 전국 상위 19개국 가운데 그 단위에 있는 나라와 잔여 한 칸이며, 최대 20이다. 전국은 해마다, 시도는 2014년부터 20이고, 전국 상위 19개국 가운데 빠진 나라가 있는 곳은 20보다 작다. 그 지역의 성질이 아니라 지수의 밑변이다. v1.1.0 까지 n_nationalities 라는 이름으로 실렸다."),
         ("national_annual.csv", "n_nationalities_observed", "integer",
          "Distinct nationalities the source lists for that unit and year, with the residual bin and the columns that name no nationality (무국적, 미등록국가, 기타) excluded. Capped at 19 for 2008-2013, when the yearbook publishes only the top 19 plus a residual at the district level; full detail from 2014.", "그 단위·그 해에 연감이 싣는 국적 수(잔여 칸과 국적 아닌 칸, 곧 무국적·미등록국가·기타 제외). 연감이 시군구 단위에서 전체 국적을 싣기 시작한 해가 2014년이라 2008-2013 은 19에서 막힌다."),
         ("national_annual.csv", "n_enclaves", "integer",
