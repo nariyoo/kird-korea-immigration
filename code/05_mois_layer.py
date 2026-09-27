@@ -186,7 +186,63 @@ GU_BY_CITY = {
 # 시 with sub-구 (100만 도시 + others with 자치구). Used to split rows like '수원시장안구'.
 SUB_GU_PARENTS = frozenset(GU_BY_CITY)
 
-EUPMYEONDONG_SUFFIXES = ("동", "읍", "면", "리", "출장소")
+# 한 시의 읍면동을 구 없이 한 덩어리로 찍은 해(2014)에 이름이 같은 동이 여럿이면,
+# (시, 동 이름) 열쇠로는 서로를 덮어쓴다. 2014년 창원시 블록은 동을 구 표시 없이
+# 코드 순서(의창구, 성산구, 마산합포구, 마산회원구, 진해구)로 찍고, 그 가운데 셋이
+# 「중앙동」이다: 1-1 시트의 3424행(1,104명), 3439행(94명), 3462행(55명). 같은 파일의
+# 3·4·6번 시트는 같은 동을 「성산구 중앙동」「마산합포구 중앙동」「진해구 중앙동」으로
+# 찍고, 6번 시트의 세대수(190, 34, 14)가 1-1 시트 세 줄의 세대수 칸과 차례로 같다.
+# 그래서 이름만 찍은 시트에서는 n 번째 줄을 여기 적은 n 번째 구에 싣는다. 이것이
+# 없던 동안 배포본은 진해구의 55명을 성산구 중앙동으로 싣고 1,198명을 잃었다
+# (2026-09-27, 2라운드 대조).
+FLAT_CITY_SAME_NAME = {
+    (2014, "경상남도", "창원시", "중앙동"): ("성산구", "마산합포구", "진해구"),
+}
+
+
+class SameNameDongs:
+    """The district of each 읍면동 line in one sheet, for cities printed flat.
+
+    place(sido, sigungu, raw_name) returns (sigungu, eupmyeondong). A line whose name
+    FLAT_CITY_SAME_NAME declares goes to its general district: the one the sheet
+    prints in front of the name when it does, otherwise the n-th district listed for
+    the n-th line of that name. Any other name that repeats inside a city printed
+    without its general districts stops the parse, because keyed on (city, name) the
+    lines would overwrite one another without a word."""
+
+    def __init__(self, year, sheet):
+        self.year, self.sheet, self.seen = int(year), sheet, {}
+
+    def place(self, sido, sigungu, raw_name):
+        name = strip_gu_prefix(raw_name, sigungu)
+        if sigungu not in GU_BY_CITY:        # not a flat city block
+            return sigungu, name
+        gus = FLAT_CITY_SAME_NAME.get((self.year, sido, sigungu, name))
+        k = (sido, sigungu, name, raw_name if gus else "")
+        n = self.seen.get(k, 0)
+        self.seen[k] = n + 1
+        if gus is None:
+            if n:
+                raise SystemExit(
+                    f"{self.year} {self.sheet}: {sido} {sigungu} prints {name} "
+                    f"{n + 1} times without its general district; declare which "
+                    f"district each line is in (FLAT_CITY_SAME_NAME)")
+            return sigungu, name
+        prefix = raw_name[:len(raw_name) - len(name)]
+        if prefix:
+            if prefix not in gus:
+                raise SystemExit(f"{self.year} {self.sheet}: {raw_name} is not in {gus}")
+            return f"{sigungu} {prefix}", name
+        if n >= len(gus):
+            raise SystemExit(f"{self.year} {self.sheet}: {sido} {sigungu} prints {name} "
+                             f"more than the {len(gus)} times FLAT_CITY_SAME_NAME declares")
+        return f"{sigungu} {gus[n]}", name
+
+# 지소: the 2014 sub-district sheet prints two branch-office lines under 인천 중구
+# (영종출장소중산지소 59, 용유출장소무의지소 11) that the classifier read as 'other' and
+# dropped, so 중구's sub-districts added up to 70 fewer than the district
+# (2026-09-27, 2라운드 대조).
+EUPMYEONDONG_SUFFIXES = ("동", "읍", "면", "리", "출장소", "지소")
 SIGUNGU_SUFFIXES = ("시", "군", "구")
 
 
@@ -720,6 +776,7 @@ def _parse_eupmyeondong_sheet_2014_2015(path: Path, year: int, sheet: str,
     rows = []
     current_sido = None
     current_sigungu = None
+    same = SameNameDongs(year, sheet)
     for i in range(start, len(df)):
         name = clean_region_name(df.iat[i, name_col])
         if not name:
@@ -741,9 +798,9 @@ def _parse_eupmyeondong_sheet_2014_2015(path: Path, year: int, sheet: str,
                 current_sigungu = "세종시"
             if current_sido is None or current_sigungu is None:
                 continue
+            sg, dong = same.place(current_sido, current_sigungu, name)
             _emit_region_categories(rows, df, i, year=year, sido=current_sido,
-                                    sigungu=current_sigungu,
-                                    eupmyeondong=strip_gu_prefix(name, current_sigungu),
+                                    sigungu=sg, eupmyeondong=dong,
                                     cat_cols=cat_cols, household_col=household_col)
     return rows
 
@@ -1246,6 +1303,7 @@ def _parse_matrix_sheet(path: Path, year: int, sheet: str, *,
     rows = []
     current_sido = None
     current_sigungu = None
+    same = SameNameDongs(year, sheet)
     for i in range(start, len(df)):
         name = clean_region_name(df.iat[i, name_col])
         if not name:
@@ -1276,9 +1334,9 @@ def _parse_matrix_sheet(path: Path, year: int, sheet: str, *,
             if level == "eupmyeondong":
                 if current_sido is None or current_sigungu is None:
                     continue
+                sg, dong = same.place(current_sido, current_sigungu, name)
                 _emit_country_row(rows, df, i, year=year, sido=current_sido,
-                                  sigungu=current_sigungu,
-                                  eupmyeondong=strip_gu_prefix(name, current_sigungu),
+                                  sigungu=sg, eupmyeondong=dong,
                                   col_map=col_map, extra_label=extra_label)
     return rows
 
@@ -1577,6 +1635,30 @@ def _parse_age_sheet(path: Path, year: int, sheet: str, *, name_col: int = 0,
             value_shift = 1  # values start at col 2 not col 1
             break
 
+    # A region's own total, and each single age's 계 cell as printed (an int, or
+    # MASKED for '*' / '***'), so an age the table masks can be recovered where it is
+    # the only masked age of the region (below).
+    MASKED = object()
+    blocks = {}
+
+    def block(level_label, sido, sigungu):
+        return blocks.setdefault((level_label, sido, sigungu), {"total": None, "ages": {}})
+
+    def printed(i, c):
+        if c >= df.shape[1]:
+            return None
+        v = df.iat[i, c]
+        if isinstance(v, str) and v.strip() in ("*", "***"):
+            return MASKED
+        return parse_value(v)
+
+    def region_level(sido, sigungu):
+        if sigungu is not None and "sigungu" in emit_levels:
+            return "sigungu", sido, sigungu
+        if sido is not None and "sido" in emit_levels:
+            return "sido", sido, None
+        return None
+
     for i in range(len(df)):
         # Look at region column first
         raw_r = df.iat[i, region_col] if pd.notna(df.iat[i, region_col]) else None
@@ -1591,11 +1673,17 @@ def _parse_age_sheet(path: Path, year: int, sheet: str, *, name_col: int = 0,
                 current_sigungu = None
                 # When age is in a separate col, region row may also have age='합계' → keep checking
                 if age_col == region_col:
+                    lv = region_level(current_sido, None)
+                    if lv and lv[0] == "sido":
+                        block(*lv)["total"] = printed(i, value_cols[0])
                     continue
             elif kind == "sigungu":
                 sub = split_sub_gu(r_name)
                 current_sigungu = (sub[0] + " " + sub[1]) if sub else r_name
                 if age_col == region_col:
+                    lv = region_level(current_sido, current_sigungu)
+                    if lv:
+                        block(*lv)["total"] = printed(i, value_cols[0])
                     continue
             elif r_name in ("전국", "합계", "합 계", ""):
                 if age_col == region_col:
@@ -1615,6 +1703,11 @@ def _parse_age_sheet(path: Path, year: int, sheet: str, *, name_col: int = 0,
             continue
         age = _normalize_age(a_name)
         if age is None:
+            # 2012-2013 print the region's total on its own 합계 line
+            if a_name.startswith("합계") and age_col != region_col:
+                lv = region_level(current_sido, current_sigungu)
+                if lv:
+                    block(*lv)["total"] = printed(i, value_cols[0] + value_shift)
             continue
         # 세종특별자치시는 시군구 없이 시도 바로 아래 → 시군구를 '세종시'로 보정
         if current_sido == "세종특별자치시" and current_sigungu is None and "sigungu" in emit_levels:
@@ -1627,6 +1720,7 @@ def _parse_age_sheet(path: Path, year: int, sheet: str, *, name_col: int = 0,
         else:
             continue
         c_total, c_m, c_f = (c + value_shift for c in value_cols)
+        block(level_label, sido, sigungu)["ages"][age] = printed(i, c_total)
         total = parse_value(df.iat[i, c_total]) if c_total < df.shape[1] else None
         male = parse_value(df.iat[i, c_m]) if c_m < df.shape[1] else None
         female = parse_value(df.iat[i, c_f]) if c_f < df.shape[1] else None
@@ -1637,6 +1731,37 @@ def _parse_age_sheet(path: Path, year: int, sheet: str, *, name_col: int = 0,
             if sigungu is not None:
                 row["sigungu"] = sigungu
             rows.append(row)
+
+    # One masked age under a printed region total is determined: the total less the
+    # other eighteen printed ages. Every region the table prints in full adds up to
+    # its total, age by age, in every edition 2011-2024 (checked 2026-09-27), so the
+    # identity holds. Recovered only when all eighteen other ages are printed as
+    # numbers; with two masked ages, or an age the table does not print, the cell
+    # stays out. Until 2026-09-27 (2라운드 대조) these cells were dropped like the
+    # undetermined ones (41 in 2022-2024; the district summaries already recovered a
+    # single masked component the same way).
+    AGES = [str(a) for a in range(19)]
+    n_rec = 0
+    for (level_label, sido, sigungu), b in blocks.items():
+        tot, ages = b["total"], b["ages"]
+        if not isinstance(tot, int) or set(ages) != set(AGES):
+            continue
+        masked = [a for a in AGES if ages[a] is MASKED]
+        if len(masked) != 1 or any(not isinstance(ages[a], int)
+                                   for a in AGES if a != masked[0]):
+            continue
+        v = tot - sum(ages[a] for a in AGES if a != masked[0])
+        if v < 0:
+            raise SystemExit(f"{year} {sheet}: {sido} {sigungu} prints ages summing above "
+                             f"its total {tot}")
+        row = {"year": year, "sido": sido, "age": masked[0], "sex": "total", "n": v}
+        if sigungu is not None:
+            row["sigungu"] = sigungu
+        rows.append(row)
+        n_rec += 1
+    if n_rec:
+        print(f"  {year} {sheet.strip()}: {n_rec} masked single ages recovered from the "
+              f"region total")
     return rows
 
 
@@ -2058,6 +2183,7 @@ def _parse_household_emd(path: Path, year: int, sheet: str) -> list[dict]:
     # Find which col has the household count — typically last col with numeric data
     # For simplicity: try col 1 first; fall back to col 2 / col 3
     candidate_cols = [c for c in range(1, min(8, df.shape[1]))]
+    same = SameNameDongs(year, sheet)
     for i in range(start, len(df)):
         name = clean_region_name(df.iat[i, 0])
         if not name:
@@ -2079,12 +2205,13 @@ def _parse_household_emd(path: Path, year: int, sheet: str) -> list[dict]:
         if current_sido is None or current_sigungu is None:
             continue
         # find first numeric column
+        sg, dong = same.place(current_sido, current_sigungu, name)
         for c in candidate_cols:
             v = parse_value(df.iat[i, c])
             if v is not None:
                 rows.append({
-                    "year": year, "sido": current_sido, "sigungu": current_sigungu,
-                    "eupmyeondong": strip_gu_prefix(name, current_sigungu), "n": v,
+                    "year": year, "sido": current_sido, "sigungu": sg,
+                    "eupmyeondong": dong, "n": v,
                 })
                 break
     return rows
@@ -2192,12 +2319,14 @@ def _parse_sheet_sigungu_or_sido(path: Path, sheet: str, *, level: str,
     return rows
 
 
-def _parse_sheet_eupmyeondong(path: Path, sheet: str, name_col: int, pop_col: int) -> list[dict]:
+def _parse_sheet_eupmyeondong(path: Path, sheet: str, name_col: int, pop_col: int,
+                              year: int = 0) -> list[dict]:
     df = pd.read_excel(path, sheet_name=sheet, header=None)
     start = _find_data_start_total_pop(df, name_col=name_col)
     rows = []
     current_sido = None
     current_sigungu = None
+    same = SameNameDongs(year, sheet)
     for i in range(start, len(df)):
         name = clean_region_name(df.iat[i, name_col])
         if not name:
@@ -2218,10 +2347,10 @@ def _parse_sheet_eupmyeondong(path: Path, sheet: str, name_col: int, pop_col: in
             if current_sido is None or current_sigungu is None:
                 continue
             tp = parse_value(df.iat[i, pop_col])
+            sg, dong = same.place(current_sido, current_sigungu, name)
             if tp is not None:
                 rows.append({"level": "eupmyeondong", "sido": current_sido,
-                              "sigungu": current_sigungu,
-                              "eupmyeondong": strip_gu_prefix(name, current_sigungu),
+                              "sigungu": sg, "eupmyeondong": dong,
                               "total_pop": tp})
     return rows
 
@@ -2250,7 +2379,7 @@ def extract_total_population():
     for year, (fname, sheet, name_col, pop_col) in EUPMYEONDONG_CONFIG.items():
         path = RAW_DIR / fname
         try:
-            re_ = _parse_sheet_eupmyeondong(path, sheet, name_col, pop_col)
+            re_ = _parse_sheet_eupmyeondong(path, sheet, name_col, pop_col, year=year)
             for r in re_: r["year"] = year
             all_rows.extend(re_)
             print(f"  {year} 읍면동: {len(re_)} rows")
@@ -2771,14 +2900,17 @@ def build_population():
     if "sex" not in emd.columns:
         emd["sex"] = "total"
 
-    # Add 세대수 from eupmyeondong file
-    hh = _safe_read("mois_household_eupmyeondong.csv")
-    if not hh.empty:
-        hh["category"] = "세대수"
-        hh["sex"] = "total"
-        hh["level"] = "eupmyeondong"
-        # ensure expected columns
-        hh = hh[["year", "level", "sido", "sigungu", "eupmyeondong", "category", "sex", "n"]]
+    # 세대수 of the 읍면동 comes from the main 유형별 sheet (1-1), which prints it in
+    # every year it publishes sub-districts (2014-2015). The auxiliary sheet 6 is a
+    # different table (households by the householder's nationality) whose total the
+    # parser also read as 세대수 and merged here, so a 동 had two values under one key
+    # and the nesting kept whichever sorted last: for 공주시 and 청원군 in 2014 the
+    # auxiliary sheet prints twice the main sheet's count (계룡면 94 against 47, while
+    # both sheets agree on the city, 763), and its lines the main sheet lacks became
+    # eight value-less sub-district rows (영종출장소, 장봉출장소, ...). It is no longer
+    # merged (2026-09-27, 2라운드 대조); mois_household_eupmyeondong.csv is still
+    # written by the parser, for reference.
+    hh = pd.DataFrame()
 
     cols = ["year", "level", "sido", "sigungu", "eupmyeondong", "category", "sex", "n"]
     parts = []

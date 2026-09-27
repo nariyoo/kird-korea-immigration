@@ -98,7 +98,10 @@ ALIAS = {"강원특별자치도": "강원도", "전북특별자치도": "전라�
          "전북": "전라북도", "전남": "전라남도", "경북": "경상북도",
          "경남": "경상남도", "제주": "제주특별자치도"}
 
-EN = {"서울특별시": "Seoul", "부산광역시": "Busan", "대구광역시": "Daegu",
+# The line some editions print under 기타 / Others instead of a province.
+OTHER_SIDO = "기타"
+
+EN = {"기타": "Other", "서울특별시": "Seoul", "부산광역시": "Busan", "대구광역시": "Daegu",
       "인천광역시": "Incheon", "광주광역시": "Gwangju", "대전광역시": "Daejeon",
       "울산광역시": "Ulsan", "세종특별자치시": "Sejong", "경기도": "Gyeonggi-do",
       "강원도": "Gangwon-do", "충청북도": "Chungcheongbuk-do",
@@ -200,9 +203,17 @@ def parse(path, year):
             if total_col is not None:
                 grand = pd.to_numeric(r.iloc[total_col], errors="coerce")
             continue
-        if label not in SIDO and label not in ALIAS:
+        # A line the table prints under 기타 / Others instead of a province (2012: 8
+        # people, China 3, Canada 2, Australia 1, Russia 2) is carried as its own
+        # line, sido 기타. Until 2026-09-27 (2라운드 대조) it was skipped as an
+        # unknown province and the 2012 file summed to 187,608 against the sheet's
+        # own grand total of 187,616.
+        if RESIDUAL.fullmatch(label):
+            sido = OTHER_SIDO
+        elif label not in SIDO and label not in ALIAS:
             continue
-        sido = ALIAS.get(label, label)
+        else:
+            sido = ALIAS.get(label, label)
         named = 0
         for j, country in cols.items():
             v = pd.to_numeric(r.iloc[j], errors="coerce")
@@ -221,12 +232,14 @@ def parse(path, year):
         return None, "행을 못 읽음"
     df = pd.DataFrame(out)
     df = df.groupby(["year", "sido", "sido_en", "country"], as_index=False)["n"].sum()
-    if grand and grand > 0:
-        gap = abs(df["n"].sum() - grand) / grand * 100
-        if gap > 2:
-            return None, ("합계가 %.1f%% 어긋난다: 시도합 %s 대 표의 총계 %s"
-                          % (gap, format(int(df["n"].sum()), ","),
-                             format(int(grand), ",")))
+    # The lines must add up to the sheet's own grand total, to the person. Until
+    # 2026-09-27 a gap under 2% passed, and the 8 people of 2012's 기타 line went
+    # missing without a word (0.004%).
+    if grand is None or pd.isna(grand) or grand <= 0:
+        return None, "표의 총계를 못 읽음"
+    if int(df["n"].sum()) != int(grand):
+        return None, ("시도 줄의 합 %s 이 표의 총계 %s 와 다르다"
+                      % (format(int(df["n"].sum()), ","), format(int(grand), ",")))
     return df, None
 
 
@@ -264,6 +277,12 @@ def main():
         print("주의:")
         for n in notes:
             print("   " + n)
+    # A year that fails its own total, or cannot be read, stops the build: it used to
+    # be noted here and left out of the file (2026-09-27).
+    lost = sorted(set(range(2008, 2025)) - set(all_df["year"]))
+    if lost:
+        raise SystemExit("diaspora_residence_by_sido: %s not released (%s)"
+                         % (lost, "; ".join(notes)))
     return 0
 
 

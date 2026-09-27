@@ -531,7 +531,8 @@ def export_dataset():
                 sb = pd.read_csv(sb_p, encoding="utf-8-sig")
                 MC = ["broad_total", "non_naturalized", "workers", "marriage_migrants",
                       "students", "ethnic_koreans", "other_foreigners", "naturalized",
-                      "children"]
+                      "children", "foreign_resident_households"]
+                MC = [c for c in MC if c in sb.columns]
                 nat_mois = sb.groupby("year")[MC].agg(
                     lambda c: c.sum() if c.notna().all() else float("nan"))
                 nsa = nsa.merge(nat_mois.reset_index(), on="year", how="left")
@@ -808,19 +809,32 @@ license: CC-BY-4.0
 
 
 def export_language_demand():
-    """language_demand.csv, written from the trimmed indices.json.
+    """language_demand.csv on the released basis, every scope computed here.
 
-    Step 27 emits a draft of this file from the untrimmed language block; this step
-    replaces it with the released version, top 20 languages per district on the same
-    schema. English labels come from the existing language_demand.csv where one is
-    already there, otherwise from 03_cleaned_data/lang_ko_en.json. The 기타 bucket is
-    dropped upstream in step 26, so no row carries it.
+    Each scope is nationality count x that country's first-language share
+    (country_language_shares.json, published as language_weights.csv), Korean
+    excluded, in kird.language_estimate's exact integer units, and rounded once, half
+    up, to whole persons (kird.lang_persons); an estimate under one person is
+    dropped. The counts:
+
+      national  the staying foreigners of every nationality (data.json, the
+                composition nationality_national carries as population = stay),
+                every language
+      sido      the district table summed to the province of that year (region.json,
+                which nationality_by_sido carries), every language
+      sigungu   the district table (nationality_by_sigungu), the 20 languages with
+                the largest estimate in the district, ties broken by the label
+
+    Until 2026-09-27 (2라운드 대조) the national and sigungu rows were copied from the
+    dashboard's language block, already rounded to one decimal with a half-person
+    floor, and rounded again: about 5% of those rows were one person off a
+    re-derivation from the released files, and a few estimates under one person
+    passed the floor. validate_release.check_language_demand re-derives every row.
+    English labels come from the draft this step replaces, then lang_ko_en.json.
     """
-    HERE = os.path.dirname(os.path.abspath(__file__))
     SITE = os.path.join(ROOT, "05_dashboard", "data")
     OUT = os.path.join(ROOT, "04_dataset_release", "data", "language_demand.csv")
-
-    idx = json.load(open(os.path.join(SITE, "indices.json"), encoding="utf-8"))["data"]["language"]
+    from kird import language_estimate, lang_persons, LANG_UNIT
 
     # en 라벨 룩업: 초안 CSV에서 먼저(같은 실행이 방금 썼다), 없으면 이전
     # 최종본에서, lang_ko_en.json으로 보강
@@ -842,51 +856,35 @@ def export_language_demand():
             lang_en.setdefault(k, v)
     except FileNotFoundError:
         pass
+    from kird import LANG_EN_KO
+    for en_, ko_ in LANG_EN_KO.items():
+        lang_en.setdefault(ko_, en_)
 
     # 한국어 라벨이 없는 소수어는 language 컬럼 자체가 Ethnologue 영문명 → language_en도 동일.
     def en_of(lab):
         return lang_en.get(lab) or lab
 
-    # 추정화자 1명 미만(fractional) 행은 언어수요 의미가 없어 드롭(기타 버킷 대신 long-tail 정리).
-    FLOOR = 1.0
-
-    # 릴리스 CSV의 count는 정수(데이터 사전: "rounded to whole persons").
-    # indices.json은 소수 1자리로 들고 있으므로 여기서 반올림해 내보낸다.
-    def as_persons(v):
-        return int(round(v))
-
-    rows = []
-    for y in sorted(idx, key=int):
-        blk = idx[y]
-        for x in blk.get("national", []):
-            if x["count"] < FLOOR:
-                continue
-            rows.append((int(y), "national", "", "", "", "",
-                         x["language"], en_of(x["language"]), as_persons(x["count"])))
-        for key, langs in blk.get("by_sigungu", {}).items():
-            sido, sg = key.split("|", 1)
-            for x in langs:
-                if x["count"] < FLOOR:
-                    continue
-                rows.append((int(y), "sigungu", sido, sido_en.get(sido, ""), sg, sg_en.get((sido, sg), ""),
-                             x["language"], en_of(x["language"]), as_persons(x["count"])))
-
-    # v1.2.0: sido scope. The sigungu rows keep only each district's top ~20
-    # languages, so summing them would under-count; instead the national recipe
-    # (nationality counts x Ethnologue L1 shares, Korean excluded, variants merged
-    # in the shares table) is applied to the province nationality sums from the
-    # same district table the sigungu rows come from, so language_demand at the
-    # sido scope is exactly reproducible from nationality_by_sido.csv. Every
-    # language is kept, like the national rows, on the same FLOOR. 2008-2024
-    # (the district table's years); through 2013 the nationality detail is
-    # top-19 + residual, the same truncation the sigungu rows carry.
-    region_doc = json.load(open(os.path.join(SITE, "region.json"), encoding="utf-8"))["by_sigungu"]
+    FLOOR = LANG_UNIT          # one person
+    TOP = 20
     shares = json.load(open(os.path.join(ROOT, "03_cleaned_data",
                                          "country_language_shares.json"), encoding="utf-8"))
     AGG = {"총계", "총합계", "소계", "계"}
+    rows = []
+
+    # ---- national: the staying foreigners, every nationality ----
+    data = json.load(open(os.path.join(SITE, "data.json"), encoding="utf-8"))
+    stay = data["populations"]["stay"]["data"]["ALL"]
+    for y in sorted(stay, key=int):
+        est = language_estimate({c: n for c, n in stay[y].items() if c not in AGG},
+                                shares, COUNTRY_LANGUAGE)
+        for lang, u in sorted(est.items(), key=lambda kv: (-kv[1], kv[0])):
+            if u < FLOOR:
+                continue
+            rows.append((int(y), "national", "", "", "", "", lang, en_of(lang), lang_persons(u)))
+
+    # ---- sido and sigungu: the district table ----
+    region_doc = json.load(open(os.path.join(SITE, "region.json"), encoding="utf-8"))["by_sigungu"]
     for y in sorted(region_doc, key=int):
-        # the province of that year (see nationality_by_sido): 군위군 counts in
-        # 경상북도 through 2022 and 세종시 in 충청남도 through 2011
         prov_nat = {}
         for sido, sigs in region_doc[y].items():
             if sido in AGG:
@@ -894,27 +892,26 @@ def export_language_demand():
             for sg, cs in sigs.items():
                 if sg in AGG:
                     continue
-                nat = prov_nat.setdefault(province_that_year(int(y), sido, sg), {})
-                for c, v in cs.items():
-                    if v and c not in AGG:
-                        nat[c] = nat.get(c, 0) + v
+                nat = {c: v for c, v in cs.items() if v and c not in AGG}
+                # the province of that year (see nationality_by_sido): 군위군 counts in
+                # 경상북도 through 2022 and 세종시 in 충청남도 through 2011
+                pn = prov_nat.setdefault(province_that_year(int(y), sido, sg), {})
+                for c, v in nat.items():
+                    pn[c] = pn.get(c, 0) + v
+                est = language_estimate(nat, shares, COUNTRY_LANGUAGE)
+                top = sorted(est.items(), key=lambda kv: (-kv[1], kv[0]))[:TOP]
+                for lang, u in top:
+                    if u < FLOOR:
+                        continue
+                    rows.append((int(y), "sigungu", sido, sido_en.get(sido, ""), sg,
+                                 sg_en.get((sido, sg), ""), lang, en_of(lang), lang_persons(u)))
         for sido, nat in sorted(prov_nat.items()):
-            by_lang = {}
-            for c, n in nat.items():
-                if c in shares:
-                    # an EMPTY share list is deliberate (wholly Korean-L1 origins
-                    # contribute zero) -- do not fall back to the single map
-                    for sh in shares[c]:
-                        by_lang[sh["language"]] = by_lang.get(sh["language"], 0) + n * sh["share"]
-                else:
-                    lg = COUNTRY_LANGUAGE.get(c)
-                    if lg:
-                        by_lang[lg] = by_lang.get(lg, 0) + n
-            for lang, v in by_lang.items():
-                if v < FLOOR:
+            est = language_estimate(nat, shares, COUNTRY_LANGUAGE)
+            for lang, u in sorted(est.items(), key=lambda kv: (-kv[1], kv[0])):
+                if u < FLOOR:
                     continue
                 rows.append((int(y), "sido", sido, sido_en.get(sido, ""), "", "",
-                             lang, en_of(lang), as_persons(v)))
+                             lang, en_of(lang), lang_persons(u)))
 
     # export_dataset와 동일 정렬: year, scope, sido, sigungu
     rows.sort(key=lambda r: (r[0], r[1], r[2], r[4]))
@@ -927,7 +924,7 @@ def export_language_demand():
     n_kita = sum(1 for r in rows if r[6] == "기타")
     n_noen = len({r[6] for r in rows if not r[7]})
     print(f"wrote {OUT}: {len(rows)} rows | 기타행 {n_kita} | en없는 언어라벨 {n_noen}종")
-    print("연도:", min(int(y) for y in idx), "~", max(int(y) for y in idx))
+    print("연도:", min(r[0] for r in rows), "~", max(r[0] for r in rows))
 
 
 if __name__ == "__main__":

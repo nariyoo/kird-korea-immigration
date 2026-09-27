@@ -179,7 +179,9 @@ def main():
     rc3 = district_level_gate(ns["REGION_COUNTRY_FILES"])
     rc4 = stay_country_gate()
     rc5 = early_province_gate()
-    return rc or rc2 or rc3 or rc4 or rc5
+    rc6 = crosswalk_labels_gate(ns)
+    rc7 = children_age_gate()
+    return rc or rc2 or rc3 or rc4 or rc5 or rc6 or rc7
 
 
 def _canon(name):
@@ -609,6 +611,247 @@ def visa_district_gate():
         return 1
     print("GATE OK: visa_by_sigungu sums to the printed total of the district-by-visa "
           "table in every year %d-%d" % (rows[0][0], rows[-1][0]))
+    return 0
+
+
+# Lines of the status and district tables that are totals or continent subtotals,
+# not a label a crosswalk maps (the same names 01_parse_yearbooks.DROP_NAMES drops
+# from the country axis, less the lines that name no nationality, which the release
+# carries and the crosswalk lists).
+LABEL_SKIP = {"계", "총계", "총합계", "소계", "합계", "grand-total", "grandtotal",
+              "아시아주계", "아시아주", "북아메리카주계", "북아메리카주", "북아메리카",
+              "남아메리카주계", "남아메리카주", "남아메리카", "유럽주계", "유럽주", "유럽",
+              "오세아니아주계", "오세아니아주", "오세아니아", "아프리카주계", "아프리카주",
+              "아프리카", "무국적계", "기타국", "기타국가", "기타지역", "북아메리카계",
+              "남아메리카계", "북미주계", "북미주", "남미주계", "남미주", "구소련계", "구소련",
+              "시도", "시군구", "성별", "구분", "지역", "국적", "국적명", "국적･지역",
+              "국적(지역)", "체류자격", "체류자격국적", "남", "여", "남성", "여성",
+              "기타계", "제3의성"}
+CODE = re.compile(r"[A-H]-?\d")
+FOOTNOTE = re.compile(r"^(※|\*|주\)|\(주|\(단위|note|자료)", re.I)
+PROVINCE = re.compile(r"(특별시|광역시|특별자치시|특별자치도|도)$")
+
+
+def crosswalk_labels_gate(ns):
+    """Every label the raw tables print maps through a crosswalk row.
+
+    2026-09-27 (2라운드 대조). The crosswalks are there so a reader holding only the
+    deposit can follow every merge from the source spelling to the released one, and
+    three kinds of printed label had no row: the 2017 edition's parenthesized
+    nationalities ((타이완), (홍콩), (마카오), (영국외지민), (영국속국민)), which the
+    parsers read as the name inside; the code-less 기타 / 기타(other) status column,
+    which becomes ETC; and the full province names the 2008-2009 and 2014+ tables
+    print, which only 강원도, 전라북도 and 제주특별자치도 had. This reads, 2006 to the
+    release year, the nationality lines of the national status tables, the
+    nationality columns and province lines of the district tables, and the code-less
+    status columns of both, and checks each against crosswalk_country.source_label,
+    crosswalk_region's province rows and crosswalk_visa.source_code, spaces removed.
+    `ns` holds the file lists main() read from the head of 01_parse_yearbooks.py.
+    """
+    ws = lambda v: re.sub(r"\s+", "", str(v).split("\n")[0])
+    cw = pd.read_csv(os.path.join(RELEASE_DATA, "crosswalk_country.csv"), encoding="utf-8-sig")
+    cv = pd.read_csv(os.path.join(RELEASE_DATA, "crosswalk_visa.csv"), encoding="utf-8-sig")
+    cr = pd.read_csv(os.path.join(RELEASE_DATA, "crosswalk_region.csv"), encoding="utf-8-sig")
+    C = set(cw["source_label"].map(ws))
+    V = set(cv["source_code"].map(ws))
+    S = set(cr.loc[cr["level"] == "sido", "source_sido"].map(ws))
+    national = dict(ns["REG_FILES"])
+    stay = dict(ns["STAY_FILES"])
+    stay.update(HEADLINE_STAY)
+    district = dict(_pre2014_files("*지역및국적*"))
+    district.update(ns["REGION_COUNTRY_FILES"])
+    visa_d = _visa_files()
+    miss = {"country": set(), "status": set(), "province": set()}
+    n_seen = {"country": set(), "status": set(), "province": set()}
+
+    def korean(v):
+        return isinstance(v, str) and re.search(r"[가-힣]", v)
+
+    def note_country(y, lab, where):
+        lab = ws(lab)
+        if not lab or lab.lower() in LABEL_SKIP or lab in LABEL_SKIP or FOOTNOTE.match(lab):
+            return
+        n_seen["country"].add(lab)
+        if lab not in C:
+            miss["country"].add((y, lab, where))
+
+    def note_status(y, df, i, j, where):
+        """A header cell headed 기타 with no status code in its column is the
+        code-less column of unclassified statuses (2018 on). Before 2014 the Korean
+        label 기타 heads a coded column (G-1, and 기타연수 D-4-5, 기타장기 F-2-5), which
+        maps by its code."""
+        v = df.iat[i, j]
+        lab = ws(v)
+        if not lab.startswith("기타"):
+            return
+        head = [df.iat[k, j] for k in range(max(0, i - 2), min(len(df), i + 3))]
+        if any(isinstance(h, str) and CODE.search(h) for h in head):
+            return
+        n_seen["status"].add(lab)
+        if lab not in V:
+            miss["status"].add((y, lab, where))
+
+    def note_province(y, lab, where):
+        lab = ws(lab)
+        if lab in LABEL_SKIP:
+            return
+        if korean(lab) and (PROVINCE.search(lab) and len(lab) <= 8 or lab in SHORT_SIDO):
+            n_seen["province"].add(lab)
+            if lab not in S:
+                miss["province"].add((y, lab, where))
+
+    for files, tag in ((national, "registered"), (stay, "staying")):
+        for y, path in sorted(files.items()):
+            if y > RELEASE_LAST_YEAR or not os.path.exists(path):
+                continue
+            df = pd.read_excel(path, sheet_name=0, header=None)
+            nc = max(range(min(4, df.shape[1])),
+                     key=lambda j: int(df.iloc[:, j].astype(str).str.contains(r"[가-힣]").sum()))
+            col = df.iloc[:, nc].tolist()
+            start = next((i for i, v in enumerate(col)
+                          if korean(v) and ws(v) in ("총계", "합계", "계", "총합계")), None)
+            if start is None:
+                miss["country"].add((y, "(no grand-total line found)", tag))
+                continue
+            for v in col[start + 1:]:
+                if korean(v):
+                    note_country(y, v, tag)
+            for i in range(start):
+                for j in range(df.shape[1]):
+                    if korean(df.iat[i, j]):
+                        note_status(y, df, i, j, tag)
+    for y, path in sorted(district.items()):
+        if y > RELEASE_LAST_YEAR or not os.path.exists(path):
+            continue
+        df = pd.read_excel(path, sheet_name=0, header=None)
+        hr = max(range(min(8, len(df))),
+                 key=lambda i: sum(1 for v in df.iloc[i] if korean(v)))
+        for v in df.iloc[hr].tolist()[3:]:
+            if korean(v):
+                note_country(y, v, "district")
+        for j in (0, 1):
+            for v in df.iloc[hr + 1:, j].tolist():
+                note_province(y, v, "district")
+    for y, path in sorted(visa_d.items()):
+        df = pd.read_excel(path, sheet_name=0, header=None)
+        for i in range(min(8, len(df))):
+            for j in range(df.shape[1]):
+                if korean(df.iat[i, j]):
+                    note_status(y, df, i, j, "district")
+        for j in (0, 1):
+            for v in df.iloc[:, j].tolist():
+                note_province(y, v, "district")
+    print()
+    print("원자료의 표기 대 crosswalk: 국적 %d, 기타 자격 칸 %d, 시도 %d 가지"
+          % tuple(len(n_seen[k]) for k in ("country", "status", "province")))
+    bad = [(k, sorted(v)[:10]) for k, v in miss.items() if v]
+    for k, v in bad:
+        print("   no crosswalk row (%s): %s" % (k, v))
+    if bad or not all(n_seen.values()):
+        print("FAIL: a label the raw tables print has no crosswalk row")
+        return 1
+    print("GATE OK: every nationality, code-less status and province label the raw "
+          "tables print has a crosswalk row")
+    return 0
+
+
+# The general-district cities of the MOIS age sheets (05_mois_layer.GU_BY_CITY).
+GU_CITY = {
+    "고양시": ("덕양구", "일산동구", "일산서구"), "부천시": ("소사구", "오정구", "원미구"),
+    "성남시": ("분당구", "수정구", "중원구"), "수원시": ("권선구", "영통구", "장안구", "팔달구"),
+    "안산시": ("단원구", "상록구"), "안양시": ("동안구", "만안구"),
+    "용인시": ("기흥구", "수지구", "처인구"), "전주시": ("덕진구", "완산구"),
+    "창원시": ("마산합포구", "마산회원구", "성산구", "의창구", "진해구"),
+    "천안시": ("동남구", "서북구"), "청주시": ("상당구", "서원구", "청원구", "흥덕구"),
+    "포항시": ("남구", "북구")}
+MOIS_RAW = os.path.join(RAW, "행정안전부 외국인주민통계")
+AGE_LABEL = re.compile(r"^만?(\d{1,2})세$")
+
+
+def children_age_gate():
+    """children_by_age carries every single-age cell the MOIS age sheet determines.
+
+    2026-09-27 (2라운드 대조). From 2016 MOIS masks small cells ('***' in 2016, '*'
+    after). Where it masks exactly one age of a district and prints the other
+    eighteen and the district total, that age is the total less the eighteen (every
+    fully printed district adds up to its total), and the release dropped it with the
+    undetermined ones (41 cells in 2022-2024). Here, for 2016 to the release year,
+    each age summed over the districts of the sheet 9-2 (printed cells plus the
+    determined masked ones; a city's own row beside its gu left out) must equal
+    children_by_age summed over districts for that year and age.
+    """
+    ca = pd.read_csv(os.path.join(RELEASE_DATA, "children_by_age.csv"), encoding="utf-8-sig",
+                     usecols=["year", "age", "n"])
+    got = ca.groupby(["year", "age"])["n"].sum()
+    ws = lambda v: re.sub(r"\s+", "", str(v).split("\n")[0])
+
+    def val(v):
+        if isinstance(v, str) and v.strip() in ("*", "***"):
+            return "M"
+        try:
+            return int(float(str(v).replace(",", "")))
+        except ValueError:
+            return None
+
+    off, n_rec = [], 0
+    for y in range(2016, RELEASE_LAST_YEAR + 1):
+        path = os.path.join(MOIS_RAW, "%d_외국인주민통계.xlsx" % y)
+        if not os.path.exists(path):
+            off.append((y, "no file"))
+            continue
+        xl = pd.ExcelFile(path)
+        sheet = next(s for s in xl.sheet_names if s.startswith("9-2"))
+        df = pd.read_excel(path, sheet_name=sheet, header=None)
+        blocks = []
+        for i in range(len(df)):
+            name = ws(df.iat[i, 0]) if isinstance(df.iat[i, 0], str) else ""
+            m = AGE_LABEL.match(name)
+            if m and blocks:
+                blocks[-1]["ages"][int(m.group(1))] = val(df.iat[i, 1])
+            elif name and not m:
+                # every other label opens a block, the title, 구분 and 전국 included,
+                # so their rows are never added to the block before them
+                blocks.append({"name": name, "total": val(df.iat[i, 1]), "ages": {}})
+        keep = []
+        for k, b in enumerate(blocks):
+            nm = b["name"]
+            nxt = blocks[k + 1]["name"] if k + 1 < len(blocks) else ""
+            if nm in ("구분", "전국", "합계") or re.match(r"^\d", nm):
+                continue                           # the title, the header, the nation
+            if nm in SHORT_SIDO.values() or nm in ("강원특별자치도", "전북특별자치도"):
+                continue                           # a province row
+            if nm == "세종특별자치시" and nxt == "세종시":
+                continue                           # 세종's province row above its district
+            if nm in GU_CITY and (nxt.startswith(nm) or nxt in GU_CITY[nm]):
+                continue                           # a city's own row beside its gu
+            keep.append(b)
+        want = {}
+        for b in keep:
+            ages = b["ages"]
+            masked = [a for a in range(19) if ages.get(a) == "M"]
+            full = set(ages) == set(range(19)) and isinstance(b["total"], int)
+            for a, v in ages.items():
+                if isinstance(v, int):
+                    want[a] = want.get(a, 0) + v
+            if full and len(masked) == 1 and all(isinstance(ages[a], int)
+                                                 for a in range(19) if a != masked[0]):
+                want[masked[0]] = want.get(masked[0], 0) + b["total"] - sum(
+                    ages[a] for a in range(19) if a != masked[0])
+                n_rec += 1
+        for a in range(19):
+            g = int(got.get((y, a), 0))
+            if g != want.get(a, 0):
+                off.append((y, a, want.get(a, 0), g))
+    print()
+    print("자녀 연령표 2016-%d: 원표가 정하는 칸(찍힌 칸 + 홀로 가려진 칸 %d) 대 children_by_age"
+          % (RELEASE_LAST_YEAR, n_rec))
+    for o in off[:12]:
+        print("   ", o)
+    if off:
+        print("FAIL: children_by_age differs from the cells the MOIS age sheet determines")
+        return 1
+    print("GATE OK: children_by_age equals the MOIS age sheet, age by age, 2016-%d"
+          % RELEASE_LAST_YEAR)
     return 0
 
 

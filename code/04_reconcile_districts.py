@@ -28,6 +28,8 @@ from kird import pielou
 from kird import shannon
 from kird import COUNTRY_LANGUAGE
 from kird import COUNTRY_REGION
+from kird import LANG_UNIT
+from kird import language_estimate
 from kird import RESIDUAL_LINES
 from kird import ROOT
 
@@ -838,26 +840,19 @@ def trim_language_top20():
             for sg, nat in sigs.items():
                 if sg in AGG:
                     continue
-                bl = {}
-                for nm, v in nat.items():
-                    if not v:
-                        continue
-                    if nm in SHARES:
-                        # empty share list = deliberately zero (wholly Korean-L1 origin);
-                        # never fall back to the single map for those
-                        for sh in SHARES[nm]:
-                            bl[sh["language"]] = bl.get(sh["language"], 0) + v * sh["share"]
-                    else:
-                        lg = CLG.get(nm)
-                        if lg:
-                            bl[lg] = bl.get(lg, 0) + v
+                # empty share list = deliberately zero (wholly Korean-L1 origin); never
+                # fall back to the single map for those. kird.language_estimate is the
+                # exact computation 08_export_dataset uses for the release, so the
+                # dashboard and language_demand.csv pick the same 20 languages
+                # (2026-09-27; they had ranked on values rounded to one decimal).
+                bl = language_estimate({nm: v for nm, v in nat.items() if v}, SHARES, CLG)
                 if bl:
                     # top 20 per district. The name is the tiebreak: languages tie
                     # often in small districts, and without it the cut depends on
                     # whatever order the counts were accumulated in.
-                    out[f"{sido}|{sg}"] = sorted(
-                        ({"language": k, "count": round(v, 1)} for k, v in bl.items() if v >= 0.5),
-                        key=lambda d: (-d["count"], d["language"]))[:20]
+                    top = sorted(bl.items(), key=lambda kv: (-kv[1], kv[0]))[:20]
+                    out[f"{sido}|{sg}"] = [{"language": k, "count": round(u / LANG_UNIT, 1)}
+                                           for k, u in top if u >= LANG_UNIT // 2]
         idx["language"][y]["by_sigungu"] = out
         n += 1
 

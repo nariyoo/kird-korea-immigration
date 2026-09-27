@@ -26,7 +26,12 @@ from kird import SITE_DATA as SITE
 # district files recover.
 CNT = {"합계": "broad_total", "한국국적미취득_소계": "non_naturalized", "외국인근로자": "workers",
        "결혼이민자": "marriage_migrants", "유학생": "students", "외국국적동포": "ethnic_koreans",
-       "기타외국인": "other_foreigners", "한국국적취득자": "naturalized", "외국인주민자녀": "children"}
+       "기타외국인": "other_foreigners", "한국국적취득자": "naturalized", "외국인주민자녀": "children",
+       # 외국인주민 세대수, the column the 2009-2015 editions print after the 자녀 block
+       # at every level they publish (province, district, and from 2014 sub-district).
+       # It is a count of households, not people, so it is in no identity. Until
+       # 2026-09-27 (2라운드 대조) the parser read it and no release file carried it.
+       "세대수": "foreign_resident_households"}
 COMP_KO = ["외국인근로자", "결혼이민자", "유학생", "외국국적동포", "기타외국인"]
 DERIVED_COLS = ["settlement_rate_pct", "labor_dependence_pct", "marriage_dependence_pct",
                 "study_dependence_pct", "settlement_type"]
@@ -97,7 +102,10 @@ def summary_sigungu_and_sido():
       The MOIS broad composition and settlement measures join from
       sigungu_population on (sido, normalized sigungu). MOIS carries the general
       districts only from 2016, so 2008-2015 apportions the parent city's broad
-      counts across its districts by their share of total population.
+      counts across its districts by each district's share of the city's MOJ
+      registered foreigners, falling back to its share of total population only
+      where a district has no registered foreigners (build_sigungu() below gives
+      the backcast error of both weightings, which is why this one was chosen).
 
     Districts absorbed by a merger (청원, 연기, 마산, 진해) are absent from indices.json
     and drop out on their own. Renames such as 인천 남구 to 미추홀구 have no effect,
@@ -217,7 +225,7 @@ def summary_sigungu_and_sido():
         total so the source identity 합계 = 미취득_소계 + 취득 + 자녀 holds exactly.
         Categories neither side publishes that year stay absent (released blank, never 0)."""
         out = dict(r)
-        for k in COMP_KO + ["한국국적취득자", "외국인주민자녀"]:
+        for k in COMP_KO + ["한국국적취득자", "외국인주민자녀", "세대수"]:
             if r.get(k) is None and extra.get(k) is None:
                 continue
             out[k] = (r.get(k) or 0) + (extra.get(k) or 0)

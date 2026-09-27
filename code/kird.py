@@ -979,6 +979,50 @@ LANG_EN_KO = {
     "Atong": "아통어",
 }
 
+# Korean labels for the languages that carried an English label into language_demand
+# although they appear in a district's top 20, or reach 500 estimated speakers at
+# the national or province scope in some year (2026-09-27, 2라운드 대조: the Korean
+# column repeated the English name for 1,049 of 1,460 national labels in 2024,
+# among them 따이어 5,782 and 위구르어 3,153). Where Korean has no settled name the
+# label transliterates the Ethnologue name under 외래어 표기법. Varieties of one
+# language that this map already lumps (Tamang, Magar) join that label.
+LANG_EN_KO.update({
+    "Tày": "따이어", "Nung": "눙어", "Muong": "므엉어", "Tai Dam": "타이담어",
+    "Cao Lan": "까오란어", "Koho": "꺼호어", "Jarai": "자라이어", "Bahnar": "바나르어",
+    "Rade": "에데어", "Western Cham": "서부 참어", "Phuan": "푸안어",
+    "Lü": "타이뤼어", "Kuay": "쿠아이어", "Northern Khmer": "북부 크메르어",
+    "Thai Sign Language": "태국 수어",
+    "Pattani Malay": "파타니 말레이어", "Kedah Malay": "크다 말레이어",
+    "Central Malay": "중부 말레이어", "Musi": "무시어",
+    "Capiznon": "카피스논어", "Aklanon": "아클라논어", "Surigaonon": "수리가오논어",
+    "Masbatenyo": "마스바테뇨어",
+    "Oirat": "오이라트어", "Uyghur": "위구르어", "Crimean Tatar": "크림 타타르어",
+    "Zuojiang Zhuang": "쭤장 좡어", "Yongbei Zhuang": "융베이 좡어",
+    "Yongnan Zhuang": "융난 좡어", "Liujiang Zhuang": "류장 좡어",
+    "Guibei Zhuang": "구이베이 좡어", "Guibian Zhuang": "구이볜 좡어",
+    "Youjiang Zhuang": "유장 좡어", "Yang Zhuang": "양 좡어",
+    "Eastern Hongshuihe Zhuang": "동부 훙수이허 좡어",
+    "Central Hongshuihe Zhuang": "중부 훙수이허 좡어",
+    "Southern Pinghua": "남부 핑화", "Northern Pinghua": "북부 핑화",
+    "Bouyei": "부이어", "Nuosu": "누오쑤어", "Iu Mien": "이우미엔어",
+    "Kim Mun": "킴문어", "Chuanqiandian Cluster Miao": "촨첸뎬 먀오어",
+    "Amis": "아미스어", "Central Okinawan": "중부 오키나와어",
+    "Chittagonian": "치타공어", "Sylheti": "실헤트어", "Rangpuri": "랑푸리어",
+    "Rohingya": "로힝야어",
+    "Western Tamang": "타망어", "Northwestern Tamang": "타망어",
+    "Western Magar": "마가르어",
+    "Bemba": "벰바어", "Kiribati": "키리바시어",
+})
+# Some keys above are in Ethnologue's inverted form ('Malay, Manado'), which the
+# Ethnologue table's uninverted names never match ('Manado Malay'), so twenty
+# languages this map names kept their English label. Add the uninverted spelling of
+# each; an explicit key above wins (2026-09-27).
+for _k, _v in list(LANG_EN_KO.items()):
+    if ", " in _k:
+        _a, _b = _k.split(", ", 1)
+        LANG_EN_KO.setdefault(f"{_b} {_a}", _v)
+del _k, _v
+
 
 # Province names as the released files romanize them, Revised Romanization with
 # the -do suffix. The renamed provinces keep both labels so a row filed under
@@ -1013,6 +1057,45 @@ KOREAN_REGION = "동아시아"
 # 국적불명, 국제연합 and 국제연합전문기구 name no country either (2026-09-26).
 RESIDUAL_LINES = frozenset({"무국적", "기타", "미등록국가", "미상", "한국",
                             "국적불명", "국제연합", "국제연합전문기구"})
+
+
+# ── estimated first-language speakers ────────────────────────────────────────
+# language_demand is nationality count x that country's first-language share
+# (country_language_shares.json, at most four decimals, the table language_weights.csv
+# publishes). It is computed here in integer units of 1/10,000 person, so the result
+# does not depend on the order the nationalities are added in, and is rounded once,
+# half up, to whole persons. Until 2026-09-27 (2라운드 대조) the national and
+# district scopes of the release were read from a dashboard block already rounded to
+# one decimal and rounded again, so about 5% of those rows were one person off a
+# re-derivation from the released files and some estimates under one person passed
+# the one-person floor.
+LANG_UNIT = 10000
+
+
+def language_estimate(counts, shares, fallback=None):
+    """{language: estimated speakers x LANG_UNIT} for {nationality: persons}.
+
+    A nationality in `shares` splits over its list (an empty list is deliberate: a
+    wholly Korean-L1 origin, or a line that names no nationality, adds nothing); one
+    missing from it goes whole to `fallback[nationality]` when that names a language.
+    """
+    out = {}
+    for c, n in counts.items():
+        if not n:
+            continue
+        n = int(n)
+        if c in shares:
+            for sh in shares[c]:
+                w = int(round(float(sh["share"]) * LANG_UNIT))
+                out[sh["language"]] = out.get(sh["language"], 0) + n * w
+        elif fallback and fallback.get(c):
+            out[fallback[c]] = out.get(fallback[c], 0) + n * LANG_UNIT
+    return out
+
+
+def lang_persons(units):
+    """Whole persons from language_estimate units, rounded half up."""
+    return (int(units) + LANG_UNIT // 2) // LANG_UNIT
 
 
 def shannon(counts):

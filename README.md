@@ -32,9 +32,11 @@ as CSV and as labeled Stata `.dta`, with `data_dictionary.csv` and a README that
 column in English and Korean. This repository holds the code and the documentation; neither the
 released tables nor the raw ministry workbooks are in it, so start from the deposit.
 Phases 1 and 2 of the pipeline build the 26 tables; phase 3 (`10_stage_deposit.py`) stages
-the deposit, which adds the two refugee tables and, on the four summary files, the top-50
-nationality, visa and language counts as wide columns (`nat_*`, `visa_*`, `lang_*`, `mc_*`,
-`n_enclaves`, and `settlement_type` on `national_annual`). The `data_dictionary.csv` here documents the 26 tables; the deposit's copy adds
+the deposit, which adds the two refugee tables and, on the four summary files, nationality,
+visa and language counts as wide columns (`nat_*` for the 49 largest nationalities plus
+`nat_other` for everyone else, so a row's `nat_*` add up to its registered foreigners;
+`visa_*`; `lang_*` for the 50 largest languages; `mc_*`, `n_enclaves`, and
+`settlement_type` on `national_annual`). The `data_dictionary.csv` here documents the 26 tables; the deposit's copy adds
 the rows for the wide columns and the refugee tables.
 
 ## 2. Released tables
@@ -50,7 +52,7 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `national_annual.csv` | a year | 2008-2024 | 17 |
 | `summary_by_sido.csv` | a province and a year | 2006-2024 | 317 |
 | `summary_by_sigungu.csv` | a district and a year | 2008-2024 | 4,261 |
-| `summary_by_eupmyeondong.csv` | a sub-district and a year | 2014-2024 | 38,619 |
+| `summary_by_eupmyeondong.csv` | a sub-district and a year | 2014-2024 | 38,615 |
 | `nationality_by_sigungu.csv` | a district, nationality and year | 2008-2024 | 174,748 |
 | `nationality_by_sido.csv` | a province, nationality and year | 2006-2024 | 25,205 |
 | `nationality_national.csv` | a population, nationality and year | 2006-2024 | 7,280 |
@@ -59,21 +61,21 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `visa_national.csv` | a population, visa status and year | 2006-2024 | 1,241 |
 | `visa_by_nationality.csv` | a population, nationality, visa and year | 2006-2024 | 239,081 |
 | `age_sex_national.csv` | a population, nationality, age band, sex and year | registered 2009-2024, stay 2011-2024 | 157,101 |
-| `language_demand.csv` | a language, scope, place and year | 2006-2024 | 208,736 |
+| `language_demand.csv` | a language, scope, place and year | 2006-2024 | 207,962 |
 | `ethnic_enclaves.csv` | an enclave district, nationality and year | 2008-2024 | 738 |
 | `segregation_by_nationality.csv` | a nationality and year | 2014-2024 | 1,064 |
 | `region_segregation.csv` | a continent of origin and year | 2014-2024 | 121 |
 | `naturalization_annual.csv` | a year and processing route | 2011-2024 | 140 |
 | `naturalization_by_country.csv` | a year, former nationality and route | 2011-2024 | 16,210 |
 | `naturalization_by_age.csv` | a year, age band and route | 2011-2024 | 1,620 |
-| `children_by_age.csv` | a district, single year of age and year | 2011-2024 | 63,309 |
+| `children_by_age.csv` | a district, single year of age and year | 2011-2024 | 63,486 |
 | `multicultural_households.csv` | a sub-district, household category and year | 2016-2024 | 299,791 |
-| `diaspora_residence_by_sido.csv` | a province, nationality and year (F-4 residence reports) | 2008-2024 | 6,168 |
-| `crosswalk_country.csv` | a source nationality label | 2006-2024 | 245 |
-| `crosswalk_region.csv` | a source place name or boundary change | fixed | 73 |
-| `crosswalk_visa.csv` | a source status code | 2006-2024 | 227 |
-| `language_weights.csv` | a nationality and first language | fixed | 4,516 |
-| `refugee_by_nationality.csv` | a status and nationality, cumulative (deposit only) | 1994-2024 | 30 |
+| `diaspora_residence_by_sido.csv` | a province, nationality and year (F-4 residence reports) | 2008-2024 | 6,172 |
+| `crosswalk_country.csv` | a source nationality label | 2006-2024 | 250 |
+| `crosswalk_region.csv` | a source place name or boundary change | fixed | 87 |
+| `crosswalk_visa.csv` | a source status code | 2006-2024 | 231 |
+| `language_weights.csv` | a nationality and first language | fixed | 4,509 |
+| `refugee_by_nationality.csv` | a status and nationality, cumulative (deposit only) | 1994-2024 | 33 |
 | `refugee_language_demand.csv` | a status and language, cumulative (deposit only) | 1994-2024 | 60 |
 
 Districts are the units the Ministry of Justice publishes, roughly 250 per year, including the
@@ -158,9 +160,12 @@ cluster, and the share alone would flag a district with few foreign residents of
 shares from the [Ethnologue 24 Global Dataset](https://www.ethnologue.com/), so one nationality
 contributes fractionally to several languages. Korean is excluded, which is why the national total
 is well below the foreign population: nationalities whose first language is Korean, such as ethnic
-Koreans from China, contribute no demand. District rows carry the top 20 languages. The national
-scope is computed from the published national staying-foreigners composition, the province and
-district scopes from the registered district-assigned tables, so the scopes are not nested sums.
+Koreans from China, contribute no demand. District rows carry the 20 languages with the largest
+estimate. Each estimate is summed over nationalities and rounded once, half up, so every row
+re-derives from the released counts and `language_weights.csv` (`validate_release.py` checks it).
+The national scope is computed from the published national staying-foreigners composition, the
+province and district scopes from the registered district-assigned tables, so the scopes are not
+nested sums.
 
 Diversity indices are computed on the top 19 nationalities plus a residual for every year. The
 yearbooks publish only the top 19 at district level before 2014 and the full detail afterwards, and

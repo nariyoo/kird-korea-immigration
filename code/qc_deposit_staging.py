@@ -291,8 +291,11 @@ def readme_claims():
     # 문서화된 규칙이라 여기서 세지 않는다.
     blanks = [c for c in na.columns
               if pd.isna(r[c]) and not c.startswith(("nat_", "visa_", "lang_"))]
-    check(set(blanks) == {"theil_segregation_H", "ethnic_koreans"},
-          "national_annual 2008 빈칸은 theil 과 ethnic_koreans 뿐", blanks)
+    # foreign_resident_households: MOIS prints the 세대수 column 2009-2015 only
+    # (2026-09-27).
+    check(set(blanks) == {"theil_segregation_H", "ethnic_koreans",
+                          "foreign_resident_households"},
+          "national_annual 2008 빈칸은 theil, ethnic_koreans, 세대수 뿐", blanks)
 
     # 귀화 화해: 국적별 표를 유형마다 더하면 연간표와 다섯 이내로 맞는다
     ann = pd.read_csv(DD + "naturalization_annual.csv", encoding="utf-8-sig")

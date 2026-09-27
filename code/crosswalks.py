@@ -27,9 +27,30 @@ import os
 
 from kird import (CLEAN, COUNTRY_CANONICAL, COUNTRY_REGION, EMD_RENAME, OTHER_REGION,
                   LANG_EN_KO, RELEASE_DATA, RELEASE_PARENT, RELEASE_SGG_NAME,
-                  RELEASE_SIDO_NAME, SGG_LINE_FOLD, SGG_LINEAGE,
+                  RELEASE_SIDO_NAME, RELEASE_SIDO_NAMES, SGG_LINE_FOLD, SGG_LINEAGE,
                   SGG_NAME_ALIAS, SGG_RENAME, SGG_SIDO_MOVE, SGG_SPLIT_LINEAGE, SIDO_ALIAS,
                   SIDO_LINEAGE)
+
+# Labels an edition prints in parentheses, which every parser reads as the name
+# inside them (01_parse_yearbooks.clean_country, build_diaspora_residence.canon_country):
+# the 2017 edition's nationality tables print these five so. 2026-09-27 (2라운드
+# 대조): the crosswalk listed none, so the merge could not be read off the table;
+# check_published_totals.crosswalk_labels_gate now holds every label the raw tables
+# print to this file.
+PAREN_LABELS = ("(마카오)", "(영국속국민)", "(영국외지민)", "(타이완)", "(홍콩)")
+
+# The labels COUNTRY_CANONICAL folds that are not a spelling of their target but a
+# line of their own in the yearbook: a territory, a nationality class, a legacy code
+# the register still keeps, or refugees resident in Hong Kong. Editions print them
+# beside the country they are folded into (2024: 영국 8,697 with 영국외지민 183,
+# 영국외지시민 4 and 영국해외영토시민 3; 콩고민주공화국 378 with 자이르 7; 홍콩 12,786
+# with 홍콩거주난민 14). The crosswalk names that rule so a reader can tell the two
+# kinds of merge apart (2026-09-27).
+FOLDED_LINES = frozenset({"자이르", "미국인근섬", "미령버진아일랜드", "미령사모아",
+                          "영령인도양섬", "불령가이아나", "홍콩거주난민", "영국속국민",
+                          "영국보호민", "영국외지민", "영국외지시민", "영국속령지시민",
+                          "영국해외영토시민"})
+FOLDED_RULE = "separate yearbook line folded into this country"
 
 # 대륙 이름의 영문. 기탁본의 다른 표와 같은 표기를 쓴다.
 CONTINENT_EN = {
@@ -85,7 +106,12 @@ def country_crosswalk(data=None):
 
     rows = []
     for src, canon in sorted(COUNTRY_CANONICAL.items()):
-        rows.append(row(src, canon, "source label variant"))
+        rows.append(row(src, canon, FOLDED_RULE if src in FOLDED_LINES
+                        else "source label variant"))
+    for src in PAREN_LABELS:
+        inner = src[1:-1]
+        rows.append(row(src, COUNTRY_CANONICAL.get(inner, inner),
+                        "source label variant (printed in parentheses)"))
     for canon in sorted(set(COUNTRY_REGION) | set(en) | set(COUNTRY_CANONICAL.values())):
         # Every standard name has a row of its own, as the label the editions print.
         # Until 2026-09-26 (1라운드 수정) a name was skipped when some retired spelling
@@ -132,6 +158,19 @@ def region_crosswalk(data=None):
         r[3] = RELEASE_SIDO_NAME.get(r[3], r[3])
         if r[0] in ("sigungu",):
             r[4] = RELEASE_SGG_NAME.get((r[3], r[4]), r[4])
+    # Every province under the name the release carries has a row of its own, as the
+    # label most editions print (2008-2009 and 2014 on print the full names). Until
+    # 2026-09-27 (2라운드 대조) only 강원도, 전라북도 and 제주특별자치도 had one, the
+    # three SIDO_ALIAS happens to list, so the full name of the other fourteen was the
+    # one label the table did not map.
+    have = {r[1] for r in rows if r[0] == "sido"}
+    for name in RELEASE_SIDO_NAMES:
+        if name not in have:
+            rows.append(["sido", name, "", name, "", "unchanged"])
+    for r in rows:
+        if r[0] == "sido" and r[1] == r[3]:
+            r[5] = "unchanged"
+    rows = sorted([r for r in rows if r[0] == "sido"], key=lambda r: r[1]) +         [r for r in rows if r[0] != "sido"]
     for item in list(SIDO_LINEAGE) + list(SGG_LINEAGE) + list(SGG_SPLIT_LINEAGE):
         rows.append(["lineage", "", "", "", "", json.dumps(item, ensure_ascii=False)])
     _write(os.path.join(data, "crosswalk_region.csv"),
@@ -168,6 +207,18 @@ def visa_crosswalk(data=None):
             continue
         rows.append([code, parent, ko, en,
                      "sub-code collapsed to parent" if parent != code else "unchanged"])
+    # The status tables print their unclassified statuses in a column with no code,
+    # headed 기타, 기타(other), 기타(others) or 기타(Others) by edition (2017 on); 01
+    # reads every one as ETC. check_published_totals.crosswalk_labels_gate lists the
+    # headings the raw tables print.
+    # Until 2026-09-27 (2라운드 대조) the only ETC row read 'ETC, unchanged', as if a
+    # table printed that code (10,171 people in 2018, 39,210 in 2020).
+    if "ETC" in labels:
+        ko, en = labels["ETC"]
+        for src in ("기타", "기타(other)", "기타(others)", "기타(Others)"):
+            rows.append([src, "ETC", ko, en,
+                         "source label variant (the code-less column of unclassified "
+                         "statuses)"])
     _write(os.path.join(data, "crosswalk_visa.csv"),
            ["source_code", "visa_code", "visa_label", "visa_label_en", "rule"], rows)
     return rows

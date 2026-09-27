@@ -135,10 +135,12 @@ def stage_release():
 
     # 맨 위 넷도 같은 이유로 청소한다. 이름을 바꾸면 옛 이름의 파일이 남아
     # 같은 표가 두 이름으로 실린다.
+    # Any file, not only .csv/.dta: final_qc now holds the whole tree to the
+    # dictionary (2026-09-27).
     top_keep = {f for f in TOP_LEVEL}
     top_keep |= {f[:-4] + ".dta" for f in TOP_LEVEL}
     top_stale = sorted(f for f in os.listdir(DEPOSIT_DATA)
-                       if f.endswith((".csv", ".dta")) and f not in top_keep)
+                       if os.path.isfile(os.path.join(DEPOSIT_DATA, f)) and f not in top_keep)
     for f in top_stale:
         os.remove(os.path.join(DEPOSIT_DATA, f))
         print(f"  removed stale {f} (data/ top level)")
@@ -244,10 +246,31 @@ def add_refugee_files():
         # nationality table use. The refugee list printed Russia as 러시아, so this
         # was the one file whose country column did not join to the crosswalk.
         from kird import COUNTRY_CANONICAL
+        # Each list is the bulletin's ten named nationalities; the bulletin prints an
+        # eleventh line, 기타, for everyone else (tables 11, 14 and 15 of 94_24년 난민
+        # 신청 및 심사 통계: 40,560 of 122,095 applicants, 263 of 1,544 recognized, 251
+        # of 2,696 humanitarian). Until 2026-09-27 (2라운드 대조) the file stopped at
+        # ten, so its rows summed 9-33% short of the totals the dictionary quotes.
+        # 기타 is the cumulative total less the ten, and the rows of a status must
+        # add up to that total.
+        TOTAL = {"신청": rd["cumulative"]["applications_total"],
+                 "난민인정": rd["cumulative"]["recognized_total"],
+                 "인도적체류": rd["cumulative"]["humanitarian_total"]}
         for status, lst in nat_src:
             for ko, en, count, pct in lst:
                 nat_rows.append([status, STATUS_EN[status],
                                  COUNTRY_CANONICAL.get(ko, ko), en, count, pct])
+            rest = int(TOTAL[status]) - sum(int(c) for _, _, c, _ in lst)
+            if rest < 0 or len(lst) != 10:
+                raise SystemExit(f"refugee {status}: {len(lst)} named lines summing above "
+                                 f"the cumulative total {TOTAL[status]}")
+            nat_rows.append([status, STATUS_EN[status], "기타", "Other", rest,
+                             round(100 * rest / int(TOTAL[status]), 1)])
+        for status in TOTAL:
+            got = sum(r[4] for r in nat_rows if r[0] == status)
+            if got != int(TOTAL[status]):
+                raise SystemExit(f"refugee_by_nationality {status}: rows sum to {got}, "
+                                 f"not {TOTAL[status]}")
         write_csv(os.path.join(DETAIL, "refugee_by_nationality.csv"),
                   ["status", "status_en", "country", "country_en", "count", "share_pct"],
                   nat_rows)
@@ -304,10 +327,11 @@ def add_refugee_files():
              "Refugee-process outcome: 신청 applicant, 난민인정 recognized, 인도적체류 humanitarian (Korean + English).",
              "난민 절차 구분: 신청/난민인정/인도적체류(한글+영문)."],
             ["refugee_by_nationality.csv", "country / country_en", "string",
-             "Nationality (Korean + English).", "국적(한글+영문)."],
+             "Nationality (Korean + English): the ten nationalities MOJ names per status, and the bulletin's own eleventh line 기타 / Other for every other nationality, so each status sums to its cumulative total.",
+             "국적(한글+영문). 구분마다 법무부가 이름을 적은 10개 국적과, 나머지 국적 모두를 담은 자료 자체의 열한 번째 줄 「기타 / Other」. 그래서 구분마다 합이 누적 총계와 같다."],
             ["refugee_by_nationality.csv", "count", "integer",
-             "Cumulative cases 1994-2024 for that status and nationality (MOJ top-10 per status; full national totals: 122,095 applied / 1,544 recognized / 2,696 humanitarian), as MOJ's bulletin of February 2025 (1994-2024 난민 신청 및 심사 통계) prints them. MOJ's next bulletin (난민 종합 통계), which runs a year further, revises the 2023 and 2024 humanitarian permits from 125 and 101 to 119 and 97, so its cumulative count through 2024 is 2,686 (by nationality, e.g. 아이티 116 and 아프가니스탄 31 against 117 and 34 here), and the 2024 applications from 18,336 to 18,335; recognized refugees are the same in both.",
-             "1994-2024 누적 건수(MOJ 구분별 top-10; 전체: 신청 122,095·인정 1,544·인도적 2,696). 법무부 2025년 2월 자료(1994-2024 난민 신청 및 심사 통계) 그대로다. 한 해를 더 싣는 법무부의 다음 자료(난민 종합 통계)는 2023·2024년 인도적체류 허가를 125·101 에서 119·97 로 고쳐 2024년까지 누적이 2,686 이고(국적별로는 예컨대 아이티 116, 아프가니스탄 31; 여기서는 117, 34), 2024년 신청을 18,336 에서 18,335 로 고쳤다. 난민인정은 두 자료가 같다."],
+             "Cumulative cases 1994-2024 for that status and nationality (MOJ top-10 per status plus the 기타 line; each status sums to its national total: 122,095 applied / 1,544 recognized / 2,696 humanitarian), as MOJ's bulletin of February 2025 (1994-2024 난민 신청 및 심사 통계) prints them. MOJ's next bulletin (난민 종합 통계), which runs a year further, revises the 2023 and 2024 humanitarian permits from 125 and 101 to 119 and 97, so its cumulative count through 2024 is 2,686 (by nationality, e.g. 아이티 116 and 아프가니스탄 31 against 117 and 34 here), and the 2024 applications from 18,336 to 18,335; recognized refugees are the same in both.",
+             "1994-2024 누적 건수(MOJ 구분별 top-10 과 기타 줄; 구분마다 합이 전체와 같다: 신청 122,095·인정 1,544·인도적 2,696). 법무부 2025년 2월 자료(1994-2024 난민 신청 및 심사 통계) 그대로다. 한 해를 더 싣는 법무부의 다음 자료(난민 종합 통계)는 2023·2024년 인도적체류 허가를 125·101 에서 119·97 로 고쳐 2024년까지 누적이 2,686 이고(국적별로는 예컨대 아이티 116, 아프가니스탄 31; 여기서는 117, 34), 2024년 신청을 18,336 에서 18,335 로 고쳤다. 난민인정은 두 자료가 같다."],
             ["refugee_by_nationality.csv", "share_pct", "float",
              "Nationality's percent of that status's cumulative total.",
              "해당 구분 누적 총계 대비 국적 비중(%)."],
@@ -317,8 +341,8 @@ def add_refugee_files():
             ["refugee_language_demand.csv", "language / language_en", "string",
              "Estimated first language (Korean + English).", "추정 모어(한글+영문)."],
             ["refugee_language_demand.csv", "count", "integer",
-             "Estimated speakers = cumulative nationality count x that country's L1 (mother-tongue) share (Ethnologue 24, SIL Global 2021), rounded to whole persons; Korean excluded. Top 20 languages per status. Built from the published top-10 nationalities only (approximation of the full population's interpretation demand).",
-             "추정 화자수 = 누적 국적 인원 x 해당국 L1 모어 share(Ethnologue 24), 사람 수로 반올림; 한국어 제외. 구분별 상위 20개 언어. 공개 top-10 국적만 반영(근사치)."],
+             "Estimated speakers = cumulative nationality count x that country's L1 (mother-tongue) share (Ethnologue 24, SIL Global 2021), rounded to whole persons; Korean excluded. Top 20 languages per status. Built from the published top-10 nationalities only: the 기타 line of refugee_by_nationality names no nationality and is not allocated to a language (approximation of the full population's interpretation demand).",
+             "추정 화자수 = 누적 국적 인원 x 해당국 L1 모어 share(Ethnologue 24), 사람 수로 반올림; 한국어 제외. 구분별 상위 20개 언어. 공개 top-10 국적만 반영하며, refugee_by_nationality 의 기타 줄은 국적이 없어 언어로 나누지 않는다(근사치)."],
         ]
         # Idempotent: drop any existing refugee_* dictionary rows, then re-append, so
         # this script can be re-run without duplicating rows. Rewrite with one BOM and
@@ -345,6 +369,16 @@ def attach_breakdowns():
     Column naming: <prefix><english-slug>, Stata-safe (<=32 chars, unique). A blank
     cell means the category was not separately reported for that place-year (NOT a
     zero); e.g. for 2008-2013 the source folds non-top nationalities into "Other".
+    A category the year's table does report is 0, not blank, where the place has
+    none of it.
+
+    Nationality is cut to the 49 largest nationalities by name plus nat_other,
+    everyone else. The lines that name no nationality (kird.RESIDUAL_LINES) are never
+    ranked as if they were a country: until 2026-09-27 (2라운드 대조) the raw 기타
+    column won a top-50 slot on its 2008-2013 volume and became nat_other, so the
+    column held that one raw column and nothing else (blank in every row of 2014-2016,
+    2019 and 2021; in 2017 경기도 41 against 2,582 people outside the named columns)
+    and the nat_* columns of a row did not add up to registered_foreigners.
 
       nat_*       nationality counts        (nationality_by_sigungu)
       visa_*      visa-status counts        (visa_by_sigungu)
@@ -377,10 +411,44 @@ def attach_breakdowns():
         return name
 
 
-    def top_keep(long_df, cat_col, val_col, n=50):
-        """Set of the top-n category values (as str) by total val across the breakdown."""
+    def top_keep(long_df, cat_col, val_col, n=50, exclude=()):
+        """Set of the top-n category values (as str) by total val across the breakdown,
+        leaving out the values in `exclude`."""
         tot = long_df.groupby(long_df[cat_col].astype(str))[val_col].sum().sort_values(ascending=False)
+        tot = tot[~tot.index.isin(set(exclude))]
         return set(tot.head(n).index)
+
+    # The computed residual of the nationality columns: everyone outside the named
+    # ones, the lines that name no nationality included. Its English label slugs to
+    # nat_other, the name the column has always had.
+    OTHER_KO, OTHER_EN = "그 밖의 국적", "Other"
+
+    def fold_other(long_df, keep, cat_col="country", en_col="country_en", val_col="n"):
+        """The long nationality table with every category outside `keep` summed into
+        one OTHER_KO / OTHER_EN line, so the pivot carries a real residual."""
+        d = long_df.copy()
+        out = ~d[cat_col].astype(str).isin(keep)
+        d.loc[out, cat_col] = OTHER_KO
+        if en_col in d.columns:
+            d.loc[out, en_col] = OTHER_EN
+        keys = [c for c in d.columns if c != val_col]
+        return d.groupby(keys, as_index=False, dropna=False)[val_col].sum()
+
+    def zero_fill(wide, long_df, cat_col, prefix, namemap_rows, year_col="year"):
+        """0, not blank, in a wide column for the years whose long table reports that
+        category somewhere: the district tables print a full grid of the categories
+        they list, and the long files omit zeros. A category a year's table does not
+        list (2008-2013: every nationality outside the national top 19) stays blank."""
+        listed = long_df.groupby(year_col)[cat_col].apply(lambda s: set(map(str, s)))
+        for fn, ko in namemap_rows:
+            if fn not in wide.columns:
+                continue
+            yrs = {y for y, cats in listed.items() if ko in cats}
+            if ko == OTHER_KO:        # the residual is computed, so it always exists
+                yrs = set(listed.index)
+            m = wide[year_col].isin(yrs) & wide[fn].isna()
+            wide.loc[m, fn] = 0
+        return wide
 
 
     def tidy_types(df, orig_cols):
@@ -421,7 +489,7 @@ def attach_breakdowns():
 
 
     def pivot_merge(summary, keys, long_df, cat_col, val_col, prefix, label_rows,
-                    src, cat_en_col=None, code_labels=None, keep=None):
+                    src, cat_en_col=None, code_labels=None, keep=None, names_out=None):
         if keep is not None:
             long_df = long_df[long_df[cat_col].astype(str).isin(keep)]
         used = set(summary.columns)
@@ -432,6 +500,8 @@ def attach_breakdowns():
         piv.columns = [nm[str(c)] for c in piv.columns]
         out = summary.merge(piv.reset_index(), on=keys, how="left")
         for fn, (ko, en) in lab.items():
+            if names_out is not None:
+                names_out.append((fn, ko))
             if code_labels and ko in code_labels:        # visa: ko is the code; look up label
                 lk, le = code_labels[ko]
                 # the code goes in too: final_qc reads it back to compare the column
@@ -446,8 +516,29 @@ def attach_breakdowns():
         kind = {"nat_": "nationality", "visa_": "visa status", "lang_": "language",
                 "childage_": "children aged", "mc_": "multicultural category"}[prefix]
         src_en, src_ko = src if isinstance(src, tuple) else (src, src)
-        en_d = f"Count for {kind}: {en} ({ko}). From {src_en}; blank = not separately reported."
-        ko_d = f"{kind} {ko}({en}) 인원수. 출처 {src_ko}; 공백=별도 미보고."
+        if prefix == "nat_" and ko == OTHER_KO:
+            # final_qc reads the last (...) before ". From" as the category; this one
+            # is the residual, and says so in the same slot.
+            en_d = (f"Count for nationality: everyone outside the 49 nationalities that "
+                    f"have a nat_* column of their own, the lines that name no "
+                    f"nationality (무국적, 미등록국가, 기타, 국제연합, ...) included, so the "
+                    f"nat_* columns of a row add up to its registered foreigners "
+                    f"({OTHER_KO}). From {src_en}; blank only where the row carries no "
+                    f"nationality column at all (the province rows of 2006-2007, which "
+                    f"precede the district tables).")
+            ko_d = (f"nat_* 열을 따로 가진 49개 국적 밖의 모든 사람({OTHER_KO}). 국적 "
+                    f"없는 줄(무국적, 미등록국가, 기타, 국제연합 등)을 포함하므로 한 행의 "
+                    f"nat_* 열을 더하면 등록외국인과 같다. 출처 {src_ko}. 국적 열이 하나도 "
+                    f"없는 행(시군구 표보다 앞선 2006-2007년 시도 행)에서만 빈칸.")
+            return (en_d, ko_d)
+        en_d = (f"Count for {kind}: {en} ({ko}). From {src_en}; 0 where that year's "
+                f"table reports the category and the place has none; blank = not "
+                f"separately reported that year.")
+        ko_d = (f"{kind} {ko}({en}) 인원수. 출처 {src_ko}; 그 해 표가 싣는 범주인데 "
+                f"없으면 0, 공백=그 해 별도 미보고.")
+        if prefix in ("lang_", "mc_", "childage_"):
+            en_d = f"Count for {kind}: {en} ({ko}). From {src_en}; blank = not separately reported."
+            ko_d = f"{kind} {ko}({en}) 인원수. 출처 {src_ko}; 공백=별도 미보고."
         return (en_d, ko_d)
 
 
@@ -470,9 +561,14 @@ def attach_breakdowns():
         # ages 0-18) fall under the cap so all are kept. Same keep-sets are reused at
         # sido so the columns line up across levels.
         TOP_N = 50
-        keep_nat = top_keep(nat, "country", "n", TOP_N)
+        # 49 nationalities by name, ranked without the lines that name no nationality,
+        # and nat_other for everyone else (see the docstring).
+        from kird import RESIDUAL_LINES
+        keep_nat = top_keep(nat, "country", "n", TOP_N - 1, exclude=RESIDUAL_LINES)
+        keep_nat_all = keep_nat | {OTHER_KO}
         keep_visa = top_keep(visa, "visa_code", "n", TOP_N)
         keep_lang = top_keep(lang_sg, "language", "count", TOP_N)
+        nat_f = fold_other(nat, keep_nat)
 
         # ===== summary_by_sigungu =====
         K = ["year", "sido", "sigungu"]
@@ -480,8 +576,13 @@ def attach_breakdowns():
         base_n = len(s)
         orig = list(s.columns)
         lr = []
-        s = pivot_merge(s, K, nat, "country", "n", "nat_", lr, "nationality_by_sigungu", "country_en", keep=keep_nat)
-        s = pivot_merge(s, K, visa, "visa_code", "n", "visa_", lr, "visa_by_sigungu", code_labels=code_labels, keep=keep_visa)
+        nm_nat, nm_visa = [], []
+        s = pivot_merge(s, K, nat_f, "country", "n", "nat_", lr, "nationality_by_sigungu", "country_en",
+                        keep=keep_nat_all, names_out=nm_nat)
+        s = pivot_merge(s, K, visa, "visa_code", "n", "visa_", lr, "visa_by_sigungu", code_labels=code_labels,
+                        keep=keep_visa, names_out=nm_visa)
+        s = zero_fill(s, nat_f, "country", "nat_", nm_nat)
+        s = zero_fill(s, visa, "visa_code", "visa_", nm_visa)
         s = pivot_merge(s, K, lang_sg, "language", "count", "lang_", lr, "language_demand", "language_en", keep=keep_lang)
         # childage_* intentionally NOT attached: children_by_age covers 2011+ only and is
         # reported at a city/gu grain inconsistent with the summary spine, so the wide
@@ -520,12 +621,18 @@ def attach_breakdowns():
             return df.assign(sido=[code2name.get((int(y), p_), sd)
                                    for y, p_, sd in zip(df["year"], pre, df["sido"])])
 
-        nat2 = to_prov(nat).groupby(K2 + ["country", "country_en"], as_index=False)["n"].sum()
+        nat2 = to_prov(nat_f).groupby(K2 + ["country", "country_en"], as_index=False)["n"].sum()
         visa2 = to_prov(visa).groupby(K2 + ["visa_code"], as_index=False)["n"].sum()
         lang2 = to_prov(lang_sg).groupby(K2 + ["language", "language_en"], as_index=False)["count"].sum()
         lr2 = []
-        s2 = pivot_merge(s2, K2, nat2, "country", "n", "nat_", lr2, "nationality (summed to sido)", "country_en", keep=keep_nat)
-        s2 = pivot_merge(s2, K2, visa2, "visa_code", "n", "visa_", lr2, "visa (summed to sido)", code_labels=code_labels, keep=keep_visa)
+        nm_nat2, nm_visa2 = [], []
+        s2 = pivot_merge(s2, K2, nat2, "country", "n", "nat_", lr2, "nationality (summed to sido)", "country_en",
+                         keep=keep_nat_all, names_out=nm_nat2)
+        s2 = pivot_merge(s2, K2, visa2, "visa_code", "n", "visa_", lr2, "visa (summed to sido)", code_labels=code_labels,
+                         keep=keep_visa, names_out=nm_visa2)
+        # the same years as the district rows: a category listed anywhere that year
+        s2 = zero_fill(s2, nat_f, "country", "nat_", nm_nat2)
+        s2 = zero_fill(s2, visa, "visa_code", "visa_", nm_visa2)
         s2 = pivot_merge(s2, K2, lang2, "language", "count", "lang_", lr2, "language demand (summed to sido)", "language_en", keep=keep_lang)
         nenc2 = to_prov(enc).groupby(K2).size().rename("n_enclaves").reset_index()
         s2 = s2.merge(nenc2, on=K2, how="left"); s2["n_enclaves"] = s2["n_enclaves"].fillna(0).astype(int)
@@ -662,22 +769,26 @@ def attach_breakdowns():
             # of this row, and no registered-basis national language table exists.
             nn_ = pd.read_csv(f"{SRC}/nationality_national.csv", encoding="utf-8-sig")
             vn_ = pd.read_csv(f"{SRC}/visa_national.csv", encoding="utf-8-sig")
-            natN = (nn_[nn_["population"] == "registered"]
-                    .groupby(["year", "country", "country_en"], as_index=False)["n"].sum())
+            natN = fold_other(nn_[nn_["population"] == "registered"]
+                              .groupby(["year", "country", "country_en"], as_index=False)["n"].sum(),
+                              keep_nat)
             visN = (vn_[vn_["population"] == "registered"]
                     .groupby(["year", "visa_code"], as_index=False)["n"].sum())
             lanN = lang_sg.groupby(["year", "language", "language_en"], as_index=False)["count"].sum()
+            nm_natN, nm_visN = [], []
             na = pivot_merge(na, ["year"], natN, "country", "n", "nat_", lrn,
                              ("nationality_national (population = registered; the published "
                               "national count, including people placed in no district)",
                               "nationality_national (population = registered; 공표 전국 수, "
                               "시군구가 적히지 않은 사람 포함)"),
-                             "country_en", keep=keep_nat)
+                             "country_en", keep=keep_nat_all, names_out=nm_natN)
             na = pivot_merge(na, ["year"], visN, "visa_code", "n", "visa_", lrn,
                              ("visa_national (population = registered; the published "
                               "national count)",
                               "visa_national (population = registered; 공표 전국 수)"),
-                             code_labels=code_labels, keep=keep_visa)
+                             code_labels=code_labels, keep=keep_visa, names_out=nm_visN)
+            na = zero_fill(na, natN, "country", "nat_", nm_natN)
+            na = zero_fill(na, visN, "visa_code", "visa_", nm_visN)
             na = pivot_merge(na, ["year"], lanN, "language", "count", "lang_", lrn,
                              ("language_demand scope = sigungu summed over districts "
                               "(registered, district-allocated basis; each district "
@@ -779,9 +890,11 @@ def final_qc():
     Every check below is a pass/fail check; the function exits 1 when any fails, so
     `run_pipeline.py --phase 3` stops there. It modifies no file.
 
-      (1) File integrity and CSV/DTA parity: every CSV under data/ and
-          data/detailed_data/ has a .dta twin and no .dta lacks a CSV; each pair has
-          the same columns in the same order and the same values, cell by cell.
+      (1) File integrity and CSV/DTA parity: the staging tree holds exactly the
+          files the dictionary documents plus the three documents; every CSV under
+          data/ and data/detailed_data/ has a .dta twin and no .dta lacks a CSV; each
+          pair has the same columns in the same order and the same values, cell by
+          cell.
       (2) Cross-level sums of the wide columns: sigungu sums to sido for every
           nat_*, visa_* and lang_* column, province by province (a district counts
           in the province of its sigungu_code that year); sido sums to national for
@@ -795,8 +908,11 @@ def final_qc():
           person, wherever the parts are published.
       (4) Comparison against the published MOJ figures: national_annual's nat_* and
           visa_* equal nationality_national / visa_national (population =
-          registered) cell by cell, and national foreign_total equals the district
-          total of the MOJ validation file every year.
+          registered) cell by cell (nat_other: the total less the 49 named), and
+          national foreign_total equals the district total of the MOJ validation
+          file every year; and the nat_* columns of every row add up to its
+          registered foreigners (a province's, to its districts'), with nat_other
+          never blank.
       (5) Wide-attach consistency: every wide column on a sido or sigungu file also
           sits on national_annual with the same name, and no wide column is blank in
           every row.
@@ -830,6 +946,30 @@ def final_qc():
         print(f"[{tag}] {label}" + (f"  -- {detail}" if detail else ""))
 
     print("="*70); print("(1) FILE INTEGRITY + CSV/DTA PARITY"); print("="*70)
+    # 2026-09-27 (2라운드 대조): the staging tree holds exactly the documented files.
+    # Four scratch files (cw_dump.csv, x_gender_2019.csv, types_dump.csv,
+    # ages_dump.txt) sat in detailed_data/ after an investigation, and no check
+    # looked at anything but the .csv/.dta pairs the dictionary names.
+    dd_ = pd.read_csv(os.path.join(DEPOSIT, "data_dictionary.csv"), encoding="utf-8-sig",
+                      dtype=str, keep_default_na=False)
+    tables = {p_.strip()[:-4] for f_ in dd_["file"] for p_ in f_.split("/")
+              if p_.strip().endswith(".csv")}
+    expected = {"LICENSE.txt", "README.md", "data_dictionary.csv"}
+    for t in tables:
+        sub = "data" if t + ".csv" in TOP_LEVEL else os.path.join("data", "detailed_data")
+        expected |= {os.path.normpath(os.path.join(sub, t + e)) for e in (".csv", ".dta")}
+    found, odd = set(), []
+    for dirpath, dirnames, filenames in os.walk(DEPOSIT):
+        for fn in filenames:
+            found.add(os.path.normpath(os.path.relpath(os.path.join(dirpath, fn), DEPOSIT)))
+        for dn in dirnames:
+            rel = os.path.normpath(os.path.relpath(os.path.join(dirpath, dn), DEPOSIT))
+            if rel not in ("data", os.path.join("data", "detailed_data")):
+                odd.append(rel)
+    check("staging tree holds exactly the documented files",
+          found == expected and not odd,
+          f"would ship {sorted(found - expected)[:6]}, missing {sorted(expected - found)[:6]}, "
+          f"folders {odd[:3]}")
     pairs = []
     for sub in ("", "detailed_data"):
         folder = os.path.join(DEP, sub)
@@ -946,13 +1086,20 @@ def final_qc():
                 if depth == 0:
                     return head[i + 1:-1]
             return None
+        named = [last_paren(d_) for v_, d_ in zip(rows["variable"], rows["description_en"])]
         for v, desc in zip(rows["variable"], rows["description_en"]):
             got_ = last_paren(desc)
             if got_ is None:
                 n_bad += 1
                 continue
             cat = got_.split(", ")[-1] if p == "visa_" else got_
-            want = src[src[key].astype(str) == cat].groupby("year")["n"].sum()
+            if p == "nat_" and cat == "그 밖의 국적":
+                # the residual: the national total less the 49 named nationalities
+                want = (src.groupby("year")["n"].sum()
+                        - src[src[key].astype(str).isin([c for c in named if c and c != cat])]
+                        .groupby("year")["n"].sum().reindex(src["year"].unique()).fillna(0))
+            else:
+                want = src[src[key].astype(str) == cat].groupby("year")["n"].sum()
             got = nat.set_index("year")[v]
             j = pd.concat([got.rename("got"), want.rename("want")], axis=1)
             j = j[j.index.isin(nat["year"])].fillna(0)
@@ -971,6 +1118,38 @@ def final_qc():
         check("national foreign_total = the MOJ validation file's district total, every year",
               len(j) == len(nat) and bool((j["foreign_total"] == j["moj"]).all()),
               f"{len(j)} years, max |diff| {(j['foreign_total'] - j['moj']).abs().max():.0f}")
+
+    # 2026-09-27 (2라운드 대조). The nat_* columns of a row must add up to the row's
+    # registered foreigners. The cross-level sums above could not see nat_other
+    # holding only the raw 기타 column, because the district and province columns
+    # were built by the same call and shared the gap (13,171-14,285 people a year in
+    # 2014-2017, nat_other blank in every row of 2014-2016, 2019 and 2021).
+    # A province's wide columns are its districts summed (see (2)), so they add up to
+    # the registered foreigners of its districts; that equals the province row's own
+    # count in every province-year but 2015 경기도, whose 소계 the yearbook prints one
+    # person above its district lines.
+    dist_reg = sgg_p.groupby(["year", "_prov"])["registered_foreigners"].sum()
+    sido_reg = pd.Series([dist_reg.get((y, p_), np.nan) for y, p_ in
+                          zip(sido_p["year"], sido_p["_prov"])], index=sido.index)
+    for label, df, tot, what in (("sigungu", sgg, sgg["registered_foreigners"],
+                                  "registered_foreigners"),
+                                 ("sido", sido, sido_reg,
+                                  "the registered foreigners of its districts")):
+        cols = fam(df, "nat_")
+        x = df[tot.notna() & df[cols].notna().any(axis=1)]
+        g = (x[cols].fillna(0).sum(axis=1) - tot[x.index]).abs()
+        check(f"{label}: the nat_* columns of a row add up to {what} "
+              f"({len(x)} rows)", len(x) > 0 and bool((g == 0).all()),
+              f"{int((g != 0).sum())} rows differ, worst {g.max():.0f}")
+        blank = x["nat_other"].isna().sum() if "nat_other" in x.columns else len(x)
+        check(f"{label}: nat_other is never blank where the row has nationality columns",
+              blank == 0, f"{blank} blank")
+    nreg = det("nationality_national.csv")
+    nreg = nreg[nreg["population"] == "registered"].groupby("year")["n"].sum()
+    cols = fam(nat, "nat_")
+    g = (nat.set_index("year")[cols].fillna(0).sum(axis=1) - nreg).dropna().abs()
+    check("national: the nat_* columns add up to the registered national total, every year",
+          len(g) == len(nat) and bool((g == 0).all()), f"worst {g.max():.0f}")
 
     print("\n" + "="*70); print("(5) WIDE-ATTACH CONSISTENCY"); print("="*70)
     for label, df in (("sido", sido), ("sigungu", sgg)):

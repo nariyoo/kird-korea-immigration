@@ -1340,6 +1340,13 @@ def dictionary_facts(data):
     F["cityline_seg_ko"] = ", ".join(ko) if ko else "없음"
     F["cityline_seg_years"] = years_text(sc["year"].unique())
 
+    ld = rd("language_demand.csv")
+    ln = ld[(ld["scope"] == "national") & (ld["year"] == ld["year"].max())]
+    ko = ln["language"].astype(str).str.contains("[가-힣]")
+    F["lang_untranslated"] = (int(ld["year"].max()), format(len(ln), ","),
+                              format(int((~ko).sum()), ","),
+                              "%.1f" % (100 * ln.loc[~ko, "count"].sum() / ln["count"].sum()))
+
     dia = rd("diaspora_residence_by_sido.csv")
     k = dia[dia["country"] != "기타"].groupby("year")["country"].nunique()
     F["diaspora_names"] = (int(k.min()), int(k.max()), int(k.min()), int(k.idxmin()),
@@ -1579,6 +1586,19 @@ def build_data_dictionary():
         (SUMMARY_FILES, "children", "integer",
          "Children of foreign residents (MOIS multicultural-family children).",
          "외국인주민 자녀."),
+        (SUMMARY_FILES, "foreign_resident_households", "integer",
+         "MOIS foreign-resident households (외국인주민 세대수): the column the 2009-2015 "
+         "editions print after the children block, at the province and district level "
+         "and, from 2014, the sub-district level; the other editions do not print it, "
+         "so it is blank before 2009 and after 2015. A count of households, not people, "
+         "so it enters no identity with broad_total. On a general-district row of "
+         "2009-2015 (broad_apportioned True) it is apportioned from the city's published "
+         "count like the other MOIS columns. Added 2026-09-27.",
+         "행정안전부 외국인주민 세대수: 2009-2015년판이 자녀 칸 뒤에 시도·시군구와 2014년부터 "
+         "읍면동 단위로 찍는 칸. 다른 판은 찍지 않으므로 2009년 전과 2015년 뒤는 빈칸이다. "
+         "사람이 아니라 세대를 세므로 broad_total 과 항등식이 없다. 2009-2015년 일반구 "
+         "행(broad_apportioned True)에서는 다른 MOIS 칸처럼 시의 공표값을 안분한다. "
+         "2026-09-27 추가."),
         (SUMMARY_FILES, "settlement_rate_pct", "float",
          "Settlement rate = (naturalized + children) / broad_total x100. Blank where "
          "naturalized or children is unreported.",
@@ -1836,13 +1856,21 @@ def build_data_dictionary():
          "from 2016, except 부천시, which is one district in every year as in every other "
          "district file (its 2024 general districts are summed). A district-year is "
          "absent, not blank, where the source masks every single-age cell: 울릉군 "
-         "(47940) 2016-2024 is the only case, and its total is in summary_by_sigungu.children.",
+         "(47940) 2016-2024 is the only case, and its total is in summary_by_sigungu.children. "
+         "Where the source masks ('*') exactly one age of a district and prints the other "
+         "eighteen and the district total, that age is the total less the eighteen and is "
+         "carried (2016-2024; every fully printed district adds up to its total in every "
+         "edition); an age that is masked beside another masked age, or that the source "
+         "does not print (it omits some ages with no children, e.g. 2014), has no row.",
          "해당 연령 외국인주민 자녀 수(2011-2024). 전체 자녀(국내출생+귀화·외국국적) 기준이라 "
          "합계가 summary의 children(2016년부터 국내출생만)보다 큼. 2016년 이전은 일반구 시를 "
          "시 단위로, 2016년부터 구 단위로 수록하되 부천시는 다른 시군구 파일처럼 모든 해에 한 "
          "단위(2024년 일반구를 합침). 원자료가 모든 연령 칸을 가린 시군구·연도는 빈 행이 아니라 "
          "행이 없다. 울릉군(47940) 2016-2024 가 유일하며 합계는 summary_by_sigungu.children 에 "
-         "있다."),
+         "있다. 원자료가 한 시군구에서 한 연령만 가리고('*') 나머지 열여덟 연령과 시군구 합계를 "
+         "찍은 곳은 그 연령을 합계에서 열여덟을 뺀 값으로 싣는다(2016-2024; 모든 칸을 찍은 "
+         "시군구는 모든 판에서 연령 합이 합계와 같다). 다른 연령과 함께 가려진 연령, 원자료가 "
+         "찍지 않은 연령(자녀가 없는 연령을 빼기도 한다, 예: 2014)은 행이 없다."),
         ("multicultural_households.csv", "sido / sido_en / sigungu / sigungu_en", "string",
          "Province and district (Korean + English).", "시도·시군구(한글+영문)."),
         ("multicultural_households.csv", "adm_code", "string",
@@ -1995,13 +2023,31 @@ def build_data_dictionary():
          "World region the canonical nationality is assigned to.",
          "그 국적이 속한 세계 지역."),
         ("crosswalk_country.csv", "rule", "string",
-         "'source label variant' where an edition's label is merged into another, "
-         "'unchanged' where the label is the standard name itself. Every standard name "
-         "has an 'unchanged' row, including those other labels merge into (미국, 영국, "
-         "타이, 러시아(연방), ...), which lacked one until 2026-09-26.",
-         "어느 판의 표기를 다른 이름에 합친 자리는 'source label variant', 표기가 곧 표준 "
-         "이름이면 'unchanged'. 다른 표기가 합쳐지는 이름(미국, 영국, 타이, 러시아(연방) "
-         "등)을 포함해 모든 표준 이름에 'unchanged' 행이 있다(2026-09-26 전에는 없었다)."),
+         "'source label variant' where an edition spells a nationality differently "
+         "(the 2017 edition's parenthesized labels are listed as printed, "
+         "'(printed in parentheses)'); 'separate yearbook line folded into this "
+         "country' where the label is a line of its own that the release adds to "
+         "another nationality: a territory (미국인근섬, 영령인도양섬, ...), a British "
+         "nationality class (영국외지민, 영국외지시민, 영국해외영토시민, ...), the legacy "
+         "code 자이르 or 홍콩거주난민, which recent editions print beside the country "
+         "they are folded into (2024: 영국 8,697 with 영국외지민 183, 영국외지시민 4 and "
+         "영국해외영토시민 3; 콩고민주공화국 378 with 자이르 7; 홍콩 12,786 with "
+         "홍콩거주난민 14); 'unchanged' where the label is the standard name itself. "
+         "Every standard name has an 'unchanged' row, including those other labels "
+         "merge into (미국, 영국, 타이, 러시아(연방), ...), which lacked one until "
+         "2026-09-26. Every label the raw status and district tables print has a row "
+         "(check_published_totals.py holds the raw tables to this file).",
+         "어느 판이 국적을 다르게 적은 자리는 'source label variant'(2017년판의 괄호 "
+         "표기는 찍힌 그대로 '(printed in parentheses)'); 연보가 따로 찍는 줄을 배포본이 "
+         "다른 국적에 더하는 자리는 'separate yearbook line folded into this country': "
+         "속령(미국인근섬, 영령인도양섬 등), 영국 국적 부류(영국외지민, 영국외지시민, "
+         "영국해외영토시민 등), 옛 코드 자이르와 홍콩거주난민으로, 최근 판은 합쳐지는 나라 "
+         "옆에 따로 찍는다(2024: 영국 8,697 과 영국외지민 183, 영국외지시민 4, "
+         "영국해외영토시민 3; 콩고민주공화국 378 과 자이르 7; 홍콩 12,786 과 홍콩거주난민 "
+         "14). 표기가 곧 표준 이름이면 'unchanged'. 다른 표기가 합쳐지는 이름(미국, 영국, "
+         "타이, 러시아(연방) 등)을 포함해 모든 표준 이름에 'unchanged' 행이 있다"
+         "(2026-09-26 전에는 없었다). 원자료의 체류자격·시군구 표가 찍는 모든 표기에 행이 "
+         "있다(check_published_totals.py 가 원자료와 맞댄다)."),
         ("crosswalk_region.csv", "level", "string",
          "Administrative level the row applies to: sido, sigungu, eupmyeondong, or "
          "'lineage' for a boundary-change record.",
@@ -2019,13 +2065,20 @@ def build_data_dictionary():
          "a city total, a line of the district table carried on another district "
          "(a sub-office line, or a line printed under a district after it was abolished "
          "or merged), or a boundary-lineage record in JSON (a pair for a one-to-one "
-         "succession, a place and a list for a city divided into gu).",
+         "succession, a place and a list for a city divided into gu); 'unchanged' for a "
+         "province printed under the name the release carries (every province has "
+         "one, the full names the 2008-2009 and later tables print).",
          "다른 이유: 개명, 승격, 시도 이동, 시 총계로 합침, 다른 시군구에 싣는 시군구 표의 "
          "줄(출장소 줄, 또는 폐지·통합된 시군구 이름으로 뒤에 찍힌 줄), 또는 JSON 으로 적은 "
-         "경계 이력(1:1 승계는 한 쌍, 구로 나뉜 시는 지명과 목록)."),
+         "경계 이력(1:1 승계는 한 쌍, 구로 나뉜 시는 지명과 목록). 배포본이 싣는 이름 그대로 "
+         "찍힌 시도는 'unchanged'(2008-2009년판과 그 뒤 표가 찍는 정식 이름마다 한 행)."),
         ("crosswalk_visa.csv", "source_code", "string",
-         "Visa code as a source edition lists it, including pre-2010 sub-codes.",
-         "연감 판본의 체류자격 코드. 2010년 이전 하위 코드를 포함한다."),
+         "Visa code as a source edition lists it, including pre-2010 sub-codes, and the "
+         "code-less column of unclassified statuses as it is headed (기타, 기타(other), "
+         "기타(others), 기타(Others), by edition).",
+         "연감 판본의 체류자격 코드. 2010년 이전 하위 코드와, 코드 없이 「기타」·"
+         "「기타(other)」·「기타(others)」·「기타(Others)」로 머리를 단(판마다 다르다) 미분류 "
+         "자격 칸을 포함한다."),
         ("crosswalk_visa.csv", "visa_code", "string",
          "Parent code this dataset reports for the source code (E8T for the 2006-2009 "
          "E-8).",
@@ -2034,10 +2087,14 @@ def build_data_dictionary():
          "Korean and English name of the parent code.",
          "부모 코드의 한글·영문 이름."),
         ("crosswalk_visa.csv", "rule", "string",
-         "'sub-code collapsed to parent', 'unchanged', or, for E-8 in the 2006-2009 "
+         "'sub-code collapsed to parent', 'unchanged', 'source label variant (the "
+         "code-less column of unclassified statuses)' for the 기타 column carried as "
+         "ETC (10,171 people in 2018, 39,210 in 2020), or, for E-8 in the 2006-2009 "
          "editions, 'same source code, different status' (carried as E8T).",
-         "'sub-code collapsed to parent', 'unchanged', 또는 2006-2009년판의 E-8 에 "
-         "'same source code, different status'(E8T 로 싣는다)."),
+         "'sub-code collapsed to parent', 'unchanged', ETC 로 싣는 코드 없는 기타 칸은 "
+         "'source label variant (the code-less column of unclassified statuses)'(2018년 "
+         "10,171명, 2020년 39,210명), 또는 2006-2009년판의 E-8 에 'same source code, "
+         "different status'(E8T 로 싣는다)."),
         ("language_weights.csv", "country", "string",
          "Nationality, in the canonical label, for every standard name crosswalk_country "
          "lists, the lines that name no nationality included.",
@@ -2068,26 +2125,45 @@ def build_data_dictionary():
          "population='stay'), "
          "'sido' (all languages per province, computed from the registered "
          "district-assigned sums in nationality_by_sido; added in v1.2.0), or "
-         "'sigungu' (top ~20 languages per district, from nationality_by_sigungu). "
+         "'sigungu' (the 20 languages with the largest estimate in each district, ties "
+         "broken by the Korean label, from nationality_by_sigungu). "
          "The national scope therefore sits on the broader staying-population "
          "basis while the subnational scopes sit on the registered "
          "district-assigned basis; the scopes are not nested sums.",
          "'national'(전체 언어; 공표 전국 체류외국인 구성, nationality_national 의 "
          "population='stay' 에서 계산), 'sido'(시도별 전체 언어; nationality_by_sido "
-         "의 등록·시군구 배정 합에서 계산, v1.2.0 추가), 'sigungu'(시군구당 상위 "
-         "~20개; nationality_by_sigungu 에서). 전국은 체류 기준, 시도·시군구는 "
+         "의 등록·시군구 배정 합에서 계산, v1.2.0 추가), 'sigungu'(시군구마다 추정치가 "
+         "큰 20개 언어, 같으면 한글 이름 순; nationality_by_sigungu 에서). 전국은 체류 기준, 시도·시군구는 "
          "등록(시군구 배정) 기준이라 scope 간 합산 관계가 아니다."),
         ("language_demand.csv", "sido / sido_en / sigungu / sigungu_en", "string",
          "Province and district (Korean + English); blank for national-scope rows.",
          "시도·시군구(한글+영문); national 행은 공백."),
         ("language_demand.csv", "language / language_en", "string",
-         "Estimated first language (Korean + English).", "추정 모어(한글+영문)."),
+         "Estimated first language: language is the Korean label, language_en the "
+         "English one. Every language of the sigungu scope, and every language that "
+         "reaches 500 estimated speakers at the national or sido scope in some year, "
+         "has a Korean label (a transliteration of the Ethnologue name where Korean "
+         "has no settled one); the rest of the long tail keeps the Ethnologue English "
+         "name in both columns: %s of the %s national labels of %s, %s%% of that "
+         "year's estimated speakers." % (F["lang_untranslated"][2], F["lang_untranslated"][1],
+                                         F["lang_untranslated"][0], F["lang_untranslated"][3]),
+         "추정 모어. language 는 한글, language_en 은 영문 이름. sigungu 범위의 모든 "
+         "언어와, national·sido 범위에서 어느 해든 추정 화자 500명에 이르는 모든 언어는 "
+         "한글 이름을 가진다(자리 잡은 한국어 이름이 없으면 Ethnologue 이름을 외래어 "
+         "표기법으로 옮김). 나머지 긴 꼬리는 두 칸 모두 Ethnologue 영문 이름이다: %s년 "
+         "national 라벨 %s개 가운데 %s개, 그 해 추정 화자의 %s%%."
+         % (F["lang_untranslated"][2], F["lang_untranslated"][1],
+            F["lang_untranslated"][0], F["lang_untranslated"][3])),
         ("language_demand.csv", "count", "integer",
          "Estimated speakers = nationality count x that country's L1 (mother-tongue) "
-         "speaker share (Ethnologue 24); rounded to whole persons. Korean excluded; "
-         "estimates below one person are dropped before rounding.",
-         "추정 화자수 = 국적별 인원 x 해당국 L1 모어 share(Ethnologue 24); 정수로 반올림. "
-         "한국어 제외, 1명 미만 추정치는 반올림 전에 드롭."),
+         "speaker share (Ethnologue 24; the shares are language_weights.csv), summed "
+         "over nationalities and rounded once, half up, to whole persons. Korean "
+         "excluded; an estimate below one person is dropped. Every row re-derives "
+         "exactly from the released nationality counts and language_weights.csv.",
+         "추정 화자수 = 국적별 인원 x 해당국 L1 모어 share(Ethnologue 24; 비중은 "
+         "language_weights.csv) 를 국적마다 더한 뒤 한 번만, 반올림(0.5 올림)으로 정수. "
+         "한국어 제외, 1명 미만 추정치는 뺀다. 모든 행이 공개된 국적 인원과 "
+         "language_weights.csv 에서 그대로 다시 나온다."),
         ("segregation_by_nationality.csv", "year", "integer", "Reference year (2014-2024).",
          "기준연도(2014-2024)."),
         ("segregation_by_nationality.csv", "country / country_en", "string",
@@ -2217,7 +2293,8 @@ def build_data_dictionary():
          "그 자격의 공표 전국 수. visa_by_nationality 를 국적에 대해 더한 것이다."),
         ("national_annual.csv",
          "broad_total / non_naturalized / workers / marriage_migrants / students / "
-         "ethnic_koreans / other_foreigners / naturalized / children", "integer",
+         "ethnic_koreans / other_foreigners / naturalized / children / "
+         "foreign_resident_households", "integer",
          "The MOIS settlement-composition block the sido and sigungu summaries "
          "carry, summed to the national level (added in v1.2.0). A year is filled "
          "only when every province reports; otherwise blank, never 0.",
@@ -2314,8 +2391,12 @@ def build_data_dictionary():
          "Reference year (2008-2024).", "기준연도(2008-2024)."),
         ("diaspora_residence_by_sido.csv", "sido / sido_en", "string",
          "Province or metropolitan city (Korean + English), on the same fixed name set "
-         "the rest of the panel uses.",
-         "광역시·도(한글+영문). 다른 파일과 같은 고정 이름 집합을 씁니다."),
+         "the rest of the panel uses. The 2012 table also prints a line 기타 / Others "
+         "that names no province (8 people); it is carried as sido 기타 / Other with a "
+         "blank sido_code, so each year sums to the table's own grand total.",
+         "광역시·도(한글+영문). 다른 파일과 같은 고정 이름 집합을 씁니다. 2012년 표는 "
+         "시도를 적지 않은 「기타 / Others」 줄(8명)도 찍으므로 sido 「기타 / Other」, "
+         "빈 sido_code 로 싣습니다. 그래서 해마다 합이 표의 총계와 같습니다."),
         ("diaspora_residence_by_sido.csv", "country / country_en", "string",
          "Nationality of the overseas Korean, with its English name. The yearbook names "
          "between %d and %d nationalities a year (%d in %d, %d in %d). Everyone in "

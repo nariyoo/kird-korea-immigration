@@ -1048,6 +1048,17 @@ def check_region_crosswalk(d):
           "crosswalk_region: every district-table line carried on another district, "
           "and the 2010 Changwon split",
           "missing %s" % sorted(want - rows))
+    # 2026-09-27 (2라운드 대조): every province the files carry has a row under its own
+    # name, the full name the 2008-2009 and later tables print; only 강원도, 전라북도
+    # and 제주특별자치도 had one.
+    names = set()
+    for f, x in d.items():
+        if x is not None and "sido" in x.columns and f != "crosswalk_region.csv":
+            names |= set(x["sido"].dropna().astype(str))
+    names -= {"기타", ""}
+    src = set(cr.loc[cr["level"] == "sido", "source_sido"].astype(str))
+    check(not (names - src), "crosswalk_region: every province name the files carry "
+          "has a row of its own", sorted(names - src))
 
 
 def check_early_provinces(d):
@@ -1144,6 +1155,33 @@ def check_subdistrict_sums(d):
     check(len(j) > 0 and over.empty,
           "subdistrict sums: no district's sub-districts add up to more than its broad_total",
           "%d district-years over, e.g. %s" % (len(over), over.head(3).to_dict("index")))
+    # 2026-09-27 (2라운드 대조). 2014-2015 print no masked sub-district, so there a
+    # district's sub-districts add up to its broad_total, and a city printed without
+    # its gu (the gu apportioned) to the sum of its gu rows, to the rounding of the
+    # apportioned rows (four a gu) and the few people by which the 2014 sheet's own
+    # district lines exceed their sub-district lines (up to five: 영등포구 58,927
+    # against 58,922). The 2014 창원시 block prints three sub-districts named 중앙동;
+    # keyed on the city and the name they overwrote one another and 1,198 people went
+    # missing, and two 지소 lines under 인천 중구 (70) were dropped as unclassified,
+    # which the check above (never more) could not see.
+    x = s[s["year"].isin([2014, 2015])].assign(_c=key(s[s["year"].isin([2014, 2015])]))
+    app = x["broad_apportioned"].astype(str).str.lower() == "true"
+    city = {(y, c): c[:4] for y, c, a in zip(x["year"], x["_c"], app) if a}
+    grp = lambda y, c: city.get((y, c), c)
+    xs = x.assign(_g=[grp(y, c) for y, c in zip(x["year"], x["_c"])])
+    n_app = xs[app].groupby(["year", "_g"]).size()
+    sg_ = xs.groupby(["year", "_g"])["broad_total"].sum(min_count=1)
+    ee = e[e["year"].isin([2014, 2015])]
+    ee = ee.assign(_c=key(ee))
+    ee = ee.assign(_g=[grp(y, c) for y, c in zip(ee["year"], ee["_c"])])
+    em_ = ee.groupby(["year", "_g"])["broad_total"].sum(min_count=1)
+    jj = pd.concat([em_.rename("emd"), sg_.rename("sgg")], axis=1).dropna()
+    tol = (n_app.reindex(jj.index).fillna(0) * 4).clip(lower=5)
+    off = jj[(jj["emd"] - jj["sgg"]).abs() > tol]
+    check(len(jj) > 0 and off.empty,
+          "subdistrict sums: 2014-2015 sub-districts add up to their district (a city "
+          "printed without its gu: to the sum of its gu rows)",
+          "%d district-years off, e.g. %s" % (len(off), off.head(3).to_dict("index")))
 
 
 def check_language_weights(d):
@@ -1165,6 +1203,124 @@ def check_language_weights(d):
     miss = sorted(used - set(lw["country"]))
     check(not miss, "language_weights: a row for every nationality line with people",
           miss[:8])
+
+
+def check_language_demand(d):
+    """Every row of language_demand re-derives from the released counts and
+    language_weights.csv, and the labels readers see are Korean where they matter.
+
+    2026-09-27 (2라운드 대조). The national and district scopes were read from a
+    block already rounded to one decimal and rounded again, so about 5% of those rows
+    were one person off (카메룬 2014 x Aghem 0.0039 = 2.52, released as 2) and some
+    estimates under one person passed the one-person floor. Here each scope is rebuilt
+    the way the dictionary states it: persons x share, in units of 1/10,000 so the
+    sum is exact, rounded once half up, estimates under one person dropped;
+    national from nationality_national (stay), sido from nationality_by_sido,
+    sigungu from nationality_by_sigungu keeping each district's 20 largest (ties by
+    label). The same date: the Korean column repeated the English name for most
+    languages (1,049 of 1,460 national labels in 2024, 따이어 5,782 among them); a
+    language of the district scope, or one reaching 500 speakers in some year, must
+    now carry a Korean label.
+    """
+    ld, lw = d.get("language_demand.csv"), d.get("language_weights.csv")
+    if ld is None or lw is None:
+        return
+    U = 10000
+    w = lw.dropna(subset=["language"])
+    w = w[w["language"].astype(str).str.len() > 0]
+    sh = {}
+    for c, lang, s in zip(w["country"], w["language"], w["share"]):
+        sh.setdefault(c, []).append((lang, int(round(float(s) * U))))
+
+    def est(counts):
+        out = {}
+        for c, n in counts:
+            for lang, u in sh.get(c, ()):
+                out[lang] = out.get(lang, 0) + int(n) * u
+        return out
+
+    want = {}
+
+    def put(key, e, top=None):
+        items = sorted(e.items(), key=lambda kv: (-kv[1], kv[0]))
+        for lang, u in (items[:top] if top else items):
+            if u >= U:
+                want[key + (lang,)] = (u + U // 2) // U
+
+    years = set(ld["year"].astype(int))
+    nn = d.get("nationality_national.csv")
+    if nn is not None:
+        x = nn[(nn["population"] == "stay") & nn["year"].isin(
+            set(ld.loc[ld["scope"] == "national", "year"]))]
+        for y, g in x.groupby("year"):
+            put((int(y), "national", "", ""), est(zip(g["country"], g["n"])))
+    ns = d.get("nationality_by_sido.csv")
+    if ns is not None:
+        x = ns[ns["year"].isin(set(ld.loc[ld["scope"] == "sido", "year"]))]
+        for (y, sd), g in x.groupby(["year", "sido"]):
+            put((int(y), "sido", sd, ""), est(zip(g["country"], g["n"])))
+    nb = d.get("nationality_by_sigungu.csv")
+    if nb is not None:
+        x = nb[nb["year"].isin(set(ld.loc[ld["scope"] == "sigungu", "year"]))]
+        for (y, sd, sg), g in x.groupby(["year", "sido", "sigungu"]):
+            put((int(y), "sigungu", sd, sg), est(zip(g["country"], g["n"])), top=20)
+    got = {(int(r.year), r.scope, "" if r.sido != r.sido else r.sido,
+            "" if r.sigungu != r.sigungu else r.sigungu, r.language): int(r.count)
+           for r in ld.itertuples()}
+    off = [(k, want.get(k), got.get(k)) for k in set(want) | set(got)
+           if want.get(k) != got.get(k)]
+    by = {}
+    for k, _, _ in off:
+        by[k[1]] = by.get(k[1], 0) + 1
+    check(bool(not off and len(got) > 0 and years),
+          "language_demand: every row re-derives from the released counts x "
+          "language_weights (%d rows)" % len(got),
+          "%d rows differ %s, e.g. %s" % (len(off), by, sorted(off, key=str)[:3]))
+    hang = ld["language"].astype(str).str.contains("[가-힣]")
+    mx = ld.groupby("language")["count"].transform("max")
+    need = (ld["scope"] == "sigungu") | (mx >= 500)
+    bad = sorted(set(ld.loc[need & ~hang, "language"]))
+    check(not bad, "language_demand: a Korean label for every language of the district "
+          "scope and every language reaching 500 speakers", bad[:8])
+
+
+def check_households(d):
+    """The MOIS 외국인주민 세대수 column the 2009-2015 editions print is carried.
+
+    2026-09-27 (2라운드 대조): the parser read it at every level and no released file
+    carried it. Every province row of 2009-2015 has it, the districts of a province
+    add up to it (to the apportioning of general districts, one household per gu),
+    and national_annual is the province sum.
+    """
+    ss, sg, na = (d.get(f) for f in ("summary_by_sido.csv", "summary_by_sigungu.csv",
+                                     "national_annual.csv"))
+    if ss is None:
+        return
+    col = "foreign_resident_households"
+    have = all(x is not None and col in x.columns for x in (ss, sg, na))
+    check(have, "households: foreign_resident_households on the sido, sigungu and "
+          "national summaries", "")
+    if not have:
+        return
+    yrs = ss[ss["year"].between(2009, 2015)]
+    check(bool(len(yrs)) and bool(yrs[col].notna().all()),
+          "households: every province row of 2009-2015 carries the MOIS household count",
+          "%d blank" % int(yrs[col].isna().sum()))
+    nat = na.set_index("year")[col].dropna()
+    prov = ss.groupby("year")[col].sum(min_count=1).reindex(nat.index)
+    check(bool(len(nat)) and bool((nat == prov).all()),
+          "households: national_annual equals the province sum", "")
+    if "sigungu_code" in sg.columns and "sido_code" in ss.columns:
+        p_ = sg.assign(_p=sg["sigungu_code"].map(lambda v: _code(v)[:2]))
+        lo = p_.groupby(["year", "_p"])[col].sum(min_count=1)
+        hi = ss.assign(_p=ss["sido_code"].map(_code)).groupby(["year", "_p"])[col].sum(min_count=1)
+        j = pd.concat([lo.rename("lo"), hi.rename("hi")], axis=1).dropna()
+        n_gu = p_[p_["broad_apportioned"].astype(str).str.lower() == "true"].groupby(
+            ["year", "_p"]).size().reindex(j.index).fillna(0)
+        bad = j[(j["lo"] - j["hi"]).abs() > n_gu]
+        check(len(j) > 0 and bad.empty, "households: the districts of a province add up "
+              "to it, to the rounding of apportioned general districts",
+              "%d province-years off, e.g. %s" % (len(bad), bad.head(3).to_dict("index")))
 
 
 def check_region_totals(d):
@@ -1291,6 +1447,16 @@ def check_dictionary_numbers(data, d):
         exp.append(("naturalization_annual.csv", "year",
                     ["annual series runs %d-%d" % (ann["year"].min(), ann["year"].max()),
                      "panels run %d-%d" % (pc["year"].min(), pc["year"].max())]))
+    # the long tail of languages that keep their English label (2026-09-27)
+    ld = d.get("language_demand.csv")
+    if ld is not None:
+        last_ = int(ld["year"].max())
+        ln = ld[(ld["scope"] == "national") & (ld["year"] == last_)]
+        ko_ = ln["language"].astype(str).str.contains("[가-힣]")
+        exp.append(("language_demand.csv", "language / language_en",
+                    ["%s of the %s national labels of %d, %.1f%%"
+                     % (format(int((~ko_).sum()), ","), format(len(ln), ","), last_,
+                        100 * ln.loc[~ko_, "count"].sum() / ln["count"].sum())]))
     # the district table's columns that name no nationality (2026-09-26, final audit)
     nb = d.get("nationality_by_sigungu.csv")
     if nb is not None:
@@ -1637,6 +1803,8 @@ def main():
     check_crosswalk_country(d)
     check_region_crosswalk(d)
     check_language_weights(d)
+    check_language_demand(d)
+    check_households(d)
     check_early_provinces(d)
     check_subdistrict_rates(d)
     check_subdistrict_sums(d)
