@@ -630,7 +630,12 @@ def load_modern(year, path):
         # 2020+: Continent totals look like: col0='아시아주' (non-NaN), col1=NaN.
         # The 기타 / 기타계 line looks the same but has no rows under it: it is the
         # residual line itself (see RESIDUAL_LINES), so it takes a country name.
-        resid = (body[country_col].isna() & body[0].astype(str)
+        # The 2025 edition prints the same line as 「기타 | 총계 | 총계」: the country
+        # column holds 총계 instead of staying blank, so without the second test
+        # the line went out with the continent subtotals and the 2025 dashboard
+        # totals fell 195 (registered) and 283 (staying) short of the printed ones.
+        _cc = body[country_col].astype(str).str.replace(r"\s", "", regex=True)
+        resid = ((body[country_col].isna() | (_cc == "총계")) & body[0].astype(str)
                  .str.replace(r"\s", "", regex=True).isin({"기타", "기타계", "기타총계"}))
         body.loc[resid, country_col] = "기타"
         agg_mask = body[country_col].isna() & body[0].notna()
