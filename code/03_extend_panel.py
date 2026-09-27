@@ -465,6 +465,12 @@ def add_sido_diversity():
     total_pop already in indices. National values come from the registered-
     foreigner national nationality totals (data.json reg ALL) + national_total_pop.
     All registered-foreigner based, matching the subnational (sigungu) panel.
+
+    These are first values on the full nationality detail. From 2008, the years with
+    a district table, 04_reconcile_districts.normalize_top19 replaces both at both
+    levels with the top-19-plus-residual values every other index carries (since
+    2026-09-27, 4라운드 대조); what survives here is the 2006-2007 province rows, whose
+    table names five nationalities and an Other column and so is its own basis.
     """
     HERE = os.path.dirname(os.path.abspath(__file__))
     SITE = os.path.join(ROOT, "05_dashboard", "data")

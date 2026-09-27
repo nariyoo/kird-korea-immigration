@@ -72,8 +72,8 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `multicultural_households.csv` | a sub-district, household category and year | 2016-2024 | 342,016 |
 | `diaspora_residence_by_sido.csv` | a province, nationality and year (F-4 residence reports) | 2008-2024 | 6,172 |
 | `crosswalk_country.csv` | a source nationality label | 2006-2024 | 268 |
-| `crosswalk_region.csv` | a source place name or boundary change | fixed | 87 |
-| `crosswalk_visa.csv` | a source status code | 2006-2024 | 231 |
+| `crosswalk_region.csv` | a source place name or boundary change | fixed | 88 |
+| `crosswalk_visa.csv` | a source status code | 2006-2024 | 241 |
 | `language_weights.csv` | a nationality and first language | fixed | 4,509 |
 | `refugee_by_nationality.csv` | a status and nationality, cumulative (deposit only) | 1994-2024 | 33 |
 | `refugee_language_demand.csv` | a status and language, cumulative (deposit only) | 1994-2024 | 60 |

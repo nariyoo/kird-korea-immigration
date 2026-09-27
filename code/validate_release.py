@@ -1041,6 +1041,34 @@ def check_visa_label_per_code(d):
     check(not bare, "labels: no visa_label or visa_label_en is the bare code", sorted(bare))
 
 
+def check_visa_label_variants(d):
+    """crosswalk_visa names the labels the editions print in place of the released one.
+
+    4라운드 대조 (2026-09-27): the 2006-2012 editions print D-3 as 산업연수 and the
+    release carries it as 기술연수, and crosswalk_visa had no row saying so; nine more
+    codes are printed under another label in some edition. Each row that names one
+    ('same code, label printed as ...') must carry its code's released label, and the
+    ten printed labels must all be there. check_published_totals.status_variant_gate
+    holds the rows to the raw tables edition by edition.
+    """
+    cv, vn = d.get("crosswalk_visa.csv"), d.get("visa_national.csv")
+    if cv is None or vn is None:
+        return
+    head = "same code, label printed as "
+    lab = vn.drop_duplicates("visa_code").set_index("visa_code")["visa_label"].to_dict()
+    var = cv[cv["rule"].astype(str).str.startswith(head)]
+    have = {(c, re.match(r"[^\s;,(]+", str(r)[len(head):]).group(0))
+            for c, r in zip(var["visa_code"], var["rule"])}
+    want = {("C3", "단기종합"), ("D3", "산업연수"), ("D7", "상사주재"), ("E10", "내항선원"),
+            ("E2", "회화"), ("E2", "회화강사"), ("E7", "특정직업"), ("E8", "연수취업"),
+            ("E9", "비취업"), ("G1", "기타")}
+    off = [c for c, l in zip(var["visa_code"], var["visa_label"]) if lab.get(c) != l]
+    check(want <= have and not off,
+          "crosswalk_visa: every label an edition prints in place of the released one "
+          "has a row, under the released label",
+          "missing %s; label differs for %s" % (sorted(want - have), off))
+
+
 def check_stata_labels(data):
     """The .dta files carry a label per column, and numbers as numbers.
 
@@ -1174,7 +1202,10 @@ def check_region_crosswalk(d):
     1라운드 수정 (2026-09-26): the 화성시 동부출장소 line (added to 화성시) and the
     마산시 line printed after the 2010 merger (carried on the 창원시 city line) were
     applied in the build and missing from the crosswalk, as was the 2010 split of
-    마산시 and the old 창원시 into the new city's gu.
+    마산시 and the old 창원시 into the new city's gu. 4라운드 대조 (2026-09-27): so was
+    진해시, which the 2008-2009 tables print as a district and the 2011-2012 tables as a
+    residual line, all of it carried on 창원시 진해구 (check_published_totals.
+    district_label_gate reads every label the raw district tables print).
     """
     cr = d.get("crosswalk_region.csv")
     if cr is None:
@@ -1183,6 +1214,7 @@ def check_region_crosswalk(d):
             for r in cr[cr["level"] == "sigungu"].itertuples()}
     want = {("경기도", "화성시동부출장소", "경기도", "화성시"),
             ("경상남도", "마산시", "경상남도", "창원시"),
+            ("경상남도", "진해시", "경상남도", "창원시진해구"),
             ("충청북도", "청원군", "충청북도", "청주시청원구"),
             ("충청남도", "당진군", "충청남도", "당진시"),
             ("충청남도", "연기군", "세종특별자치시", "세종시")}
@@ -1244,11 +1276,18 @@ def check_province_indices(d):
     district and national indices keep the residual as one more group (2010 강원도:
     shannon_H 2.220 over the 19 named, 2.303 with the 605 in Other; index_base_k 5 in
     2006-2007 and 18-19 in 2008-2013). Rebuilt here from nationality_by_sido:
-    shannon_H, evenness, index_base_k and continent_H on the year's national top 19
-    (ranked on the district table) plus one residual bin, and in 2006-2007, which have
-    no district table, on the five named nationalities plus 기타; HHI and
-    shannon_H_inclusive on every row as a group, as the province series has always
-    kept them, the latter with resident_pop as the Korean group.
+    every index on the year's national top 19 (ranked on the district table) plus one
+    residual bin, and in 2006-2007, which have no district table, on the five named
+    nationalities plus 기타; shannon_H_inclusive and continent_H with resident_pop as
+    the Korean group.
+
+    4라운드 대조 (2026-09-27): HHI and shannon_H_inclusive had been held to the full
+    nationality detail here, "as the province series has always kept them", so the
+    province series read 19 named groups plus Other through 2013 and every nationality
+    from 2014 (HHI up to 0.017 lower at that break for coverage alone), and the 6e-3
+    tolerance let the difference pass at most rows. They are on the basis every other
+    index uses now, and each column is held to its rounding: 3-dp columns within 6e-4,
+    evenness 8e-4 (H is rounded before the division), 4-dp columns within 1e-4.
     """
     ns, ss, cw = (d.get(f) for f in ("nationality_by_sido.csv", "summary_by_sido.csv",
                                      "crosswalk_country.csv"))
@@ -1269,7 +1308,6 @@ def check_province_indices(d):
         vals = list(base.values()) + ([rest] if rest > 0 else [])
         H, k = ent(vals), len(vals)
         pop = r.get("resident_pop")
-        full = list(cs.values())
         by = {}
         for c, v in base.items():
             by[c2c.get(c, "기타")] = by.get(c2c.get(c, "기타"), 0.0) + v
@@ -1282,9 +1320,9 @@ def check_province_indices(d):
             "shannon_H": r["shannon_H"], "_H": H,
             "evenness": r["evenness"], "_J": H / math.log(k) if k > 1 else float("nan"),
             "index_base_k": r["index_base_k"], "_k": k,
-            "HHI": r["HHI"], "_HHI": sum((v / sum(full)) ** 2 for v in full),
+            "HHI": r["HHI"], "_HHI": sum((v / sum(vals)) ** 2 for v in vals),
             "shannon_H_inclusive": r["shannon_H_inclusive"],
-            "_I": ent(full + [float(pop)]) if pd.notna(pop) else float("nan"),
+            "_I": ent(vals + [float(pop)]) if pd.notna(pop) else float("nan"),
             "continent_H": r["continent_H"],
             "_C": ent(list(by.values())) if pd.notna(pop) else float("nan"),
         })
@@ -1292,19 +1330,88 @@ def check_province_indices(d):
     if df.empty:
         check(False, "index: summary_by_sido recomputes from nationality_by_sido", "no rows")
         return
-    for pub, calc in (("shannon_H", "_H"), ("evenness", "_J"), ("HHI", "_HHI"),
-                      ("shannon_H_inclusive", "_I"), ("continent_H", "_C")):
+    for pub, calc, tol in (("shannon_H", "_H", 6e-4), ("evenness", "_J", 8e-4),
+                           ("HHI", "_HHI", 1e-4), ("shannon_H_inclusive", "_I", 6e-4),
+                           ("continent_H", "_C", 1e-4)):
         sub = df.dropna(subset=[pub, calc])
         gap = (sub[pub] - sub[calc]).abs()
-        check(len(sub) > 0 and bool((gap <= 6e-3).all()),
-              "index: summary_by_sido.%s recomputes from nationality_by_sido, "
-              "%d-%d (%d province-years)" % (pub, df["year"].min(), df["year"].max(), len(sub)),
+        check(len(sub) > 0 and bool((gap <= tol).all()),
+              "index: summary_by_sido.%s recomputes from nationality_by_sido on the "
+              "index basis, %d-%d (%d province-years)"
+              % (pub, df["year"].min(), df["year"].max(), len(sub)),
               worst(sub.assign(_g=gap).sort_values("_g", ascending=False).head(1),
-                    pub, calc, ["year", "sido"]) + "; %d off" % int((gap > 6e-3).sum()))
+                    pub, calc, ["year", "sido"]) + "; %d off" % int((gap > tol).sum()))
     bad = df[df["index_base_k"] != df["_k"]]
     check(bad.empty, "count: summary_by_sido.index_base_k recomputes, every year",
           "%d rows differ, e.g. %s" % (len(bad), bad[["year", "sido", "index_base_k", "_k"]]
                                        .head(3).to_dict("records")))
+
+
+def check_national_indices(d):
+    """national_annual's diversity indices re-derive from nationality_by_sigungu.
+
+    4라운드 대조 (2026-09-27). No check held the national indices to the counts, and
+    national_annual.HHI was computed on the national registered-by-nationality table
+    with every nationality a group of its own, while its four sibling columns and
+    index_base_k sit on the year's top 19 plus one residual bin (2024: 0.0940 against
+    0.1004 on that basis). Here the district counts are summed over the country and
+    reduced to that basis: shannon_H, evenness, HHI and index_base_k on it, and
+    shannon_H_inclusive and continent_H with national_annual.total_pop as the Korean
+    group (counted in 동아시아 for continent_H), every year. The national
+    continent_H and shannon_H_inclusive go through the 3-dp entropy of kird.shannon,
+    so 3-dp tolerances apply to them.
+    """
+    cnt, na, cw = district_counts(d), d.get("national_annual.csv"), d.get("crosswalk_country.csv")
+    if not cnt or na is None:
+        return
+    tops = national_top19(cnt)
+    c2c = dict(zip(cw["country"], cw["continent"])) if cw is not None else {}
+    rows = []
+    for y, blk in sorted(cnt.items()):
+        r_ = na[na["year"] == y]
+        if r_.empty:
+            continue
+        r = r_.iloc[0]
+        agg = {}
+        for cs in blk.values():
+            for c, v in cs.items():
+                agg[c] = agg.get(c, 0.0) + v
+        top = tops.get(y, set())
+        base = {c: v for c, v in agg.items() if c in top and v > 0}
+        rest = sum(v for c, v in agg.items() if c not in top)
+        vals = list(base.values()) + ([rest] if rest > 0 else [])
+        H, k = ent(vals), len(vals)
+        pop = float(r["total_pop"])
+        by = {}
+        for c, v in base.items():
+            by[c2c.get(c, "기타")] = by.get(c2c.get(c, "기타"), 0.0) + v
+        if rest > 0:
+            by["기타"] = by.get("기타", 0.0) + rest
+        by["동아시아"] = by.get("동아시아", 0.0) + pop
+        rows.append({"year": y,
+                     "shannon_H": r["shannon_H"], "_H": H,
+                     "evenness": r["evenness"], "_J": H / math.log(k) if k > 1 else float("nan"),
+                     "HHI": r["HHI"], "_HHI": sum((v / sum(vals)) ** 2 for v in vals),
+                     "shannon_H_inclusive": r["shannon_H_inclusive"], "_I": ent(vals + [pop]),
+                     "continent_H": r["continent_H"], "_C": ent(list(by.values())),
+                     "index_base_k": r["index_base_k"], "_k": k})
+    df = pd.DataFrame(rows)
+    if df.empty:
+        check(False, "index: national_annual recomputes from nationality_by_sigungu", "no rows")
+        return
+    for pub, calc, tol in (("shannon_H", "_H", 6e-4), ("evenness", "_J", 8e-4),
+                           ("HHI", "_HHI", 1e-4), ("shannon_H_inclusive", "_I", 6e-4),
+                           ("continent_H", "_C", 6e-4)):
+        sub = df.dropna(subset=[pub, calc])
+        gap = (sub[pub] - sub[calc]).abs()
+        check(len(sub) == len(df) and bool((gap <= tol).all()),
+              "index: national_annual.%s recomputes from nationality_by_sigungu on the "
+              "index basis, %d-%d" % (pub, df["year"].min(), df["year"].max()),
+              worst(sub.assign(_g=gap).sort_values("_g", ascending=False).head(1),
+                    pub, calc, ["year"]) + "; %d years off" % int((gap > tol).sum()))
+    bad = df[df["index_base_k"] != df["_k"]]
+    check(bad.empty, "count: national_annual.index_base_k recomputes, every year",
+          "%d years differ" % len(bad))
 
 
 def check_subdistrict_rates(d):
@@ -2013,6 +2120,7 @@ def main():
     check_households(d)
     check_early_provinces(d)
     check_province_indices(d)
+    check_national_indices(d)
     check_determined_blanks(d)
     check_multicultural_codes(d)
     check_broad_levels(d)
@@ -2024,6 +2132,7 @@ def main():
     check_dictionary_numbers(data, d)
     check_single_district_province(d)
     check_visa_label_per_code(d)
+    check_visa_label_variants(d)
     check_stata_labels(data)
     check_district_tables_agree(d)
     check_national_reach(d)

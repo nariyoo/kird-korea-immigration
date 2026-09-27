@@ -1700,7 +1700,7 @@ def build_data_dictionary():
          "MOJ 국적구성 기반 다양성·집중·균등 지표(정의는 README). 2008/2009~. 지수는 "
          "층마다 그 단위를 하나로 보고 다시 계산하며, 아래 층의 평균이 아니다."),
         ("summary_by_sido.csv / summary_by_sigungu.csv", "index_base_k", "integer",
-         "Number of categories the diversity indices are computed over: those of the year's national top 19 nationalities present in the unit, plus one residual bin. It is at most 20: 20 for the country in every year, and less wherever some of the national top 19 are absent. The province rows of 2006-2007, which have no district table, are computed over the five nationalities the province table names plus its Other column, so 6. It describes the index basis, not the unit. Carried the name n_nationalities through v1.1.0; until 2026-09-27 the province rows of 2006-2013 left the residual bin out (5 in 2006-2007, 18-19 in 2008-2013).", "다양성 지수를 계산한 칸 수. 그 해 전국 상위 19개국 가운데 그 단위에 있는 나라와 잔여 한 칸이며, 최대 20이다. 전국은 해마다 20이고, 전국 상위 19개국 가운데 빠진 나라가 있는 곳은 20보다 작다. 시군구 표가 없는 2006-2007년의 시도 행은 시도 표가 이름을 적은 다섯 국적과 그 표의 기타 칸으로 계산하므로 6이다. 그 지역의 성질이 아니라 지수의 밑변이다. v1.1.0 까지 n_nationalities 라는 이름으로 실렸다. 2026-09-27 까지 2006-2013년 시도 행은 잔여 칸을 빼고 계산했다(2006-2007 은 5, 2008-2013 은 18-19)."),
+         "Number of categories every diversity index (shannon_H, shannon_H_inclusive, continent_H, HHI, evenness) is computed over: those of the year's national top 19 nationalities present in the unit, plus one residual bin. It is at most 20: 20 for the country in every year, and less wherever some of the national top 19 are absent. The province rows of 2006-2007, which have no district table, are computed over the five nationalities the province table names plus its Other column, so 6. It describes the index basis, not the unit. Carried the name n_nationalities through v1.1.0; until 2026-09-27 the province rows of 2006-2013 left the residual bin out (5 in 2006-2007, 18-19 in 2008-2013), and HHI of the country and of the provinces and shannon_H_inclusive of the provinces were computed on the full nationality detail.", "다양성 지수(shannon_H, shannon_H_inclusive, continent_H, HHI, evenness)를 모두 계산한 칸 수. 그 해 전국 상위 19개국 가운데 그 단위에 있는 나라와 잔여 한 칸이며, 최대 20이다. 전국은 해마다 20이고, 전국 상위 19개국 가운데 빠진 나라가 있는 곳은 20보다 작다. 시군구 표가 없는 2006-2007년의 시도 행은 시도 표가 이름을 적은 다섯 국적과 그 표의 기타 칸으로 계산하므로 6이다. 그 지역의 성질이 아니라 지수의 밑변이다. v1.1.0 까지 n_nationalities 라는 이름으로 실렸다. 2026-09-27 까지 2006-2013년 시도 행은 잔여 칸을 빼고 계산했고(2006-2007 은 5, 2008-2013 은 18-19), 전국과 시도의 HHI 와 시도의 shannon_H_inclusive 는 모든 국적을 따로 세어 계산했다."),
         ("summary_by_sido.csv / summary_by_sigungu.csv", "n_nationalities_observed",
          "integer", "Distinct nationalities the source lists for that unit and year, with the residual bin and every line that names no country (무국적, 미등록국가, 기타, 국적불명, 국제연합, 국제연합전문기구) excluded. Capped at 19 for 2008-2013, when the yearbook publishes only the top 19 plus a residual at the district level; full detail from 2014.", "그 단위·그 해에 연감이 싣는 국적 수(잔여 칸과 나라 이름이 없는 줄, 곧 무국적·미등록국가·기타·국적불명·국제연합·국제연합전문기구 제외). 연감이 시군구 단위에서 전체 국적을 싣기 시작한 해가 2014년이라 2008-2013 은 19에서 막힌다."),
         ("summary_by_sigungu.csv", "lisa", "string",
@@ -2130,22 +2130,29 @@ def build_data_dictionary():
         ("crosswalk_region.csv", "rule", "string",
          "Why the two differ: renamed, promoted, moved between provinces, folded into "
          "a city total, a line of the district table carried on another district "
-         "(a sub-office line, or a line printed under a district after it was abolished "
-         "or merged), or a boundary-lineage record in JSON (a pair for a one-to-one "
+         "(a sub-office line, a line printed under a district after it was abolished "
+         "or merged, or a district that merged into another carried under the name "
+         "of the part on its ground, as 진해시 on 창원시 진해구 in 2008-2009), or a "
+         "boundary-lineage record in JSON (a pair for a one-to-one "
          "succession, a place and a list for a city divided into gu); 'unchanged' for a "
          "province printed under the name the release carries (every province has "
          "one, the full names the 2008-2009 and later tables print).",
          "다른 이유: 개명, 승격, 시도 이동, 시 총계로 합침, 다른 시군구에 싣는 시군구 표의 "
-         "줄(출장소 줄, 또는 폐지·통합된 시군구 이름으로 뒤에 찍힌 줄), 또는 JSON 으로 적은 "
+         "줄(출장소 줄, 폐지·통합된 시군구 이름으로 뒤에 찍힌 줄, 또는 다른 시로 통합된 "
+         "시군구를 제 땅의 구 이름으로 싣는 줄: 2008-2009년 진해시는 창원시 진해구), 또는 "
+         "JSON 으로 적은 "
          "경계 이력(1:1 승계는 한 쌍, 구로 나뉜 시는 지명과 목록). 배포본이 싣는 이름 그대로 "
          "찍힌 시도는 'unchanged'(2008-2009년판과 그 뒤 표가 찍는 정식 이름마다 한 행)."),
         ("crosswalk_visa.csv", "source_code", "string",
          "Visa code as a source edition lists it, including pre-2010 sub-codes, and the "
          "code-less column of unclassified statuses as it is headed (기타, 기타(other), "
-         "기타(others), 기타(Others), by edition).",
+         "기타(others), 기타(Others), by edition), and, for a code some editions print "
+         "under another label, the code with those editions (e.g. 'D3 (2006-2008, "
+         "2010-2012 editions)').",
          "연감 판본의 체류자격 코드. 2010년 이전 하위 코드와, 코드 없이 「기타」·"
          "「기타(other)」·「기타(others)」·「기타(Others)」로 머리를 단(판마다 다르다) 미분류 "
-         "자격 칸을 포함한다."),
+         "자격 칸을 포함한다. 어떤 판이 다른 이름으로 찍는 코드는 그 판들과 함께 적는다"
+         "(예: 'D3 (2006-2008, 2010-2012 editions)')."),
         ("crosswalk_visa.csv", "visa_code", "string",
          "Parent code this dataset reports for the source code (E8T for the 2006-2009 "
          "E-8).",
@@ -2156,12 +2163,21 @@ def build_data_dictionary():
         ("crosswalk_visa.csv", "rule", "string",
          "'sub-code collapsed to parent', 'unchanged', 'source label variant (the "
          "code-less column of unclassified statuses)' for the 기타 column carried as "
-         "ETC (10,171 people in 2018, 39,210 in 2020), or, for E-8 in the 2006-2009 "
-         "editions, 'same source code, different status' (carried as E8T).",
+         "ETC (10,171 people in 2018, 39,210 in 2020), for E-8 in the 2006-2009 "
+         "editions 'same source code, different status' (carried as E8T), or 'same "
+         "code, label printed as ...' for a label an edition prints in place of the "
+         "released one: D-3 산업연수 (the 2006-2012 editions; 기술연수 from 2013), C-3 "
+         "단기종합, D-7 상사주재, E-7 특정직업, E-9 비취업, E-2 회화 and 회화강사, E-10 "
+         "내항선원 (2006), G-1 기타, and 연수취업 over the seasonal-worker E-8 of the 2022 "
+         "and 2024 registered tables.",
          "'sub-code collapsed to parent', 'unchanged', ETC 로 싣는 코드 없는 기타 칸은 "
          "'source label variant (the code-less column of unclassified statuses)'(2018년 "
-         "10,171명, 2020년 39,210명), 또는 2006-2009년판의 E-8 에 'same source code, "
-         "different status'(E8T 로 싣는다)."),
+         "10,171명, 2020년 39,210명), 2006-2009년판의 E-8 에 'same source code, "
+         "different status'(E8T 로 싣는다), 또는 어떤 판이 배포본과 다른 이름으로 찍은 "
+         "자격에 'same code, label printed as ...': D-3 산업연수(2006-2012년판, 2013년부터 "
+         "기술연수), C-3 단기종합, D-7 상사주재, E-7 특정직업, E-9 비취업, E-2 회화·"
+         "회화강사, E-10 내항선원(2006), G-1 기타, 그리고 2022·2024년 등록 표가 계절근로 "
+         "E-8 칸에 찍은 연수취업."),
         ("language_weights.csv", "country", "string",
          "Nationality, in the canonical label, for every standard name crosswalk_country "
          "lists, the lines that name no nationality included.",
@@ -2445,7 +2461,7 @@ def build_data_dictionary():
          "Moran's I of the district foreign-share surface (spatial autocorrelation).",
          "시군구 외국인비율의 Moran's I(공간 자기상관)."),
         ("national_annual.csv", "index_base_k", "integer",
-         "Number of categories the diversity indices are computed over: those of the year's national top 19 nationalities present in the unit, plus one residual bin. It is at most 20: 20 for the country in every year, and less wherever some of the national top 19 are absent. The province rows of 2006-2007, which have no district table, are computed over the five nationalities the province table names plus its Other column, so 6. It describes the index basis, not the unit. Carried the name n_nationalities through v1.1.0; until 2026-09-27 the province rows of 2006-2013 left the residual bin out (5 in 2006-2007, 18-19 in 2008-2013).", "다양성 지수를 계산한 칸 수. 그 해 전국 상위 19개국 가운데 그 단위에 있는 나라와 잔여 한 칸이며, 최대 20이다. 전국은 해마다 20이고, 전국 상위 19개국 가운데 빠진 나라가 있는 곳은 20보다 작다. 시군구 표가 없는 2006-2007년의 시도 행은 시도 표가 이름을 적은 다섯 국적과 그 표의 기타 칸으로 계산하므로 6이다. 그 지역의 성질이 아니라 지수의 밑변이다. v1.1.0 까지 n_nationalities 라는 이름으로 실렸다. 2026-09-27 까지 2006-2013년 시도 행은 잔여 칸을 빼고 계산했다(2006-2007 은 5, 2008-2013 은 18-19)."),
+         "Number of categories every diversity index (shannon_H, shannon_H_inclusive, continent_H, HHI, evenness) is computed over: those of the year's national top 19 nationalities present in the unit, plus one residual bin. It is at most 20: 20 for the country in every year, and less wherever some of the national top 19 are absent. The province rows of 2006-2007, which have no district table, are computed over the five nationalities the province table names plus its Other column, so 6. It describes the index basis, not the unit. Carried the name n_nationalities through v1.1.0; until 2026-09-27 the province rows of 2006-2013 left the residual bin out (5 in 2006-2007, 18-19 in 2008-2013), and HHI of the country and of the provinces and shannon_H_inclusive of the provinces were computed on the full nationality detail.", "다양성 지수(shannon_H, shannon_H_inclusive, continent_H, HHI, evenness)를 모두 계산한 칸 수. 그 해 전국 상위 19개국 가운데 그 단위에 있는 나라와 잔여 한 칸이며, 최대 20이다. 전국은 해마다 20이고, 전국 상위 19개국 가운데 빠진 나라가 있는 곳은 20보다 작다. 시군구 표가 없는 2006-2007년의 시도 행은 시도 표가 이름을 적은 다섯 국적과 그 표의 기타 칸으로 계산하므로 6이다. 그 지역의 성질이 아니라 지수의 밑변이다. v1.1.0 까지 n_nationalities 라는 이름으로 실렸다. 2026-09-27 까지 2006-2013년 시도 행은 잔여 칸을 빼고 계산했고(2006-2007 은 5, 2008-2013 은 18-19), 전국과 시도의 HHI 와 시도의 shannon_H_inclusive 는 모든 국적을 따로 세어 계산했다."),
         ("national_annual.csv", "n_nationalities_observed", "integer",
          "Distinct nationalities the source lists for that unit and year, with the residual bin and every line that names no country (무국적, 미등록국가, 기타, 국적불명, 국제연합, 국제연합전문기구) excluded. Capped at 19 for 2008-2013, when the yearbook publishes only the top 19 plus a residual at the district level; full detail from 2014.", "그 단위·그 해에 연감이 싣는 국적 수(잔여 칸과 나라 이름이 없는 줄, 곧 무국적·미등록국가·기타·국적불명·국제연합·국제연합전문기구 제외). 연감이 시군구 단위에서 전체 국적을 싣기 시작한 해가 2014년이라 2008-2013 은 19에서 막힌다."),
         ("national_annual.csv", "n_enclaves", "integer",

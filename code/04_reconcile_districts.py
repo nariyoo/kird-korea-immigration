@@ -431,8 +431,17 @@ def recompute_from_reconciled():
         from the CONSOLIDATED region.json + indices.json so the enclave set is consistent
         with the subnational fixes (Bucheon -> single 부천시, 미추홀구, 군위->대구, strays
         removed). Replicates build_dashboard's enclave logic exactly (absolute floor x>=200,
-        LQ on total-population basis, share within the district's foreign population) and
-        overwrites indices.json's data.enclaves and summary[year].n_enclaves.
+        LQ on the resident-registry base, share within the district's foreign population)
+        and overwrites indices.json's data.enclaves and summary[year].n_enclaves.
+
+        The LQ is (x_d / pop_d) / (X / sum_d pop_d), where pop_d is the district's
+        `total_pop`, the resident-registration count of Korean nationals (the release's
+        `resident_pop`; foreigners were never in that register), and the national base
+        is the sum of the same counts over the districts, as README 'Index definitions'
+        states. 4라운드 대조 (2026-09-27): this line read "LQ on total-population
+        basis", which reads as resident_pop + registered_foreigners; an audit following
+        it recomputed lower LQs (2014 안산시 단원구 한국계중국인: 9.9 against the
+        published 11.0) and a different enclave set.
 
         Criterion (Wilson & Portes 1980; Logan, Zhang & Alba 2002, concept): a district x
         nationality pair is an enclave when the nationality's location quotient is at least
@@ -524,16 +533,19 @@ def recompute_from_reconciled():
         would risk diverging from build_dashboard's method):
           national_foreign_total, national_share_pct, national_shannon_H,
           mean_sigungu_H, n_nationalities, national_evenness, continent_H, continent_shares.
+        The diversity fields among them are on the full district detail here;
+        normalize_top19 replaces them, with national_HHI and the inclusive H, on the
+        top-19-plus-residual basis every other level uses.
 
-        Also fills two national fields that the earlier steps cannot reach. Both
-        add_sido_national_diversity (national_HHI) and build_dashboard (morans_I_share)
-        run before the 2008-2013 district block is merged in, so those years had no key
-        at all; and build_dashboard's Moran's I uses its pre-consolidation district set,
-        which still holds the Bucheon gu rows, 인천 남구, and the duplicated 수원시 /
-        창원시 city totals. Both are recomputed here for EVERY year so the series sits on
-        one basis: national_HHI from the published national registered-by-nationality
-        table (identical to the released values for every year that had one), Moran's I
-        from the reconciled district panel.
+        Also fills morans_I_share, which the earlier steps cannot reach: build_dashboard
+        runs before the 2008-2013 district block is merged in, so those years had no key
+        at all, and its Moran's I uses its pre-consolidation district set, which still
+        holds the Bucheon gu rows, 인천 남구, and the duplicated 수원시 / 창원시 city
+        totals. It is recomputed here for EVERY year from the reconciled district panel.
+        (Until 2026-09-27 this step also set national_HHI from the national
+        registered-by-nationality table, every nationality a group of its own, and
+        normalize_top19 left it there, so the country's HHI alone sat off the index
+        basis: 2024 0.0940 against 0.1004 on the basis of its other indices. 4라운드 대조.)
 
         LEAVES theil_segregation_H (build_segregation_release.py owns it), by_nationality
         (D/isolation/interaction) and national_shannon_H_inclusive at their upstream
@@ -550,10 +562,7 @@ def recompute_from_reconciled():
         idx = full["data"]
         region = json.load(open(os.path.join(SITE, "region.json"), encoding="utf-8"))["by_sigungu"]
 
-        # national registered-by-nationality table (the HHI basis) + queen-contiguity
-        # weights and build_dashboard's own Moran's I, reused verbatim
-        REG_ALL = json.load(open(os.path.join(SITE, "data.json"), encoding="utf-8")) \
-            ["populations"]["reg"]["data"]["ALL"]
+        # queen-contiguity weights and build_dashboard's own Moran's I, reused verbatim
         _adj_path = os.path.join(ROOT, "03_cleaned_data", "adjacency.json")
         _ADJ = json.load(open(_adj_path, encoding="utf-8")) if os.path.exists(_adj_path) else {}
 
@@ -566,11 +575,6 @@ def recompute_from_reconciled():
         def entropy(counts):
             t = sum(counts)
             return -sum((v / t) * math.log(v / t) for v in counts if v > 0) if t else 0.0
-
-
-        def hhi(counts):
-            t = sum(counts.values())
-            return round(sum((v / t) ** 2 for v in counts.values()), 4) if t else None
 
 
         rep = []
@@ -608,10 +612,8 @@ def recompute_from_reconciled():
             s["national_evenness"] = round(nat_H / math.log(n_nat), 3) if n_nat > 1 else None
             s["continent_H"] = round(entropy(list(cont_full.values())), 4)
             s["continent_shares"] = {k: round(100 * v / nf, 3) for k, v in sorted(cont.items(), key=lambda x: -x[1])} if nf else {}
-            # national HHI on the published national table; Moran's I of the district
-            # foreign share on the reconciled district set (see the module docstring)
-            if REG_ALL.get(y):
-                s["national_HHI"] = hhi(REG_ALL[y])
+            # Moran's I of the district foreign share on the reconciled district set
+            # (see the docstring); national_HHI is set by normalize_top19
             share_by_key = {r["sido"] + "|" + r["sigungu"].replace(" ", ""): r["foreign_share_pct"]
                             for r in sig if r.get("foreign_share_pct") is not None}
             mi = morans_i(share_by_key)
@@ -763,11 +765,15 @@ def normalize_top19():
                         and c not in ("총계", "총합계", "소계", "계")}
             rec["n_nationalities_observed"] = len(uni)
             new = make_record(rec["sido"], "", reduced, rec.get("total_pop"), "ns")
-            # Only the fields the coverage break actually moves. HHI and the inclusive
-            # H are dominated by the largest groups and by the Korean residual, so the
-            # released province series keeps them on the full nationality detail.
-            for f in ("shannon_H", "continent_H", "continent_shares",
-                      "n_nationalities", "evenness"):
+            # Every diversity index on the one basis, HHI and the inclusive H included.
+            # Until 2026-09-27 (4라운드 대조) these two kept the full nationality detail
+            # ("dominated by the largest groups"), so the province series read 19 named
+            # groups plus Other through 2013 and every nationality from 2014: HHI fell by
+            # up to 0.017 at the 2014 coverage break for that reason alone (울산 2014:
+            # 0.1348 on the detail, 0.1521 on the basis), and index_base_k, which the
+            # README gives as the basis of every index, did not describe them.
+            for f in ("shannon_H", "shannon_H_inclusive", "continent_H", "continent_shares",
+                      "HHI", "n_nationalities", "evenness"):
                 if f in new:
                     rec[f] = new[f]
             sido_changed += 1
@@ -797,6 +803,12 @@ def normalize_top19():
         # national inclusive: same top-19 reduced basis + Korean group as national_shannon_H /
         # continent_H (was left on the off-basis full-detail value from add_sido_national_diversity).
         s["national_shannon_H_inclusive"] = round(shannon({**reduced, "_korean_residual": max(natpop or 0, 0)}), 3) if natpop else None
+        # national HHI on the same basis. It had been left on the national
+        # registered-by-nationality table with every nationality a group (2024: 0.0940
+        # against 0.1004 here), the one national index off the basis index_base_k
+        # describes (4라운드 대조, 2026-09-27). 2008 follows the 2008 district table, which
+        # prints 중국 with 한국계중국인 inside it, as the other 2008 indices do.
+        s["national_HHI"] = hhi(reduced)
         s["n_nationalities"] = n
         s["n_nationalities_observed"] = observed(nat)
         s["national_evenness"] = round(H / math.log(n), 3) if n > 1 else None

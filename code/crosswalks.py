@@ -66,6 +66,56 @@ FOLDED_LINES = frozenset({"자이르", "미국인근섬", "미령버진아일랜
                           "영국해외영토시민"})
 FOLDED_RULE = "separate yearbook line folded into this country"
 
+# Labels an edition prints for a status in place of the one the release carries, under
+# the same code: (code, label as printed, the editions that print it in any of the
+# national registered, national staying or district status tables). A status renamed
+# (D-3 산업연수 became 기술연수 in the 2013 edition, C-3 단기종합 단기방문 in 2011, D-7
+# 상사주재 주재 in 2010, E-7 특정직업 특정활동), a short or long form of the name (E-2
+# 회화 and 회화강사, E-9 비취업, G-1 기타), E-10 printed as 내항선원 in 2006, and the
+# label of the retired trainee-employment E-8 that the 2022 and 2024 registered tables
+# print over the seasonal-worker column. The 2009 edition prints D-3 only as its
+# sub-codes, so it has no D-3 label. 4라운드 대조 (2026-09-27): only the E-8 split had a
+# row, so a reader of crosswalk_visa could not tell that the 산업연수 of the 2006-2012
+# tables is the D3 the release calls 기술연수. check_published_totals.
+# status_variant_gate holds this list to the raw tables in both directions.
+STATUS_LABEL_VARIANTS = [
+    ("C3", "단기종합", "2006-2010"),
+    ("D3", "산업연수", "2006-2008, 2010-2012"),
+    ("D7", "상사주재", "2006-2009"),
+    ("E10", "내항선원", "2006"),
+    ("E2", "회화", "2010-2022, 2024"),
+    ("E2", "회화강사", "2019-2022, 2024"),
+    ("E7", "특정직업", "2006-2009"),
+    ("E8", "연수취업", "2022, 2024"),
+    ("E9", "비취업", "2006-2009"),
+    ("G1", "기타", "2006-2008, 2010-2024"),
+]
+VARIANT_RULE = "same code, label printed as "
+VARIANT_NOTE = {
+    # the English the Korea Immigration Service gives D-3 (Visa Navigator, 2023):
+    # the release keeps it with the current Korean name
+    "D3": "; Industrial Trainee is the Korea Immigration Service's English name for D-3",
+    "E8": " in the registered table, over the seasonal workers (the staying and district "
+          "tables of the same editions print 계절근로 or E8)",
+    "G1": " beside the code G-1 (the code-less 기타 column is ETC)",
+}
+
+
+def variant_source_code(code, editions):
+    """The source_code of a label-variant row: the code and the editions that print it."""
+    many = "," in editions or "-" in editions
+    return "%s (%s edition%s)" % (code, editions, "s" if many else "")
+
+
+def variant_years(editions):
+    """'2006-2008, 2010-2012' -> {2006, 2007, 2008, 2010, 2011, 2012}."""
+    out = set()
+    for part in editions.split(","):
+        a, _, b = part.strip().partition("-")
+        out |= set(range(int(a), int(b or a) + 1))
+    return out
+
+
 # 대륙 이름의 영문. 기탁본의 다른 표와 같은 표기를 쓴다.
 CONTINENT_EN = {
     "동아시아": "East Asia", "동남아시아": "Southeast Asia", "남아시아": "South Asia",
@@ -226,6 +276,14 @@ def visa_crosswalk(data=None):
             continue
         rows.append([code, parent, ko, en,
                      "sub-code collapsed to parent" if parent != code else "unchanged"])
+    # the labels an edition prints for a code in place of the released one
+    for code, printed, editions in STATUS_LABEL_VARIANTS:
+        if code not in labels:
+            raise SystemExit("crosswalk_visa: %s has a label variant but no row in "
+                             "visa_national" % code)
+        ko, en = labels[code]
+        rows.append([variant_source_code(code, editions), code, ko, en,
+                     VARIANT_RULE + printed + VARIANT_NOTE.get(code, "")])
     # The status tables print their unclassified statuses in a column with no code,
     # headed 기타, 기타(other), 기타(others) or 기타(Others) by edition (2017 on); 01
     # reads every one as ETC. check_published_totals.crosswalk_labels_gate lists the

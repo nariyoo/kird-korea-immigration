@@ -182,7 +182,9 @@ def main():
     rc6 = crosswalk_labels_gate(ns)
     rc7 = children_age_gate()
     rc8 = status_label_gate(ns)
-    return rc or rc2 or rc3 or rc4 or rc5 or rc6 or rc7 or rc8
+    rc9 = district_label_gate(ns)
+    rc10 = status_variant_gate(ns)
+    return rc or rc2 or rc3 or rc4 or rc5 or rc6 or rc7 or rc8 or rc9 or rc10
 
 
 def _canon(name):
@@ -850,6 +852,204 @@ def status_label_gate(ns):
         return 1
     print("GATE OK: every status printed only as lettered sub-codes carries a label "
           "that names them")
+    return 0
+
+
+DISTRICT_LABEL = re.compile(r"^[가-힣]+(시|군|구|출장소)$")
+
+
+def district_label_gate(ns):
+    """Every district label the MOJ district tables print maps to a released district.
+
+    4라운드 대조 (2026-09-27). crosswalk_region had no rule row for 진해시, which the
+    2008 and 2009 district tables print as a district of its own and the 2011 and 2012
+    tables as a residual line of one person, all of it carried on 창원시 진해구; only the
+    boundary-lineage pair named it, and crosswalk_labels_gate checked the province
+    labels, not the districts. Here every district line of the district-by-nationality
+    and district-by-visa tables, 2008 to the release year, must be carried under its own
+    name that year (nationality_by_sigungu or visa_by_sigungu, spaces removed, under the
+    province the release files it in) or have a sigungu row in crosswalk_region with
+    that province and name as printed.
+    """
+    ws = lambda v: re.sub(r"\s+", "", str(v).split("\n")[0])
+    short = dict(SHORT_SIDO, 세종="세종특별자치시")
+    full = set(short.values())
+    fix = {"강원특별자치도": "강원도", "전북특별자치도": "전라북도", "제주도": "제주특별자치도"}
+
+    def sido_of(v):
+        s = ws(v)
+        s = fix.get(s, s)
+        return s if s in full else short.get(s)
+
+    def labels(path):
+        df = pd.read_excel(path, sheet_name=0, header=None)
+        out, sido = set(), None
+        for i in range(len(df)):
+            cells = [df.iat[i, j] for j in range(min(3, df.shape[1]))
+                     if isinstance(df.iat[i, j], str)]
+            sd = next((sido_of(v) for v in cells if sido_of(v)), None)
+            sido = sd or sido
+            if sido is None:
+                continue
+            for v in cells:
+                lab = ws(v)
+                if lab in LABEL_SKIP or sido_of(lab) or not DISTRICT_LABEL.match(lab):
+                    continue
+                out.add((sido, lab))
+        return out
+
+    have = {}
+    for name in ("nationality_by_sigungu.csv", "visa_by_sigungu.csv"):
+        df = pd.read_csv(os.path.join(RELEASE_DATA, name), encoding="utf-8-sig",
+                         usecols=["year", "sido", "sigungu"]).drop_duplicates()
+        for y, sd, sg in df.itertuples(index=False):
+            have.setdefault(int(y), set()).add((sd, ws(sg)))
+    cr = pd.read_csv(os.path.join(RELEASE_DATA, "crosswalk_region.csv"), encoding="utf-8-sig")
+    rows = {(ws(a), ws(b)) for a, b in cr.loc[cr["level"] == "sigungu",
+                                               ["source_sido", "source_name"]]
+            .itertuples(index=False)}
+    nat = dict(_pre2014_files("*지역및국적*"))
+    nat.update(ns["REGION_COUNTRY_FILES"])
+    tables = [(y, p, "nationality") for y, p in nat.items()] + \
+             [(y, p, "visa") for y, p in _visa_files().items()]
+    tables = [t for t in tables if t[0] <= RELEASE_LAST_YEAR and os.path.exists(t[1])]
+    years = set(range(2008, RELEASE_LAST_YEAR + 1))
+    lost = sorted("%s %d" % (k, y) for k in ("nationality", "visa")
+                  for y in years - {t[0] for t in tables if t[2] == k})
+    miss, n, via = {}, 0, set()
+    for y, path, kind in sorted(tables):
+        for sd, lab in sorted(labels(path)):
+            n += 1
+            if (sd, lab) in have.get(y, set()):
+                continue
+            if (sd, lab) in rows:
+                via.add((sd, lab))
+                continue
+            miss.setdefault((sd, lab), []).append("%d %s" % (y, kind))
+    print()
+    print("시군구 표의 이름 대 배포본·crosswalk_region: %d 줄-연도, crosswalk 행으로 옮기는 "
+          "이름 %d 가지" % (n, len(via)))
+    for k, v in sorted(miss.items()):
+        print("   no row: %s %s (%s)" % (k[0], k[1], ", ".join(v)))
+    if miss or lost or not n:
+        print("FAIL: a district label the district tables print is neither carried under "
+              "its own name nor listed in crosswalk_region%s"
+              % ((" (no table: %s)" % lost) if lost else ""))
+        return 1
+    print("GATE OK: every district label the district tables print, 2008-%d, is carried "
+          "under its own name or has a crosswalk_region row" % RELEASE_LAST_YEAR)
+    return 0
+
+
+STATUS_OWN = re.compile(r"^\(?([A-Z])-?(\d{1,2})\)?$")
+STATUS_REV = re.compile(r"^([^()]+)\(([A-Z])-?(\d{1,2})\)$")      # 외교(A-1)
+STATUS_FWD = re.compile(r"^([A-Z])-?(\d{1,2})\(([^()]+)\)$")      # A-1(외교)
+
+
+def status_variant_gate(ns):
+    """Every label a status table prints for a code is the released label, or a
+    crosswalk_visa row names it for that edition.
+
+    4라운드 대조 (2026-09-27). The 2006-2012 editions print D-3 as 산업연수 and the 2013
+    edition on as 기술연수, and crosswalk_visa said nothing of it: its only row for a
+    label an edition prints differently was the E-8 split. Nine more codes are printed
+    under another label in some edition (C-3 단기종합, D-7 상사주재, E-7 특정직업, E-9
+    비취업, E-2 회화 and 회화강사, E-10 내항선원 in 2006, G-1 기타, and 연수취업 over the
+    seasonal-worker E-8 of the 2022 and 2024 registered tables). Here, over the national
+    registered and staying tables and the district status tables, 2006 to the release
+    year, each code printed with a Korean label (in one cell, 외교(A-1) or A-1(외교), or
+    the label above the code) is compared with visa_national's label for the code (the
+    part before any parenthesis; E-8 through E8_TRAINEE_LAST_YEAR is E8T). A label that
+    differs needs a crosswalk_visa row of that code whose rule reads 'same code, label
+    printed as <label>' and whose source_code lists the edition; and each such row must
+    list exactly the editions that print its label. Sub-codes (D31, E0A) are not
+    compared: their rows map them by code.
+    """
+    ws = lambda v: re.sub(r"\s+", "", str(v))
+    src = open(os.path.join(HERE, "01_parse_yearbooks.py"), encoding="utf-8").read()
+    e8t_last = int(re.search(r"^E8_TRAINEE_LAST_YEAR\s*=\s*(\d{4})", src, re.M).group(1))
+    vn = pd.read_csv(os.path.join(RELEASE_DATA, "visa_national.csv"), encoding="utf-8-sig")
+    label = vn.drop_duplicates("visa_code").set_index("visa_code")["visa_label"].to_dict()
+    core = {c: ws(str(l).split(" (")[0]) for c, l in label.items()}
+    cv = pd.read_csv(os.path.join(RELEASE_DATA, "crosswalk_visa.csv"), encoding="utf-8-sig")
+    rule_head = "same code, label printed as "
+    listed = {}
+    for sc, code, rule in cv[["source_code", "visa_code", "rule"]].itertuples(index=False):
+        if not str(rule).startswith(rule_head):
+            continue
+        lab = re.match(r"[^\s;,(]+", str(rule)[len(rule_head):]).group(0)
+        m = re.search(r"\((.+?) editions?\)$", str(sc))
+        eds = set()
+        for part in (m.group(1).split(",") if m else []):
+            a, _, b = part.strip().partition("-")
+            eds |= set(range(int(a), int(b or a) + 1))
+        listed[(code, lab)] = eds
+
+    def printed(path):
+        df = pd.read_excel(path, sheet_name=0, header=None)
+        out = set()
+        for j in range(df.shape[1]):
+            for i in range(min(9, len(df))):
+                v = df.iat[i, j]
+                if not isinstance(v, str):
+                    continue
+                v = ws(v)
+                m = STATUS_REV.match(v)
+                if m and re.search(r"[가-힣]", m.group(1)):
+                    out.add((m.group(2) + m.group(3), m.group(1)))
+                    break
+                m = STATUS_FWD.match(v)
+                if m and re.search(r"[가-힣]", m.group(3)):
+                    out.add((m.group(1) + m.group(2), m.group(3)))
+                    break
+                m = STATUS_OWN.match(v)
+                if m and i > 0:
+                    up = df.iat[i - 1, j]
+                    if isinstance(up, str) and re.search(r"[가-힣]", up):
+                        out.add((m.group(1) + m.group(2), ws(up)))
+                    break
+        return out
+
+    stay = dict(ns["STAY_FILES"])
+    stay.update(HEADLINE_STAY)
+    tables = [(y, p, "registered") for y, p in ns["REG_FILES"].items()] + \
+             [(y, p, "staying") for y, p in stay.items()] + \
+             [(y, p, "district") for y, p in _visa_files().items()]
+    tables = [t for t in tables if t[0] <= RELEASE_LAST_YEAR and os.path.exists(t[1])]
+    seen, bad, thin, n = {}, [], [], 0
+    for y, path, kind in sorted(tables):
+        codes = 0
+        for code, lab in sorted(printed(path)):
+            rc = "E8T" if code == "E8" and y <= e8t_last else code
+            if rc not in core:
+                continue                      # a sub-code such as D31, mapped by its row
+            codes += 1
+            n += 1
+            if lab == core[rc]:
+                continue
+            seen.setdefault((rc, lab), set()).add(y)
+            if y not in listed.get((rc, lab), set()):
+                bad.append("%d %s %s printed as %s" % (y, kind, rc, lab))
+        if codes < 10:
+            thin.append("%d %s (%d codes)" % (y, kind, codes))
+    for key, eds in sorted(listed.items()):
+        if eds != seen.get(key, set()):
+            bad.append("crosswalk row %s %s lists %s; the tables print it in %s"
+                       % (key[0], key[1], sorted(eds), sorted(seen.get(key, set()))))
+    print()
+    print("체류자격 표의 이름 대 visa_national·crosswalk_visa: %d 코드-표, 다르게 찍힌 이름 %d 가지"
+          % (n, len(seen)))
+    for (c, l), eds in sorted(seen.items()):
+        print("   %s %s: %s" % (c, l, ", ".join(str(e) for e in sorted(eds))))
+    for b in bad[:15]:
+        print("   ", b)
+    if bad or thin:
+        print("FAIL: a status label the tables print is neither the released label nor "
+              "named for that edition in crosswalk_visa%s"
+              % ((" (tables read thin: %s)" % thin) if thin else ""))
+        return 1
+    print("GATE OK: every status label the status tables print, 2006-%d, is the released "
+          "label or a crosswalk_visa row names it for that edition" % RELEASE_LAST_YEAR)
     return 0
 
 
