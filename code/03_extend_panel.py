@@ -1516,6 +1516,14 @@ def build_visa_sigungu():
             for rec in parsed.values():
                 if "E8" in rec:
                     rec["E8T"] = rec.get("E8T", 0) + rec.pop("E8")
+        # The 2008-2009 tables print the crew status as E-0-A 내항선원, E-0-B 어선원 and
+        # (2009) E-0-C 순항선원, which vcode() reads as E0. They are the three
+        # subdivisions of E-10 선원취업 (E-10-1 to E-10-3), which the tables print under
+        # that code from 2010; 01_parse_yearbooks.CREW_SUBCODES links them the same way,
+        # so the district crew series is E10 in every year (소유자 결정, 2026-09-27).
+        for rec in parsed.values():
+            if "E0" in rec:
+                rec["E10"] = rec.get("E10", 0) + rec.pop("E0")
         tot = sum(sum(r.values()) for r in parsed.values())
         print(f"{year}: {len(parsed)} districts, sum={tot:,}  [{os.path.basename(f)[:40]}]")
         if parsed:

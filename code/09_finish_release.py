@@ -60,9 +60,9 @@ VISA_LABEL_EN = {
     "M1": "Military Personnel",
     "T1": "Tourist Landing",
     "ETC": "Unclassified (SOFA / Treaty)",
-    # 2007-2009 editions: E0A 내항선원, E0B 어선원, E0C 순항선원 (3라운드 대조, 2026-09-27;
-    # it read Treaty Activity, and M1 had no entry, so its English label was the code)
-    "E0": "Crew Employment (coastal, fishing and cruise crew, to 2009)",
+    # M1 had no entry until the 3라운드 대조 (2026-09-27), so its English label was the
+    # code. No E0: the 2007-2009 crew columns E0A-E0C are E10 since the owner's
+    # decision of the same day (01_parse_yearbooks.CREW_SUBCODES).
     "X00": "No status (0-0)",
 }
 
@@ -241,14 +241,16 @@ def finalize_release():
     # The exporter's gu-less-city cleanup wrongly treated old 창원시 as the parent
     # of 창원시 진해구 (the backcast of pre-merger 진해시) and dropped it, leaving the
     # district visa sums 6,283 / 6,257 short. Values are the parsed source rows
-    # (parent visa codes), inlined so this step is self-contained on ../data.
+    # (parent visa codes), inlined so this step is self-contained on ../data. The two
+    # crew members of each year (the tables' E-0-B 어선원) are E10 since 2026-09-27;
+    # they were E0.
     CW = {
         "2008": {"D2": 128, "D3": 399, "D4": 24, "D6": 10, "D7": 3, "D8": 52, "D9": 6,
-                 "E0": 2, "E1": 7, "E2": 181, "E3": 65, "E4": 2, "E6": 28, "E7": 51,
+                 "E1": 7, "E10": 2, "E2": 181, "E3": 65, "E4": 2, "E6": 28, "E7": 51,
                  "E8T": 241, "E9": 2791, "F1": 100, "F2": 836, "F3": 47, "F5": 132,
                  "G1": 45, "H2": 1133},
         "2009": {"D2": 155, "D3": 307, "D4": 42, "D6": 8, "D7": 8, "D8": 43, "D9": 11,
-                 "E0": 2, "E1": 8, "E2": 214, "E3": 56, "E4": 3, "E6": 43, "E7": 65,
+                 "E1": 8, "E10": 2, "E2": 214, "E3": 56, "E4": 3, "E6": 43, "E7": 65,
                  "E8T": 170, "E9": 2887, "F1": 93, "F2": 811, "F3": 55, "F5": 172,
                  "G1": 38, "H1": 1, "H2": 1065},
     }
@@ -1562,19 +1564,23 @@ def build_data_dictionary():
          "(sigungu) units)." % (F["cityline_n"], F["cityline_min"], F["cityline_max"])),
         ("summary_by_eupmyeondong.csv", "eupmyeondong", "string",
          "Sub-district (eup/myeon/dong) on that year's administrative boundaries "
-         "(Korean only; use adm_code as the language-neutral join key). A "
-         "sub-district-year is absent, not blank, where MOIS masks the row's own total "
-         "(합계) and with it every category: 31 sub-district-years in 2016-2024 and none "
-         "in 2014-2015 (삼척시 노곡면 2016-2022; 강동구 둔촌1동 2020-2024; 철원군 근북면 "
-         "2019-2021 and 2023-2024; 고성군 영현면 2019-2023; 광명시 광명1동 2022-2024; "
-         "서초구 반포본동 and 금정구 금성동 2023-2024; 파주시 군내면 2016; 춘천시 남면 "
-         "2017). A cell masked in a row that keeps its total is blank in that column alone.",
+         "(Korean only; use adm_code as the language-neutral join key). Every "
+         "sub-district MOIS prints has a row. Where MOIS masks a row's own total (합계), "
+         "and with it every category, the district row fixes it (the district's total "
+         "less its other sub-districts'): 31 sub-district-years of 2016-2024, carried "
+         "since 2026-09-27 and absent before (삼척시 노곡면 2016-2022; 강동구 둔촌1동 "
+         "2020-2024; 철원군 근북면 2019-2021 and 2023-2024; 고성군 영현면 2019-2023; 광명시 "
+         "광명1동 2022-2024; 서초구 반포본동 and 금정구 금성동 2023-2024; 파주시 군내면 2016; "
+         "춘천시 남면 2017). A masked cell nothing fixes is blank in that column alone "
+         "(see broad_total and README, Masked cells).",
          "읍·면·동. 그 해 행정경계 기준(한글만; 언어중립 조인키는 adm_code). 행정안전부가 "
-         "그 행의 합계까지, 곧 모든 칸을 가린 읍면동-연도는 빈 행으로 싣지 않고 뺀다. "
-         "2016-2024년 31개(2014-2015년에는 없음: 삼척시 노곡면 2016-2022, 강동구 둔촌1동 "
-         "2020-2024, 철원군 근북면 2019-2021·2023-2024, 고성군 영현면 2019-2023, 광명시 "
-         "광명1동 2022-2024, 서초구 반포본동과 금정구 금성동 2023-2024, 파주시 군내면 2016, "
-         "춘천시 남면 2017). 합계가 남은 행에서 가린 칸은 그 열만 빈칸이다."),
+         "찍은 읍면동은 모두 행이 있다. 그 행의 합계까지, 곧 모든 칸을 가린 곳은 시군구 행이 "
+         "그 합계를 정한다(시군구 합계에서 다른 읍면동 합계를 뺀 값). 2016-2024년 31개 "
+         "읍면동-연도로, 2026-09-27 부터 싣고 그 전에는 뺐다(삼척시 노곡면 2016-2022, "
+         "강동구 둔촌1동 2020-2024, 철원군 근북면 2019-2021·2023-2024, 고성군 영현면 "
+         "2019-2023, 광명시 광명1동 2022-2024, 서초구 반포본동과 금정구 금성동 2023-2024, "
+         "파주시 군내면 2016, 춘천시 남면 2017). 무엇으로도 정해지지 않는 가린 칸은 그 열만 "
+         "빈칸이다(broad_total 과 README 의 Masked cells 참조)."),
         ("summary_by_eupmyeondong.csv", "adm_code", "string",
          "Official administrative-dong code for that year, as the year's boundary "
          "snapshot carries it (source: vuski/admdongkor): 7-digit for 2014/2015/2017, "
@@ -1614,44 +1620,71 @@ def build_data_dictionary():
          "등록외국인/주민등록인구 x100 (MOJ 기준)."),
         (SUMMARY_FILES, "broad_total", "integer",
          "MOIS broad-definition foreign residents = non_naturalized + naturalized + "
-         "children. Different population definition from MOJ; not directly comparable.",
+         "children. Different population definition from MOJ; not directly comparable. "
+         "From 2016 MOIS masks every count under 5 ('***' in 2016, '*' after). A masked "
+         "cell of these columns is carried wherever the printed cells fix it exactly, "
+         "through the identities the sheet publishes: within a row, broad_total = "
+         "non_naturalized + naturalized + children and non_naturalized = its five types; "
+         "across rows, a row with rows printed under it is their sum (the province over "
+         "its districts, a city over its general districts, a district over its "
+         "sub-districts), each identity left with one masked cell settling it, repeated "
+         "until none does. A cell nothing fixes is blank. Until 2026-09-27 only the "
+         "row's own identities counted; the rows above now count too, which fixes 2,400 "
+         "more sub-district cells of 2016-2024 and no district or province cell (the "
+         "district rows already fixed all of theirs). README, Masked cells.",
          "MOIS 광의 외국인주민 = non_naturalized+naturalized+children. MOJ와 모집단 정의가 "
-         "달라 직접비교 부적절."),
+         "달라 직접비교 부적절. 행정안전부는 2016년부터 5 미만을 모두 가린다(2016년 "
+         "'***', 그 뒤 '*'). 이 열들의 가린 칸은 찍힌 칸으로 값이 정확히 정해지는 곳이면 "
+         "싣는다. 원표가 싣는 항등식을 쓴다: 한 행 안에서 broad_total = non_naturalized + "
+         "naturalized + children, non_naturalized = 다섯 유형의 합이고, 행 사이에서는 아래에 "
+         "찍힌 행들의 합이 위의 행이다(시도는 시군구의, 시는 일반구의, 시군구는 읍면동의 "
+         "합). 가린 칸이 하나만 남은 항등식이 그 칸을 정하고, 더 정해지는 칸이 없을 때까지 "
+         "되풀이한다. 정해지지 않는 칸은 빈칸이다. 2026-09-27 까지는 그 행의 항등식만 "
+         "썼고, 이제 위의 행도 쓴다. 그래서 2016-2024년 읍면동 칸 2,400 개가 더 정해지고 "
+         "시군구·시도 칸은 더 정해지지 않는다(시군구 행이 이미 제 칸을 모두 정했다). "
+         "README 의 Masked cells."),
         (SUMMARY_FILES, "non_naturalized", "integer",
          "Foreign residents who have not acquired Korean nationality (subtotal).",
          "한국국적 미취득자 소계."),
         (SUMMARY_FILES, "workers / marriage_migrants / students / ethnic_koreans / other_foreigners",
          "integer",
          "Non-naturalized breakdown: foreign workers / marriage migrants / international "
-         "students / overseas Koreans (foreign nationality) / other. Where MOIS masks "
-         "exactly one of the five under a published non_naturalized, the masked value is "
-         "recovered as the subtotal minus the other four, at every level (the sub-district "
-         "file did not recover it before 2026-09-26); with two or more masked, they stay "
-         "blank. In summary_by_sido 2006 only, marriage_migrants is the source's "
+         "students / overseas Koreans (foreign nationality) / other. A masked cell is "
+         "carried where the printed cells fix it (see broad_total): one of the five "
+         "masked alone under a published non_naturalized is the subtotal minus the other "
+         "four, at every level (the sub-district file did not recover it before "
+         "2026-09-26), and in the sub-district file a cell is also fixed by the district "
+         "row (since 2026-09-27); a cell nothing fixes stays blank. In summary_by_sido "
+         "2006 only, marriage_migrants is the source's "
          "국제결혼이주자 group total, which includes that group's children, the same "
          "children the children column counts, so marriage_migrants and children overlap "
          "that year (Seoul: 19,848 = 2,719 men + 12,255 women + 4,874 children); from 2007 "
          "the two are disjoint.",
-         "미취득자 세부: 외국인근로자/결혼이민자/유학생/외국국적동포/기타. 행정안전부가 공표한 "
-         "non_naturalized 아래 다섯 가운데 하나만 가렸으면 그 값은 소계에서 나머지 넷을 뺀 "
-         "값으로 복원한다(모든 층; 읍면동 파일은 2026-09-26 전에는 복원하지 않았다). 둘 "
-         "이상 가렸으면 빈칸으로 둔다. summary_by_sido 의 2006년만 marriage_migrants 가 "
+         "미취득자 세부: 외국인근로자/결혼이민자/유학생/외국국적동포/기타. 가린 칸은 찍힌 "
+         "칸으로 정해지는 곳이면 싣는다(broad_total 참조). 공표된 non_naturalized 아래 "
+         "다섯 가운데 하나만 가렸으면 소계에서 나머지 넷을 뺀 값이고(모든 층; 읍면동 파일은 "
+         "2026-09-26 전에는 복원하지 않았다), 읍면동 파일에서는 시군구 행으로도 정해진다"
+         "(2026-09-27 부터). 정해지지 않는 칸은 빈칸이다. summary_by_sido 의 2006년만 "
+         "marriage_migrants 가 "
          "원자료의 국제결혼이주자 무리 합계라 그 무리의 자녀를 품고, 그 자녀는 children 칸에도 "
          "있어 그 해에는 두 칸이 겹친다(서울 19,848 = 남 2,719 + 여 12,255 + 자녀 4,874). "
          "2007년부터는 겹치지 않는다."),
         (SUMMARY_FILES, "naturalized", "integer",
-         "Residents who acquired Korean nationality (naturalized). Where MOIS masks it "
-         "and prints broad_total, non_naturalized and children, it is broad_total less "
-         "the other two, at every level (the sub-district file left 1,443 such cells of "
-         "naturalized and children blank in 2016-2024 until 2026-09-27).",
-         "한국국적 취득자(귀화). 행정안전부가 이 칸만 가리고 broad_total, non_naturalized, "
-         "children 을 찍었으면 broad_total 에서 둘을 뺀 값으로 싣는다(모든 층; 읍면동 파일은 "
-         "2026-09-27 까지 2016-2024년의 그런 칸 1,443 개를 naturalized 와 children 에서 "
-         "비워 두었다)."),
+         "Residents who acquired Korean nationality (naturalized). A masked cell is "
+         "carried where the printed cells fix it (see broad_total): masked alone beside "
+         "broad_total, non_naturalized and children it is broad_total less the other "
+         "two, at every level (the sub-district file left 1,443 such cells of "
+         "naturalized and children blank in 2016-2024 until 2026-09-27), and in the "
+         "sub-district file the district row fixes more.",
+         "한국국적 취득자(귀화). 가린 칸은 찍힌 칸으로 정해지는 곳이면 싣는다(broad_total "
+         "참조). broad_total, non_naturalized, children 곁에 이 칸만 가렸으면 broad_total "
+         "에서 둘을 뺀 값이고(모든 층; 읍면동 파일은 2026-09-27 까지 2016-2024년의 그런 칸 "
+         "1,443 개를 naturalized 와 children 에서 비워 두었다), 읍면동 파일에서는 시군구 "
+         "행이 더 정한다."),
         (SUMMARY_FILES, "children", "integer",
-         "Children of foreign residents (MOIS multicultural-family children). Recovered "
-         "as naturalized is where it alone of the three is masked.",
-         "외국인주민 자녀. 셋 가운데 이 칸만 가렸으면 naturalized 와 같이 복원한다."),
+         "Children of foreign residents (MOIS multicultural-family children). A masked "
+         "cell is carried as naturalized is.",
+         "외국인주민 자녀. 가린 칸은 naturalized 와 같이 싣는다."),
         (SUMMARY_FILES, "foreign_resident_households", "integer",
          "MOIS foreign-resident households (외국인주민 세대수): the column the 2009-2015 "
          "editions print after the children block, at the province and district level "
@@ -1860,11 +1893,18 @@ def build_data_dictionary():
          "연수취업 (trainee employment) status the 2006-2009 editions print as E-8; "
          "E8 from 2021 on is 계절근로 (seasonal worker), a different status that reused "
          "the code, and no edition prints E-8 from 2010 to 2020. X00 is 자격없음 (0-0), "
-         "people the 2014 stay table records with no status (%s)." % F["x00"],
+         "people the 2014 stay table records with no status (%s). E10 선원취업 runs "
+         "from 2006: in 2007-2009 it is the three crew columns those editions print in "
+         "place of an E-10 column (E0A 내항선원, E0B 어선원, E0C 순항선원), the "
+         "subdivisions E-10-1 to E-10-3 (crosswalk_visa); they were a code of their "
+         "own, E0, until 2026-09-27." % F["x00"],
          "비자 분류 라벨(한글+영문). 2006-2011 일부 옛 코드는 원자료에 설명 라벨이 없어 코드를 "
          "그대로 둠(예 M1). E8T 는 2006-2009년판이 E-8 로 싣는 연수취업이고, 2021년판부터의 "
          "E8 은 같은 코드를 다시 쓴 다른 자격인 계절근로다. 2010-2020년판에는 E-8 칸이 없다. "
-         "X00 은 2014년 체류외국인 표의 자격없음(0-0), %s명." % F["x00"]),
+         "X00 은 2014년 체류외국인 표의 자격없음(0-0), %s명. E10 선원취업은 2006년부터 "
+         "이어진다. 2007-2009년에는 그 판들이 E-10 칸 대신 찍는 선원 세 칸(E0A 내항선원, "
+         "E0B 어선원, E0C 순항선원), 곧 E-10-1 에서 E-10-3 까지의 구분이다(crosswalk_visa). "
+         "2026-09-27 까지는 따로 E0 코드였다." % F["x00"]),
         ("visa_by_nationality.csv", "n", "integer",
          "Count for that population x nationality x visa x year (2006-2024).",
          "모집단×국적×비자×연도 인원(2006-2024)."),
@@ -1956,23 +1996,31 @@ def build_data_dictionary():
          "so sums exceed the summary files' children column, which counts Korea-born "
          "only from 2016. City grain for general-district cities before 2016; gu grain "
          "from 2016, except 부천시, which is one district in every year as in every other "
-         "district file (its 2024 general districts are summed). A district-year is "
-         "absent, not blank, where the source masks every single-age cell: 울릉군 "
-         "(47940) 2016-2024 is the only case, and its total is in summary_by_sigungu.children. "
-         "Where the source masks ('*') exactly one age of a district and prints the other "
-         "eighteen and the district total, that age is the total less the eighteen and is "
-         "carried (2016-2024; every fully printed district adds up to its total in every "
-         "edition); an age that is masked beside another masked age, or that the source "
-         "does not print (it omits some ages with no children, e.g. 2014), has no row.",
+         "district file (its 2024 general districts are summed). From 2016 the source "
+         "masks every count under 5 ('***' in 2016, '*' after), and a masked age is "
+         "carried wherever the printed cells fix it exactly: the district's total less "
+         "its other ages, the city's row less its other general districts, the "
+         "province's row less its other districts, each identity left with one masked "
+         "cell settling it, repeated until none does (633 cells of 2016-2024; until "
+         "2026-09-27 only the district total counted, 177 cells). An age nothing fixes "
+         "(595 cells of 2016-2024, none in 2023), or one the source does not print (it "
+         "omits some ages with no children, e.g. 2014), has no row. Every district-year "
+         "has rows: 울릉군 (47940), whose every printed age is masked, carries the 9 to "
+         "19 ages a year that its province's row and its own total fix (it had no row "
+         "before 2026-09-27), and its total is in summary_by_sigungu.children.",
          "해당 연령 외국인주민 자녀 수(2011-2024). 전체 자녀(국내출생+귀화·외국국적) 기준이라 "
          "합계가 summary의 children(2016년부터 국내출생만)보다 큼. 2016년 이전은 일반구 시를 "
          "시 단위로, 2016년부터 구 단위로 수록하되 부천시는 다른 시군구 파일처럼 모든 해에 한 "
-         "단위(2024년 일반구를 합침). 원자료가 모든 연령 칸을 가린 시군구·연도는 빈 행이 아니라 "
-         "행이 없다. 울릉군(47940) 2016-2024 가 유일하며 합계는 summary_by_sigungu.children 에 "
-         "있다. 원자료가 한 시군구에서 한 연령만 가리고('*') 나머지 열여덟 연령과 시군구 합계를 "
-         "찍은 곳은 그 연령을 합계에서 열여덟을 뺀 값으로 싣는다(2016-2024; 모든 칸을 찍은 "
-         "시군구는 모든 판에서 연령 합이 합계와 같다). 다른 연령과 함께 가려진 연령, 원자료가 "
-         "찍지 않은 연령(자녀가 없는 연령을 빼기도 한다, 예: 2014)은 행이 없다."),
+         "단위(2024년 일반구를 합침). 원자료는 2016년부터 5 미만을 모두 가리고(2016년 "
+         "'***', 그 뒤 '*'), 가린 연령은 찍힌 칸으로 값이 정확히 정해지는 곳이면 싣는다: "
+         "시군구 합계에서 다른 연령을, 시 행에서 다른 일반구를, 시도 행에서 다른 시군구를 뺀 "
+         "값이고, 가린 칸이 하나만 남은 항등식이 그 칸을 정하며 더 정해지는 칸이 없을 때까지 "
+         "되풀이한다(2016-2024년 633 칸; 2026-09-27 까지는 시군구 합계만 써서 177 칸). "
+         "정해지지 않는 연령(2016-2024년 595 칸, 2023년에는 없음)과 원자료가 찍지 않은 "
+         "연령(자녀가 없는 연령을 빼기도 한다, 예: 2014)은 행이 없다. 모든 시군구·연도에 행이 "
+         "있다. 찍은 연령을 모두 가린 울릉군(47940)은 시도 행과 제 합계가 정하는 연령을 "
+         "해마다 9-19 개 싣고(2026-09-27 전에는 행이 없었다), 합계는 "
+         "summary_by_sigungu.children 에 있다."),
         ("multicultural_households.csv", "sido / sido_en / sigungu / sigungu_en", "string",
          "Province and district (Korean + English).", "시도·시군구(한글+영문)."),
         ("multicultural_households.csv", "adm_code", "string",
@@ -2003,16 +2051,24 @@ def build_data_dictionary():
          "골라야 중복집계 방지."),
         ("multicultural_households.csv", "n", "integer",
          "MOIS multicultural household members of that type (2016-2024). MOIS masks "
-         "every count under 5 ('*'). A masked cell the sub-district's own printed cells "
-         "determine is carried (a part masked alone beside its subtotal and sibling, "
-         "one of the four groups masked alone under the total, a subtotal whose parts "
-         "are printed), and may be 0; a cell masked together with another of its "
-         "identity has no row. Until 2026-09-27 no masked cell had a row.",
-         "해당 유형 다문화가구원 수(2016-2024). MOIS 는 5 미만을 모두 가린다('*'). 그 "
-         "읍면동의 찍힌 칸으로 정해지는 가린 칸(소계와 짝 항목 곁에 홀로 가린 항목, 합계 "
-         "아래 네 무리 가운데 홀로 가린 무리, 항목이 모두 찍힌 소계)은 싣고 0 일 수 있다. "
-         "같은 항등식의 다른 칸과 함께 가린 칸은 행이 없다. 2026-09-27 까지는 가린 칸에 "
-         "행이 하나도 없었다."),
+         "every count under 5 ('*') and prints no zero. A masked cell is carried wherever "
+         "the printed cells fix it exactly, and may be 0: the sub-district's own "
+         "identities (합계 = the four member groups, each two-part group = its two "
+         "parts) and the district row printed above the sub-districts (the district's "
+         "cell less its other sub-districts'), each identity left with one masked cell "
+         "settling it, repeated until none does (README, Masked cells). 45,051 rows of "
+         "2016-2024 are such cells, 15,433 of them 0: 42,225 fixed by the row alone "
+         "(carried since the third check of 2026-09-27) and 2,826 more by the district "
+         "rows (since the owner's decision of the same day). A cell nothing fixes has no "
+         "row.",
+         "해당 유형 다문화가구원 수(2016-2024). MOIS 는 5 미만을 모두 가리고('*') 0 을 "
+         "찍지 않는다. 가린 칸은 찍힌 칸으로 값이 정확히 정해지는 곳이면 싣고 0 일 수 있다: "
+         "그 읍면동의 항등식(합계 = 네 무리, 두 항목 무리 = 두 항목의 합)과 읍면동 위에 찍힌 "
+         "시군구 행(시군구 칸에서 다른 읍면동 칸을 뺀 값)을 쓰고, 가린 칸이 하나만 남은 "
+         "항등식이 그 칸을 정하며 더 정해지는 칸이 없을 때까지 되풀이한다(README 의 Masked "
+         "cells). 2016-2024년 45,051 행이 그런 칸이고 15,433 행이 0 이다. 42,225 행은 "
+         "그 행만으로 정해지고(2026-09-27 3라운드 대조부터 싣는다) 2,826 행은 시군구 행으로 "
+         "더 정해진다(같은 날 소유자 결정부터). 정해지지 않는 칸은 행이 없다."),
         # ---------- naturalization ----------
         ("naturalization_annual.csv / naturalization_by_country.csv / naturalization_by_age.csv",
          "year", "integer",
@@ -2209,15 +2265,20 @@ def build_data_dictionary():
          "code-less column of unclassified statuses as it is headed (기타, 기타(other), "
          "기타(others), 기타(Others), by edition), and, for a code some editions print "
          "under another label, the code with those editions (e.g. 'D3 (2006-2008, "
-         "2010-2012 editions)').",
+         "2010-2012 editions)'); the three crew columns of the 2007-2009 editions "
+         "likewise ('E0A (2007-2009 editions)', 'E0B (2007-2009 editions)', 'E0C (2009 "
+         "edition)').",
          "연감 판본의 체류자격 코드. 2010년 이전 하위 코드와, 코드 없이 「기타」·"
          "「기타(other)」·「기타(others)」·「기타(Others)」로 머리를 단(판마다 다르다) 미분류 "
          "자격 칸을 포함한다. 어떤 판이 다른 이름으로 찍는 코드는 그 판들과 함께 적는다"
-         "(예: 'D3 (2006-2008, 2010-2012 editions)')."),
+         "(예: 'D3 (2006-2008, 2010-2012 editions)'). 2007-2009년판의 선원 세 칸도 그렇게 "
+         "적는다('E0A (2007-2009 editions)', 'E0B (2007-2009 editions)', 'E0C (2009 "
+         "edition)')."),
         ("crosswalk_visa.csv", "visa_code", "string",
          "Parent code this dataset reports for the source code (E8T for the 2006-2009 "
-         "E-8).",
-         "원자료 코드에 대해 이 자료가 싣는 부모 코드(2006-2009년판 E-8 은 E8T)."),
+         "E-8; E10 for the 2007-2009 crew columns E0A to E0C).",
+         "원자료 코드에 대해 이 자료가 싣는 부모 코드(2006-2009년판 E-8 은 E8T, "
+         "2007-2009년판 선원 칸 E0A-E0C 는 E10)."),
         ("crosswalk_visa.csv", "visa_label / visa_label_en", "string",
          "Korean and English name of the parent code.",
          "부모 코드의 한글·영문 이름."),
@@ -2230,7 +2291,11 @@ def build_data_dictionary():
          "released one: D-3 산업연수 (the 2006-2012 editions; 기술연수 from 2013), C-3 "
          "단기종합, D-7 상사주재, E-7 특정직업, E-9 비취업, E-2 회화 and 회화강사, E-10 "
          "내항선원 (2006), G-1 기타, and 연수취업 over the seasonal-worker E-8 of the 2022 "
-         "and 2024 registered tables.",
+         "and 2024 registered tables. The three crew columns the 2007-2009 editions "
+         "print in place of an E-10 column (E0A 내항선원, E0B 어선원, E0C 순항선원 in "
+         "2009; E-0-A to E-0-C in the district tables) have a rule naming the label and "
+         "the E-10 subdivision each is (E-10-1 to E-10-3), carried as E10 since "
+         "2026-09-27; they were a code of their own, E0, before.",
          "'sub-code collapsed to parent', 'unchanged', ETC 로 싣는 코드 없는 기타 칸은 "
          "'source label variant (the code-less column of unclassified statuses)'(2018년 "
          "10,171명, 2020년 39,210명), 2006-2009년판의 E-8 에 'same source code, "
@@ -2238,7 +2303,10 @@ def build_data_dictionary():
          "자격에 'same code, label printed as ...': D-3 산업연수(2006-2012년판, 2013년부터 "
          "기술연수), C-3 단기종합, D-7 상사주재, E-7 특정직업, E-9 비취업, E-2 회화·"
          "회화강사, E-10 내항선원(2006), G-1 기타, 그리고 2022·2024년 등록 표가 계절근로 "
-         "E-8 칸에 찍은 연수취업."),
+         "E-8 칸에 찍은 연수취업. 2007-2009년판이 E-10 칸 대신 찍는 선원 세 칸(E0A "
+         "내항선원, E0B 어선원, 2009년 E0C 순항선원; 시군구 표는 E-0-A 에서 E-0-C)은 그 "
+         "이름과 해당하는 E-10 의 세 구분(E-10-1 에서 E-10-3)을 적은 규칙을 달고, "
+         "2026-09-27 부터 E10 으로 싣는다. 그 전에는 따로 E0 코드였다."),
         ("language_weights.csv", "country", "string",
          "Nationality, in the canonical label, for every standard name crosswalk_country "
          "lists, the lines that name no nationality included.",
@@ -2254,19 +2322,24 @@ def build_data_dictionary():
          "그 나라 인구 가운데 그 언어를 모어로 쓰는 비율. language_demand 가 국적을 "
          "나눌 때 쓰는 가중치다. Ethnologue 에서 파생했고 원본은 재배포하지 않는다."),
         ("language_weights.csv", "note", "string",
-         "'no first-language shares available' where the source has no entry "
-         "(한국계미국인), for the lines that name no nationality (무국적, 기타, "
-         "미등록국가, 미상, 한국, 국적불명, 국제연합, 국제연합전문기구), and where the "
-         "first language is Korean (한국계중국인, 북한): their people add nothing to "
-         "language_demand. Until 2026-09-27 북한, 케이맨제도 and 한국계미국인 had no row "
-         "at all; none of them has people in the nationality files language_demand is "
-         "built from (북한 appears only in naturalization_by_country).",
-         "출처에 항목이 없는 경우(한국계미국인), 국적 없는 줄(무국적, 기타, 미등록국가, "
-         "미상, 한국, 국적불명, 국제연합, 국제연합전문기구), 모어가 한국어인 경우"
-         "(한국계중국인, 북한)는 'no first-language shares available'. 그 사람들은 "
-         "language_demand 에 더해지지 않는다. 2026-09-27 까지 북한, 케이맨제도, "
-         "한국계미국인은 행이 없었다. 셋 다 language_demand 가 읽는 국적 파일에는 사람이 "
-         "없다(북한은 naturalization_by_country 에만 나온다)."),
+         "'no first-language shares available' for the lines that name no "
+         "nationality (무국적, 기타, 미등록국가, 미상, 한국, 국적불명, 국제연합, "
+         "국제연합전문기구) and where the first language is Korean (한국계중국인, 북한): "
+         "their people add nothing to language_demand. 한국계러시아인 and 한국계미국인, "
+         "for which the source has no entry, take the language of the country of "
+         "residence (Russian, English); 한국계미국인 had no shares until 2026-09-27 and "
+         "has no people in any nationality file, so no demand moved. Until 2026-09-27 "
+         "북한, 케이맨제도 and 한국계미국인 had no row at all; none of them has people in "
+         "the nationality files language_demand is built from (북한 appears only in "
+         "naturalization_by_country).",
+         "국적 없는 줄(무국적, 기타, 미등록국가, 미상, 한국, 국적불명, 국제연합, "
+         "국제연합전문기구)과 모어가 한국어인 경우(한국계중국인, 북한)는 'no "
+         "first-language shares available'. 그 사람들은 language_demand 에 더해지지 "
+         "않는다. 출처에 항목이 없는 한국계러시아인과 한국계미국인은 사는 나라의 말"
+         "(러시아어, 영어)을 준다. 한국계미국인은 2026-09-27 까지 비중이 없었고 어느 "
+         "국적 파일에도 사람이 없어 수요는 움직이지 않았다. 2026-09-27 까지 북한, "
+         "케이맨제도, 한국계미국인은 행이 없었다. 셋 다 language_demand 가 읽는 국적 "
+         "파일에는 사람이 없다(북한은 naturalization_by_country 에만 나온다)."),
         ("language_demand.csv", "year", "integer", "Reference year (2006-2024).",
          "기준연도(2006-2024)."),
         ("language_demand.csv", "scope", "string",

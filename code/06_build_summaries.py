@@ -57,11 +57,17 @@ def enrich(r):
     # treating it as 0 (v1.1.0 behavior, wrong when > 0) or blanking the derived
     # rates. Never applied when the subtotal itself is derived (pre-2009 schema,
     # where absent categories are genuinely unpublished, not masked).
+    # Since 2026-09-27 the parser settles every masked cell the sheet's identities fix
+    # (05_mois_layer.MaskTree: the row's own and the rows above it), so for 2016 on
+    # these two rules find nothing left to do. A value that would come out negative
+    # is left out, as MaskTree leaves it masked; it had been set to 0 (it never came
+    # out negative, checked 2026-09-27 on every district and sub-district row).
     if "한국국적미취득_소계" in r:
         missing = [k for k in COMP_KO if k not in r]
         if len(missing) == 1:
             present = sum(r.get(k) or 0 for k in COMP_KO if k in r)
-            r[missing[0]] = max(r["한국국적미취득_소계"] - present, 0)
+            if r["한국국적미취득_소계"] - present >= 0:
+                r[missing[0]] = r["한국국적미취득_소계"] - present
     if "한국국적취득자" not in r and ("혼인귀화자" in r or "기타귀화자" in r):
         r["한국국적취득자"] = (r.get("혼인귀화자") or 0) + (r.get("기타귀화자") or 0)
     # The same one level up: 합계 = 미취득_소계 + 취득 + 자녀, so under a published
@@ -73,7 +79,8 @@ def enrich(r):
         top = [k for k in ("한국국적취득자", "외국인주민자녀") if r.get(k) is None]
         if len(top) == 1:
             other = "외국인주민자녀" if top[0] == "한국국적취득자" else "한국국적취득자"
-            r[top[0]] = max(r["합계"] - r["한국국적미취득_소계"] - r[other], 0)
+            if r["합계"] - r["한국국적미취득_소계"] - r[other] >= 0:
+                r[top[0]] = r["합계"] - r["한국국적미취득_소계"] - r[other]
     if "한국국적미취득_소계" not in r and all(k in r for k in ("합계", "한국국적취득자", "외국인주민자녀")):
         r["한국국적미취득_소계"] = r["합계"] - r["한국국적취득자"] - r["외국인주민자녀"]
     return r

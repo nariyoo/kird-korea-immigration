@@ -105,6 +105,12 @@ def released_totals():
 
 
 def main():
+    # --data <folder>: hold another copy of the release to the raw tables (the gates
+    # were tried on the release before the decisions of 2026-09-27 this way).
+    global RELEASE_DATA
+    if "--data" in sys.argv:
+        RELEASE_DATA = os.path.abspath(sys.argv[sys.argv.index("--data") + 1])
+        print("release data read from", RELEASE_DATA)
     # 파일 목록은 01 과 같은 것을 쓰되, 그 스크립트를 실행하지 않고 다시 적는다.
     import importlib.util
     spec = importlib.util.spec_from_file_location(
@@ -180,11 +186,12 @@ def main():
     rc4 = stay_country_gate()
     rc5 = early_province_gate()
     rc6 = crosswalk_labels_gate(ns)
-    rc7 = children_age_gate()
+    rc7 = mois_mask_gates()
     rc8 = status_label_gate(ns)
     rc9 = district_label_gate(ns)
     rc10 = status_variant_gate(ns)
-    return rc or rc2 or rc3 or rc4 or rc5 or rc6 or rc7 or rc8 or rc9 or rc10
+    rc11 = crew_gate(ns)
+    return rc or rc2 or rc3 or rc4 or rc5 or rc6 or rc7 or rc8 or rc9 or rc10 or rc11
 
 
 def _canon(name):
@@ -805,12 +812,16 @@ def status_label_gate(ns):
     sub-statuses the editions print, so the released label must name each of them.
 
     3라운드 대조 (2026-09-27). The 2007-2009 editions print E0A 내항선원, E0B 어선원 and
-    (2009) E0C 순항선원 and never an E-0 column; the parser folds the three into E0,
+    (2009) E0C 순항선원 and never an E-0 column; the parser folded the three into E0,
     and its label read 협정활동 (treaty activity), a status no edition prints for these
     columns (they are the crew subdivisions of E-10 선원취업). Here, over the national
     status tables of every edition to the release year, a code with lettered
     sub-codes (E0A) and no column of its own must carry a visa_label in
     visa_national that contains the first two characters of every sub-label printed.
+    Since the owner's decision of the same day the crew columns are E10, a code
+    with a column of its own, so no released code is left for this gate to hold
+    (crew_gate holds the crew rows instead); it stays for any status a future
+    edition prints only as sub-codes.
     """
     national = dict(ns["REG_FILES"])
     stay = dict(ns["STAY_FILES"])
@@ -1066,89 +1077,441 @@ MOIS_RAW = os.path.join(RAW, "행정안전부 외국인주민통계")
 AGE_LABEL = re.compile(r"^만?(\d{1,2})세$")
 
 
-def children_age_gate():
-    """children_by_age carries every single-age cell the MOIS age sheet determines.
+# ---------------------------------------------------------------- masked MOIS cells
+# The owner's decision of 2026-09-27: every cell MOIS masks ('*', '***': a count
+# under 5) that the printed cells fix exactly is carried, through the identities
+# the sheet itself publishes. Within a row a total is the sum of its parts; across
+# rows a row with rows printed under it is their sum, column by column (the nation
+# over its provinces, a province over its districts, a city over its general
+# districts, a district over its sub-districts); every identity left with one masked
+# cell settles it, repeated until none does. The gates below re-read the four MOIS
+# sheets the released files come from (1-2 districts, 1-3 sub-districts, 11
+# households, 9-2 children by age), settle them here with code of their own
+# (05_mois_layer.MaskTree is not imported), and hold every released cell of 2016 to
+# the release year to the result, cell by cell: a printed or settled cell must be
+# carried with that value, and a cell left masked must not be carried. They also
+# stop if a fully printed identity fails, or a settled value falls outside 0-4.
 
-    2026-09-27 (2라운드 대조). From 2016 MOIS masks small cells ('***' in 2016, '*'
-    after). Where it masks exactly one age of a district and prints the other
-    eighteen and the district total, that age is the total less the eighteen (every
-    fully printed district adds up to its total), and the release dropped it with the
-    undetermined ones (41 cells in 2022-2024). Here, for 2016 to the release year,
-    each age summed over the districts of the sheet 9-2 (printed cells plus the
-    determined masked ones; a city's own row beside its gu left out) must equal
-    children_by_age summed over districts for that year and age.
-    """
-    ca = pd.read_csv(os.path.join(RELEASE_DATA, "children_by_age.csv"), encoding="utf-8-sig",
-                     usecols=["year", "age", "n"])
-    got = ca.groupby(["year", "age"])["n"].sum()
-    ws = lambda v: re.sub(r"\s+", "", str(v).split("\n")[0])
+MOIS_SIDO = {"서울특별시", "부산광역시", "대구광역시", "인천광역시", "광주광역시", "대전광역시",
+             "울산광역시", "세종특별자치시", "세종시", "경기도", "강원도", "강원특별자치도",
+             "충청북도", "충청남도", "전라북도", "전북특별자치도", "전라남도", "경상북도",
+             "경상남도", "제주도", "제주특별자치도"}
+MOIS_SIDO_RELEASE = {"강원특별자치도": "강원도", "전북특별자치도": "전라북도", "제주도": "제주특별자치도",
+                     "세종시": "세종특별자치시"}
+MOIS_DONG = ("동", "읍", "면", "리", "출장소", "지소")
+MOIS_MASK = "*"
+POP_CATS = ["합계", "한국국적미취득_소계", "외국인근로자", "결혼이민자", "유학생", "외국국적동포",
+            "기타외국인", "한국국적취득자", "외국인주민자녀"]
+POP_IDS = [("합계", ("한국국적미취득_소계", "한국국적취득자", "외국인주민자녀")),
+           ("한국국적미취득_소계", ("외국인근로자", "결혼이민자", "유학생", "외국국적동포", "기타외국인"))]
+MC_CATS = ["합계", "한국인배우자", "결혼이민자귀화자_소계", "결혼이민자", "귀화자등", "자녀_소계",
+           "자녀_귀화인지외국국적", "자녀_국내출생", "기타동거인_소계", "기타동거인_내국인",
+           "기타동거인_외국인"]
+MC_IDS = [("합계", ("한국인배우자", "결혼이민자귀화자_소계", "자녀_소계", "기타동거인_소계")),
+          ("결혼이민자귀화자_소계", ("결혼이민자", "귀화자등")),
+          ("자녀_소계", ("자녀_귀화인지외국국적", "자녀_국내출생")),
+          ("기타동거인_소계", ("기타동거인_내국인", "기타동거인_외국인"))]
+AGES = [str(a) for a in range(19)]
+MOIS_SHEETS = {
+    # sheet prefix: (the 계 column of each category, the row identities)
+    "1-2.": (dict(zip(POP_CATS, (3, 6, 9, 12, 15, 18, 21, 24, 27))), POP_IDS),
+    "1-3.": (dict(zip(POP_CATS, range(1, 10))), POP_IDS),
+    "11.": (dict(zip(MC_CATS, range(1, 12))), MC_IDS),
+    "9-2.": ({"합계": 1}, [("합계", tuple(AGES))]),
+}
+# The district names the release carries in place of the one a 2016+ edition prints.
+MOIS_DISTRICT_RELEASE = {("인천광역시", "남구"): ("인천광역시", "미추홀구"),
+                         ("경상북도", "군위군"): ("대구광역시", "군위군")}
 
-    def val(v):
-        if isinstance(v, str) and v.strip() in ("*", "***"):
-            return "M"
-        try:
-            return int(float(str(v).replace(",", "")))
-        except ValueError:
-            return None
 
-    off, n_rec = [], 0
-    for y in range(2016, RELEASE_LAST_YEAR + 1):
-        path = os.path.join(MOIS_RAW, "%d_외국인주민통계.xlsx" % y)
-        if not os.path.exists(path):
-            off.append((y, "no file"))
+def _mois_cell(v):
+    if isinstance(v, str) and v.strip() in ("*", "***"):
+        return MOIS_MASK
+    if v is None or (isinstance(v, float) and v != v):
+        return None
+    try:
+        return int(float(str(v).replace(",", "")))
+    except ValueError:
+        return None
+
+
+def mois_tree(y, prefix):
+    """The MOIS sheet of edition y whose name starts with `prefix`, as the rows print
+    it: a list of nodes {level, sido, district, dong, parent, cells}. level is
+    nation, province, city (a city with general districts printed under it), district
+    or dong; district is the release's spelling of the district ('수원시 장안구',
+    '세종시'); for sheet 9-2 a node's cells are its 합계 and its single ages."""
+    cols, _ = MOIS_SHEETS[prefix]
+    path = os.path.join(MOIS_RAW, "%d_외국인주민통계.xlsx" % y)
+    xl = pd.ExcelFile(path)
+    sheet = next(s for s in xl.sheet_names if re.sub(r"\s+", "", s).startswith(prefix))
+    df = pd.read_excel(path, sheet_name=sheet, header=None)
+    # the misprints the pipeline corrects (05_mois_layer.fix_known_typos, and
+    # 09_finish_release.TYPO_FIX, 2024's 청순군 among them)
+    typo = {"천찬시동남구": "천안시동남구", "천찬시서북구": "천안시서북구", "청순군": "청송군",
+            "충청북도충주시": "충주시"}
+    ws = lambda v: (lambda t: typo.get(t, t))(re.sub(r"\s+", "", str(v).split("\n")[0]))
+    nodes, started = [], False
+    nation = province = city = district = None
+    sido = city_name = None
+    for i in range(len(df)):
+        if not isinstance(df.iat[i, 0], str):
             continue
-        xl = pd.ExcelFile(path)
-        sheet = next(s for s in xl.sheet_names if s.startswith("9-2"))
-        df = pd.read_excel(path, sheet_name=sheet, header=None)
-        blocks = []
-        for i in range(len(df)):
-            name = ws(df.iat[i, 0]) if isinstance(df.iat[i, 0], str) else ""
-            m = AGE_LABEL.match(name)
-            if m and blocks:
-                blocks[-1]["ages"][int(m.group(1))] = val(df.iat[i, 1])
-            elif name and not m:
-                # every other label opens a block, the title, 구분 and 전국 included,
-                # so their rows are never added to the block before them
-                blocks.append({"name": name, "total": val(df.iat[i, 1]), "ages": {}})
-        keep = []
-        for k, b in enumerate(blocks):
-            nm = b["name"]
-            nxt = blocks[k + 1]["name"] if k + 1 < len(blocks) else ""
-            if nm in ("구분", "전국", "합계") or re.match(r"^\d", nm):
-                continue                           # the title, the header, the nation
-            if nm in SHORT_SIDO.values() or nm in ("강원특별자치도", "전북특별자치도"):
-                continue                           # a province row
-            if nm == "세종특별자치시" and nxt == "세종시":
-                continue                           # 세종's province row above its district
-            if nm in GU_CITY and (nxt.startswith(nm) or nxt in GU_CITY[nm]):
-                continue                           # a city's own row beside its gu
-            keep.append(b)
-        want = {}
-        for b in keep:
-            ages = b["ages"]
-            masked = [a for a in range(19) if ages.get(a) == "M"]
-            full = set(ages) == set(range(19)) and isinstance(b["total"], int)
-            for a, v in ages.items():
+        name = ws(df.iat[i, 0])
+        if not name:
+            continue
+        started = started or name == "전국"
+        if not started:
+            continue
+        age = AGE_LABEL.match(name) if prefix == "9-2." else None
+        if age:
+            nodes[-1]["cells"][str(int(age.group(1)))] = _mois_cell(df.iat[i, 1])
+            continue
+        cells = {k: (_mois_cell(df.iat[i, c]) if c < df.shape[1] else None)
+                 for k, c in cols.items()}
+
+        def add(level, parent, dist=None, dong=None):
+            nodes.append({"level": level, "sido": sido, "district": dist, "dong": dong,
+                          "parent": parent, "cells": cells})
+            return len(nodes) - 1
+        if name == "전국":
+            nation = add("nation", None)
+        elif name in MOIS_SIDO:
+            if name == "세종시" and sido == "세종특별자치시":
+                district = add("district", province, "세종시")
+            else:
+                sido = MOIS_SIDO_RELEASE.get(name, name)
+                province = add("province", nation, "세종시" if sido == "세종특별자치시" else None)
+                district = province if sido == "세종특별자치시" else None
+                city = city_name = None
+        elif name.endswith(MOIS_DONG) and prefix in ("1-3.", "11."):
+            if district is None:
+                raise SystemExit("%d %s: sub-district %s printed under no district"
+                                 % (y, prefix, name))
+            add("dong", district, nodes[district]["district"], name)
+        elif name.endswith(("시", "군", "구")):
+            gu = None
+            if city_name and name.startswith(city_name) and name[len(city_name):] in GU_CITY[city_name]:
+                gu = name[len(city_name):]
+            elif city_name and name in GU_CITY[city_name]:
+                gu = name
+            if gu:
+                district = add("district", city, city_name + " " + gu)
+                nodes[city]["level"] = "city"
+            else:
+                district = add("district", province, name)
+                city, city_name = (district, name) if name in GU_CITY else (None, None)
+        else:
+            raise SystemExit("%d %s: a row the gate cannot place: %s" % (y, prefix, name))
+    return nodes
+
+
+def mois_settle(nodes, row_ids):
+    """Settle the masked cells of a mois_tree in place; return {(node, cell): value}.
+    Stops on a fully printed identity that fails or a settled value outside 0-4."""
+    kids = {}
+    for i, n in enumerate(nodes):
+        if n["parent"] is not None:
+            kids.setdefault(n["parent"], []).append(i)
+    eqs = []
+    for i, n in enumerate(nodes):
+        for tot, parts in row_ids:
+            if tot in n["cells"] and all(p in n["cells"] for p in parts):
+                eqs.append(((i, tot), [(i, p) for p in parts]))
+    for i, ch in kids.items():
+        for c in nodes[i]["cells"]:
+            if all(c in nodes[j]["cells"] for j in ch):
+                eqs.append(((i, c), [(j, c) for j in ch]))
+    get = lambda cell: nodes[cell[0]]["cells"][cell[1]]
+    bad = [(nodes[l[0]]["sido"], nodes[l[0]]["district"], nodes[l[0]]["dong"], l[1])
+           for l, r in eqs if all(isinstance(get(c), int) for c in [l] + r)
+           and get(l) != sum(get(c) for c in r)]
+    if bad:
+        raise SystemExit("MOIS identities that do not hold on printed cells: %s" % bad[:5])
+    settled, moved = {}, True
+    while moved:
+        moved = False
+        for l, r in eqs:
+            cells = [l] + r
+            vals = [get(c) for c in cells]
+            if any(v is None for v in vals):
+                continue
+            open_ = [c for c, v in zip(cells, vals) if v == MOIS_MASK]
+            if len(open_) != 1:
+                continue
+            x = open_[0]
+            v = sum(get(c) for c in r) if x == l else get(l) - sum(get(c) for c in r if c != x)
+            if not 0 <= v <= 4:
+                raise SystemExit("MOIS masked cell settles outside 0-4: %s %s %s = %d"
+                                 % (nodes[x[0]]["district"], nodes[x[0]]["dong"], x[1], v))
+            nodes[x[0]]["cells"][x[1]] = v
+            settled[x] = v
+            moved = True
+    return settled
+
+
+def _mois_key(n):
+    sd, dist = n["sido"], n["district"]
+    if dist is None:
+        return None
+    sd, dist = MOIS_DISTRICT_RELEASE.get((sd, dist), (sd, dist))
+    if dist.startswith("부천시 "):
+        dist = "부천시"         # one district in every year of the release (2024's gu summed)
+    return sd, re.sub(r"\s+", "", dist)
+
+
+def _dong_key(s):
+    t = re.sub(r"[\s·.,・ㆍᆞ‧･]", "", str(s))
+    while True:
+        u = re.sub(r"제([0-9])", r"\1", t)
+        if u == t:
+            return t
+        t = u
+
+
+def mois_mask_gates():
+    """The released MOIS cells of 2016 to the release year against the sheets they
+    come from, every masked cell settled by the sheets' identities (above)."""
+    years = range(2016, RELEASE_LAST_YEAR + 1)
+    rd = lambda f, **kw: pd.read_csv(os.path.join(RELEASE_DATA, f), encoding="utf-8-sig", **kw)
+    rc, report = 0, []
+
+    def compare(label, want, got, settled_keys):
+        """want/got: {key: value}; settled_keys: the keys of want that were masked."""
+        miss = sorted(k for k in want if k not in got)
+        diff = sorted(k for k in want if k in got and got[k] != want[k])
+        extra = sorted(k for k in got if k not in want)
+        per = {}
+        for k in settled_keys:
+            if k in got and got[k] == want[k]:
+                per[k[0]] = per.get(k[0], 0) + 1
+        report.append((label, len(want), sum(per.values()), per, miss, diff, extra))
+        return 1 if (miss or diff or extra) else 0
+
+    # children_by_age <- 9-2: the districts, and 2024's 부천시 as the sum of its gu
+    ca = rd("children_by_age.csv", usecols=["year", "sido", "sigungu", "age", "n"])
+    ca = ca[ca["year"].isin(years)]
+    got = {(int(y), sd, re.sub(r"\s+", "", sg), str(int(a))): int(n)
+           for y, sd, sg, a, n in ca.itertuples(index=False)}
+    want, masked = {}, set()
+    for y in years:
+        nodes = mois_tree(y, "9-2.")
+        was = {(i, c) for i, n in enumerate(nodes) for c, v in n["cells"].items() if v == MOIS_MASK}
+        mois_settle(nodes, MOIS_SHEETS["9-2."][1])
+        acc = {}
+        for i, n in enumerate(nodes):
+            if n["level"] not in ("district",) and not (n["level"] == "province"
+                                                          and n["sido"] == "세종특별자치시"):
+                continue
+            if n["level"] == "province" and any(m["parent"] == i for m in nodes):
+                continue                     # 세종 prints its district row too
+            k = _mois_key(n)
+            for a in AGES:
+                v = n["cells"].get(a)
+                if not isinstance(v, int):
+                    if k[1] == "부천시" and n["district"].startswith("부천시 "):
+                        acc.setdefault((y,) + k + (a,), []).append(None)
+                    continue
+                if k[1] == "부천시" and n["district"].startswith("부천시 "):
+                    acc.setdefault((y,) + k + (a,), []).append(v)
+                    if (i, a) in was:
+                        masked.add((y,) + k + (a,))
+                    continue
+                want[(y,) + k + (a,)] = v
+                if (i, a) in was:
+                    masked.add((y,) + k + (a,))
+        for key, vs in acc.items():
+            if None not in vs:
+                want[key] = sum(vs)
+    rc |= compare("children_by_age (9-2)", want, got, masked)
+
+    # summary_by_eupmyeondong <- 1-3; multicultural_households <- 11
+    em = rd("summary_by_eupmyeondong.csv")
+    em = em[em["year"].isin(years)]
+    colmap = {"합계": "broad_total", "한국국적미취득_소계": "non_naturalized",
+              "외국인근로자": "workers", "결혼이민자": "marriage_migrants", "유학생": "students",
+              "외국국적동포": "ethnic_koreans", "기타외국인": "other_foreigners",
+              "한국국적취득자": "naturalized", "외국인주민자녀": "children"}
+    got = {}
+    for r in em.itertuples(index=False):
+        for ko, en in colmap.items():
+            v = getattr(r, en)
+            if pd.notna(v):
+                got[(int(r.year), r.sido, re.sub(r"\s+", "", r.sigungu),
+                     _dong_key(r.eupmyeondong), ko)] = int(v)
+    mc = rd("multicultural_households.csv", usecols=["year", "sido", "sigungu",
+                                                     "eupmyeondong", "category", "n"])
+    mc = mc[mc["year"].isin(years)]
+    got_mc = {(int(y), sd, re.sub(r"\s+", "", sg), _dong_key(d), c): int(n)
+              for y, sd, sg, d, c, n in mc.itertuples(index=False)}
+    for prefix, label, g in (("1-3.", "summary_by_eupmyeondong (1-3)", got),
+                             ("11.", "multicultural_households (11)", got_mc)):
+        want, masked = {}, set()
+        for y in years:
+            nodes = mois_tree(y, prefix)
+            was = {(i, c) for i, n in enumerate(nodes) for c, v in n["cells"].items()
+                   if v == MOIS_MASK}
+            mois_settle(nodes, MOIS_SHEETS[prefix][1])
+            for i, n in enumerate(nodes):
+                if n["level"] != "dong":
+                    continue
+                k = (y,) + _mois_key(n) + (_dong_key(n["dong"]),)
+                for c, v in n["cells"].items():
+                    if isinstance(v, int):
+                        want[k + (c,)] = v
+                        if (i, c) in was:
+                            masked.add(k + (c,))
+        rc |= compare(label, want, g, masked)
+
+    # summary_by_sigungu <- 1-2: the districts MOIS prints (2024's 부천 gu summed)
+    sg = rd("summary_by_sigungu.csv")
+    sg = sg[sg["year"].isin(years) & sg["broad_total"].notna()]
+    got = {}
+    for r in sg.itertuples(index=False):
+        for ko, en in colmap.items():
+            v = getattr(r, en)
+            if pd.notna(v):
+                got[(int(r.year), r.sido, re.sub(r"\s+", "", r.sigungu), ko)] = int(v)
+    want, masked = {}, set()
+    for y in years:
+        nodes = mois_tree(y, "1-2.")
+        was = {(i, c) for i, n in enumerate(nodes) for c, v in n["cells"].items() if v == MOIS_MASK}
+        mois_settle(nodes, MOIS_SHEETS["1-2."][1])
+        for i, n in enumerate(nodes):
+            gu_of_bucheon = n["level"] == "district" and n["district"].startswith("부천시 ")
+            if n["level"] == "city" and n["district"] != "부천시":
+                continue
+            if n["level"] not in ("district", "city") and not (
+                    n["level"] == "province" and n["sido"] == "세종특별자치시"):
+                continue
+            if gu_of_bucheon:
+                continue                     # the release carries the city row
+            if n["level"] == "province" and any(m["parent"] == i for m in nodes):
+                continue
+            k = (y,) + _mois_key(n)
+            for c, v in n["cells"].items():
                 if isinstance(v, int):
-                    want[a] = want.get(a, 0) + v
-            if full and len(masked) == 1 and all(isinstance(ages[a], int)
-                                                 for a in range(19) if a != masked[0]):
-                want[masked[0]] = want.get(masked[0], 0) + b["total"] - sum(
-                    ages[a] for a in range(19) if a != masked[0])
-                n_rec += 1
-        for a in range(19):
-            g = int(got.get((y, a), 0))
-            if g != want.get(a, 0):
-                off.append((y, a, want.get(a, 0), g))
+                    want[k + (c,)] = v
+                    if (i, c) in was:
+                        masked.add(k + (c,))
+    rc |= compare("summary_by_sigungu (1-2)", want, got, masked)
+
     print()
-    print("자녀 연령표 2016-%d: 원표가 정하는 칸(찍힌 칸 + 홀로 가려진 칸 %d) 대 children_by_age"
-          % (RELEASE_LAST_YEAR, n_rec))
-    for o in off[:12]:
-        print("   ", o)
-    if off:
-        print("FAIL: children_by_age differs from the cells the MOIS age sheet determines")
+    print("행정안전부 가린 칸, %d-%d: 원표의 찍힌 칸과 항등식이 정하는 칸 대 배포본" % (years[0], years[-1]))
+    for label, n, n_set, per, miss, diff, extra in report:
+        print("   %-34s 칸 %8s, 그 가운데 가린 칸을 정한 것 %6s (%s)"
+              % (label, format(n, ","), format(n_set, ","),
+                 ", ".join("%d %d" % kv for kv in sorted(per.items()))))
+        for tag, lst in (("missing", miss), ("differs", diff), ("not determined", extra)):
+            if lst:
+                print("      %s %d, e.g. %s" % (tag, len(lst), lst[:4]))
+    if rc:
+        print("FAIL: a released MOIS cell differs from what the sheet prints or its "
+              "identities fix, or a cell they fix is missing")
         return 1
-    print("GATE OK: children_by_age equals the MOIS age sheet, age by age, 2016-%d"
+    print("GATE OK: every released MOIS cell of %d-%d is printed or fixed by the sheet's "
+          "identities, and every cell they fix is carried" % (years[0], years[-1]))
+    return 0
+
+
+CREW_CODE = re.compile(r"^E-?0-?([ABC])$")
+CREW_HEAD = "crew column printed as "
+
+
+def crew_gate(ns):
+    """The crew status is E10 in every year, and crosswalk_visa names its 2007-2009
+    columns as the raw tables print them.
+
+    소유자 결정 (2026-09-27). The 2007-2009 editions print the crew status as columns
+    of their own, E0A 내항선원, E0B 어선원 and (2009) E0C 순항선원 (E-0-A to E-0-C in
+    the 2008-2009 district tables), the three subdivisions of E-10 선원취업 that the
+    2006 edition and the 2010 edition on print as E-10; until that day they were
+    carried under a code of their own, E0, so E10 had no values in 2007-2009. Here:
+    no released visa file carries E0; visa_national has E10 in every year and
+    population, and in 2007-2009 it equals the crew columns of the table's grand-total
+    row; and the crosswalk_visa rows whose rule reads 'crew column printed as ...'
+    name exactly the codes, labels and editions the national registered and staying
+    tables print.
+    """
+    stay = dict(ns["STAY_FILES"])
+    stay.update(HEADLINE_STAY)
+    printed, sums = {}, {}
+    for pop, files in (("registered", ns["REG_FILES"]), ("stay", stay)):
+        for y, path in sorted(files.items()):
+            if not 2006 <= y <= 2010 or not os.path.exists(path):
+                continue
+            df = pd.read_excel(path, sheet_name=0, header=None)
+            cols = {}
+            for j in range(df.shape[1]):
+                for i in range(1, min(9, len(df))):
+                    v = re.sub(r"\s+", "", str(df.iat[i, j]).split("\n")[-1])
+                    m = CREW_CODE.match(v)
+                    if m:
+                        lab = re.sub(r"\s+", "", str(df.iat[i - 1, j]).split("\n")[0])
+                        cols[j] = ("E0" + m.group(1), lab)
+                        printed.setdefault(("E0" + m.group(1), lab), set()).add(y)
+                        break
+            if not cols:
+                continue
+            # the grand-total row, as printed_total() finds it
+            row = None
+            for i in range(min(12, len(df))):
+                head = norm(" ".join(str(x) for x in df.iloc[i].tolist()[:2] if isinstance(x, str)))
+                if any(t in head for t in ("총계", "총합계", "합계", "grand-total")) and \
+                        not re.search(r"(19|20)[0-9]{2}년", head):
+                    row = i
+                    break
+            if row is None:
+                sums[(pop, y)] = None
+                continue
+            sums[(pop, y)] = int(sum(cell_number(df.iat[row, j]) or 0 for j in cols))
+    vn = pd.read_csv(os.path.join(RELEASE_DATA, "visa_national.csv"), encoding="utf-8-sig")
+    bad = []
+    for f in ("visa_national.csv", "visa_by_nationality.csv", "visa_by_sido.csv",
+              "visa_by_sigungu.csv", "crosswalk_visa.csv"):
+        d = pd.read_csv(os.path.join(RELEASE_DATA, f), encoding="utf-8-sig", usecols=["visa_code"])
+        if d["visa_code"].astype(str).str.fullmatch(r"E0[A-C]?").any():
+            bad.append("%s carries an E0 code" % f)
+    e10 = vn[vn["visa_code"] == "E10"].groupby(["population", "year"])["n"].sum()
+    for pop in ("registered", "stay"):
+        for y in range(2006, RELEASE_LAST_YEAR + 1):
+            if int(e10.get((pop, y), 0)) <= 0:
+                bad.append("visa_national has no E10 in %s %d" % (pop, y))
+    for (pop, y), s in sorted(sums.items()):
+        got = int(e10.get((pop, y), 0))
+        if s is None or got != s:
+            bad.append("%s %d: E10 %d, the table's crew columns %s" % (pop, y, got, s))
+    cv = pd.read_csv(os.path.join(RELEASE_DATA, "crosswalk_visa.csv"), encoding="utf-8-sig")
+    listed = {}
+    for sc, code, rule in cv[["source_code", "visa_code", "rule"]].itertuples(index=False):
+        if not str(rule).startswith(CREW_HEAD):
+            continue
+        lab = re.match(r"[^\s(]+", str(rule)[len(CREW_HEAD):]).group(0)
+        m = re.match(r"^(E0[A-C]) \((.+?) editions?\)$", str(sc))
+        eds = set()
+        for part in (m.group(2).split(",") if m else []):
+            a, _, b = part.strip().partition("-")
+            eds |= set(range(int(a), int(b or a) + 1))
+        listed[(m.group(1) if m else sc, lab)] = eds
+        if code != "E10":
+            bad.append("crosswalk_visa maps %s to %s" % (sc, code))
+    if listed != printed:
+        bad.append("crosswalk_visa crew rows %s; the tables print %s"
+                   % (sorted((k, sorted(v)) for k, v in listed.items()),
+                      sorted((k, sorted(v)) for k, v in printed.items())))
+    print()
+    print("선원 자격 (E0A-E0C = E-10-1..3): %s" % ", ".join(
+        "%s %s %s" % (c, l, "/".join(str(y) for y in sorted(e))) for (c, l), e in sorted(printed.items())))
+    print("   E10 2007-2009 = 표의 선원 칸: %s" % ", ".join(
+        "%s %d %s" % (p, y, format(s, ",") if s is not None else "?") for (p, y), s in sorted(sums.items())))
+    for b in bad[:12]:
+        print("   ", b)
+    if bad or not printed:
+        print("FAIL: the crew status is not one E10 series, or crosswalk_visa does not name "
+              "the crew columns the tables print")
+        return 1
+    print("GATE OK: no E0 in any released visa file, E10 in every year 2006-%d, the "
+          "2007-2009 crew columns carried as E10 and listed in crosswalk_visa as printed"
           % RELEASE_LAST_YEAR)
     return 0
 

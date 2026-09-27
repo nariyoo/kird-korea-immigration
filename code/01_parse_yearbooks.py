@@ -234,6 +234,19 @@ def split_e8(df, year_col="year", code_col="visa_code"):
 NO_COLLAPSE = {"D10", "E10", "ETC", "X00", "E8T"}
 
 
+# The crew status. The 2007-2009 editions print it as three columns of their own, E0A
+# 내항선원, E0B 어선원 and (2009) E0C 순항선원 (E-0-A to E-0-C in the district tables),
+# and no E-0 or E-10 column. The 2006 edition prints the status as E-10 (내항선원), and
+# from 2010 every edition prints E-10 선원취업, whose three subdivisions are E-10-1
+# 내항선원, E-10-2 어선원 and E-10-3 순항여객선원. The three columns are those
+# subdivisions, so they are read as E-10-1 to E-10-3 and collapse to E10 by the rule
+# every sub-code follows, and the crew series is one code from 2006 (소유자 결정,
+# 2026-09-27). Until then they collapsed to a code of their own, E0, labelled
+# 선원취업 (내항·어선·순항선원, 2009년까지), so E10 had no 2007-2009 values.
+# crosswalks.CREW_ROWS names the editions and tables that print each column.
+CREW_SUBCODES = {"E0A": "E10-1", "E0B": "E10-2", "E0C": "E10-3"}
+
+
 # 실제로 접힌 하위 코드를 적어 둔다. 기탁본의 crosswalk_visa.csv 가 이걸 싣는다.
 # 규칙만 산문으로 적어 두면 이용자가 어떤 코드가 어디로 갔는지 확인할 수 없다.
 VISA_COLLAPSED = {}
@@ -243,10 +256,14 @@ def collapse_visa_code(code):
     """Collapse sub-codes (D2A, E61, F5A, H2B, ...) to parent (D2, E6, F5, H2).
 
     Pre-2010 yearbooks list sub-types as separate columns. To compare across
-    years we roll them up to the 2010+ standard parent codes.
+    years we roll them up to the 2010+ standard parent codes. The crew columns
+    E0A-E0C are E-10's subdivisions (CREW_SUBCODES) and go to E10.
     """
     if not isinstance(code, str) or code in NO_COLLAPSE:
         return code
+    if code in CREW_SUBCODES:
+        VISA_COLLAPSED[code] = CREW_SUBCODES[code].split("-")[0]      # E10
+        return VISA_COLLAPSED[code]
     # two-digit majors with a sub-code: E10-1, D10-2 (2006-2009 editions)
     m = re.match(r"^([A-Z]\d{2})-([0-9A-Z]+)$", code)
     if m:
@@ -834,11 +851,9 @@ def build_long(files):
         "T1": "관광상륙",
         "ETC": "분류외 (SOFA·협정 등)",
         "X00": "자격없음 (0-0)",  # 2014 stay edition only
-        # 2007-2009 editions only. They print no E-0 column, only E0A 내항선원, E0B
-        # 어선원 and (2009) E0C 순항선원, the three subdivisions of the crew status the
-        # 2010 edition on prints as E-10 선원취업. Until 2026-09-27 (3라운드 대조) the
-        # label read 협정활동 (treaty activity), which no edition prints.
-        "E0": "선원취업 (내항·어선·순항선원, 2009년까지)",
+        # No E0: the 2007-2009 crew columns E0A-E0C are E10 (CREW_SUBCODES). Until
+        # 2026-09-27 they had a code of their own here, 선원취업 (내항·어선·순항선원,
+        # 2009년까지), and before the 3라운드 대조 of that day the label 협정활동.
     }
     long["visa_label"] = long["visa_code"].map(
         lambda c: CANONICAL_LABELS.get(c, c)
@@ -1275,7 +1290,6 @@ CANONICAL_LABELS_KO = {
     "T1": "관광상륙",
     "ETC": "분류외 (SOFA·협정 등)",
     "X00": "자격없음 (0-0)",
-    "E0": "선원취업 (내항·어선·순항선원, 2009년까지)",
 }
 
 
@@ -1602,17 +1616,6 @@ VISA_INFO = {
         "eligibility_en": "SOFA/treaty subjects (US ~50K consistently)",
         "max_stay_ko": "협정·임무 기간",
         "max_stay_en": "Per agreement/mission",
-    },
-    "E0": {
-        # 2007-2009 editions print E0A 내항선원, E0B 어선원 and (2009) E0C 순항선원 and no
-        # E-0 column; E-10's subdivisions are E-10-1 내항선원, E-10-2 어선원 and E-10-3
-        # 순항여객선원. This entry said 협정활동 until 2026-09-27 (3라운드 대조).
-        "purpose_ko": "(2007~2009년판) 선원 취업: 내항선원(E0A), 어선원(E0B), 순항선원(E0C, 2009년판). 2010년판부터 연보가 선원취업(E-10)으로 싣는 자격의 세 구분(E-10-1 내항선원, E-10-2 어선원, E-10-3 순항여객선원)과 같다",
-        "purpose_en": "(2007 to 2009 editions) Crew employment: coastal-route crew (E0A), fishing-vessel crew (E0B) and cruise-ship crew (E0C, 2009 edition), the three subdivisions of the crew status (E-10-1, E-10-2, E-10-3) the yearbook prints as Crew Employment (E-10) from the 2010 edition",
-        "eligibility_ko": "선원 자격 + 선사·선주와의 고용계약",
-        "eligibility_en": "Maritime crew qualifications + employment contract with a shipping company or vessel owner",
-        "max_stay_ko": "-",
-        "max_stay_en": "-",
     },
 }
 
@@ -3466,7 +3469,6 @@ def export_json(stay_long, reg_long, out_path, stay_all=None, reg_all=None):
         "T1": "Tourist Landing",
         "ETC": "Unclassified (SOFA · Treaty)",
         "X00": "No status (0-0)",
-        "E0": "Crew Employment (coastal, fishing and cruise crew, to 2009)",
     }
 
     VISA_FAMILY_LABELS_EN = {

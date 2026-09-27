@@ -52,7 +52,7 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `national_annual.csv` | a year | 2008-2024 | 17 |
 | `summary_by_sido.csv` | a province and a year | 2006-2024 | 317 |
 | `summary_by_sigungu.csv` | a district and a year | 2008-2024 | 4,261 |
-| `summary_by_eupmyeondong.csv` | a sub-district and a year | 2014-2024 | 38,615 |
+| `summary_by_eupmyeondong.csv` | a sub-district and a year | 2014-2024 | 38,646 |
 | `nationality_by_sigungu.csv` | a district, nationality and year | 2008-2024 | 174,748 |
 | `nationality_by_sido.csv` | a province, nationality and year | 2006-2024 | 25,205 |
 | `nationality_national.csv` | a population, nationality and year | 2006-2024 | 7,280 |
@@ -68,12 +68,12 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `naturalization_annual.csv` | a year and processing route | 2011-2024 | 140 |
 | `naturalization_by_country.csv` | a year, former nationality and route | 2011-2024 | 16,210 |
 | `naturalization_by_age.csv` | a year, age band and route | 2011-2024 | 1,620 |
-| `children_by_age.csv` | a district, single year of age and year | 2011-2024 | 63,486 |
-| `multicultural_households.csv` | a sub-district, household category and year | 2016-2024 | 342,016 |
+| `children_by_age.csv` | a district, single year of age and year | 2011-2024 | 63,942 |
+| `multicultural_households.csv` | a sub-district, household category and year | 2016-2024 | 344,842 |
 | `diaspora_residence_by_sido.csv` | a province, nationality and year (F-4 residence reports) | 2008-2024 | 6,172 |
 | `crosswalk_country.csv` | a source nationality label | 2006-2024 | 268 |
 | `crosswalk_region.csv` | a source place name or boundary change | fixed | 88 |
-| `crosswalk_visa.csv` | a source status code | 2006-2024 | 241 |
+| `crosswalk_visa.csv` | a source status code | 2006-2024 | 240 |
 | `language_weights.csv` | a nationality and first language | fixed | 4,515 |
 | `refugee_by_nationality.csv` | a status and nationality, cumulative (deposit only) | 1994-2024 | 33 |
 | `refugee_language_demand.csv` | a status and language, cumulative (deposit only) | 1994-2024 | 60 |

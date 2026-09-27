@@ -565,6 +565,10 @@ def build_language_shares():
         SPECIAL = {
             "한국계중국인": [{"language": "한국어", "share": 1.0}],
             "한국계러시아인": [{"language": "러시아어", "share": 1.0}],
+            # The same rule as 한국계러시아인, the language of the country of residence
+            # (소유자 결정, 2026-09-27). The name has no people in any nationality file
+            # to date, so no demand moves; until that day it had no shares at all.
+            "한국계미국인": [{"language": "영어", "share": 1.0}],
             # North Korea, under the name the data use (Ethnologue's KP sits under
             # CC_KO's 조선민주주의인민공화국, which no data file uses). Its first
             # language is Korean, as for 한국계중국인, so it adds nothing to

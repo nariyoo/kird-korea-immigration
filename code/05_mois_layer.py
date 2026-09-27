@@ -352,6 +352,157 @@ def classify_row_name(name: str) -> str:
     return "other"
 
 
+# -- 가린 칸: 공표된 항등식이 정하는 값 (소유자 결정, 2026-09-27) ---------------------------
+# From the 2016 edition MOIS masks every count under 5 ('***' in 2016, '*' after). A
+# masked cell is carried wherever the cells the table prints fix it exactly, through
+# the identities the table itself publishes:
+#
+#   * within a row, a total is the sum of its parts: 합계 = 한국국적미취득 소계 +
+#     한국국적취득자 + 외국인주민자녀 and the 소계 = its five types (sheets 1-1 to 1-3);
+#     합계 = the four member groups and each two-part group = its parts (sheet 11); a
+#     region's 합계 = its nineteen single ages (sheet 9-2);
+#   * across rows, a row with rows printed under it is their sum, column by column:
+#     the nation over its provinces, a province over its districts, a city over its
+#     general districts, a district over its sub-districts.
+#
+# Every identity left with exactly one masked cell settles it, and the passes repeat
+# until none does, so a cell one identity settles can settle the next (chaining). The
+# same rule for every unit, level and sheet. An identity that involves a cell the
+# table does not print at all (a blank, or an age row it leaves out) is not used. A
+# value that would come out below 0 or above 4 (a masked count is under 5) is left
+# masked and counted; none does in 2016-2024. Every identity whose cells are all
+# printed must hold, or the parse stops; in 2016-2024 all of them do.
+#
+# Until 2026-09-27 a masked cell was carried only where its own row fixed it (the
+# summaries' enrich(), the household sheet's own identities, a district's single
+# masked age under its total). Nari decided that day to carry every cell the city,
+# district or province rows fix as well: in 2016-2024 that adds 456 district-age
+# cells to children_by_age, 2,400 sub-district cells to the sub-district summary (31
+# of them the total of a row MOIS masks whole, which now has a row) and 2,826 to the
+# household sheet; the district and province summaries gain none, because their rows
+# already fix every masked cell they have. check_published_totals.mois_mask_gates
+# settles the sheets again with code of its own and holds the release to them.
+MASKED = "*"
+MASK_TOKENS = ("*", "***")
+
+
+def printed_cell(v):
+    """A value cell as the source prints it: an int, MASKED, or None (not printed)."""
+    if isinstance(v, str) and v.strip() in MASK_TOKENS:
+        return MASKED
+    return parse_value(v)
+
+
+class MaskTree:
+    """One sheet as the tree its rows print, for settling its masked cells.
+
+    add(parent, vals, key) appends a row: `parent` is the index of the row it is
+    printed under (None for the nation), `vals` its cells as printed_cell() reads
+    them, `key` whatever the parser needs to emit the row (None for a row it does not
+    emit). settle() fills the masked cells the identities fix, in place."""
+
+    def __init__(self, row_ids):
+        self.row_ids = row_ids          # [(total column, (part columns, ...)), ...]
+        self.parent, self.vals, self.key = [], [], []
+
+    def add(self, parent, vals, key=None):
+        self.parent.append(parent)
+        self.vals.append(dict(vals))
+        self.key.append(key)
+        return len(self.vals) - 1
+
+    def has_masked(self):
+        return any(v is MASKED for vals in self.vals for v in vals.values())
+
+    def identities(self):
+        kids = defaultdict(list)
+        for i, p in enumerate(self.parent):
+            if p is not None:
+                kids[p].append(i)
+        eqs = []
+        for i, vals in enumerate(self.vals):
+            for tot, parts in self.row_ids:
+                if tot in vals and all(p in vals for p in parts):
+                    eqs.append(("row", (i, tot), [(i, p) for p in parts]))
+        for i, ch in kids.items():
+            for c in self.vals[i]:
+                if all(c in self.vals[j] for j in ch):
+                    eqs.append(("rows below", (i, c), [(j, c) for j in ch]))
+        return eqs
+
+    def settle(self, where):
+        """Fill every masked cell an identity fixes; return {(row, column): how}.
+
+        Stops the parse if a fully printed identity does not hold, since the rule
+        rests on those identities."""
+        get = lambda cell: self.vals[cell[0]].get(cell[1])
+        eqs = self.identities()
+        off = []
+        for kind, lhs, rhs in eqs:
+            vs = [get(c) for c in [lhs] + rhs]
+            if all(isinstance(v, int) for v in vs) and vs[0] != sum(vs[1:]):
+                off.append((kind, self.key[lhs[0]], lhs[1], vs[0], sum(vs[1:])))
+        if off:
+            raise SystemExit(f"{where}: {len(off)} printed identities do not hold, "
+                             f"e.g. {off[:4]}; the masked cells cannot be settled on them")
+        how, out_of_range = {}, set()
+        moved = True
+        while moved:
+            moved = False
+            for kind, lhs, rhs in eqs:
+                cells = [lhs] + rhs
+                vs = [get(c) for c in cells]
+                if any(v is None for v in vs):
+                    continue                     # a cell the sheet does not print
+                open_ = [c for c, v in zip(cells, vs) if v is MASKED]
+                if len(open_) != 1 or open_[0] in out_of_range:
+                    continue
+                x = open_[0]
+                if x == lhs:
+                    v = sum(get(c) for c in rhs)
+                else:
+                    v = get(lhs) - sum(get(c) for c in rhs if c != x)
+                if not 0 <= v <= 4:
+                    out_of_range.add(x)          # left masked, and counted
+                    continue
+                self.vals[x[0]][x[1]] = v
+                how[x] = kind
+                moved = True
+        self.out_of_range = sorted(out_of_range)
+        return how
+
+
+# The row identities of the population sheets 1-1 to 1-3: 합계 = 한국국적미취득 소계 +
+# 한국국적취득자 + 외국인주민자녀, and the 소계 = its five types.
+POP_ROW_IDS = [
+    ("합계", ("한국국적미취득_소계", "한국국적취득자", "외국인주민자녀")),
+    ("한국국적미취득_소계", ("외국인근로자", "결혼이민자", "유학생", "외국국적동포", "기타외국인")),
+]
+
+
+def _settle_and_emit(rows, tree, where, row_of):
+    """Settle a sheet's masked cells and append a row for each settled cell of a row
+    the parser emits, row_of(key, column, value). A key the sheet prints twice (세종
+    as its province and as its one district) gets one row."""
+    if not tree.has_masked():
+        return 0
+    how = tree.settle(where)
+    seen, n = set(), 0
+    for i, col in sorted(how):
+        key = tree.key[i]
+        if key is None or (key, col) in seen:
+            continue
+        seen.add((key, col))
+        row = row_of(key, col, tree.vals[i][col])
+        if row is not None:
+            rows.append(row)
+            n += 1
+    print(f"  {where}: {n} masked cells settled by the identities"
+          + (f"; {len(tree.out_of_range)} left masked, out of range"
+             if tree.out_of_range else ""))
+    return n
+
+
 # -- 2006 (시.도별 / 전국 시트) -------------------------------------------------------
 # Parser for 2006 외국인주민통계.
 #
@@ -954,18 +1105,40 @@ def _parse_sido_sigungu_sheet(path: Path, year: int, sheet: str, *, level: str) 
 
     rows = []
     current_sido = None
+    # The sheet as the tree its rows print, the 계 cells of each row, for the masked
+    # cells the identities fix (MaskTree, above). Rows are emitted as printed; the
+    # settled cells are added after the walk.
+    tree = MaskTree(POP_ROW_IDS)
+    nation = province = city = None
+    city_name = None
     for i in range(start, len(df)):
         name = clean_region_name(df.iat[i, 0])
         if not name:
             continue
         name = fix_known_typos(name)
+        vals = {cat: printed_cell(df.iat[i, cols[0]]) for cat, cols in cat_cols.items()}
 
         if name == "전국":
-            # national row, optional, skip for sido/sigungu CSVs
+            # national row: not emitted, but the provinces add up to it
+            nation = tree.add(None, vals)
             continue
 
         if name in SIDO_NAMES:
-            current_sido = canon_sido(name)
+            key = None
+            if name == "세종시" and current_sido == "세종특별자치시":
+                # 세종's one district, printed under its province in some editions: a
+                # row under the province in the tree, emitted as before (at the
+                # province level, as the province; at the district level not at all,
+                # since build_sigungu_population copies the province row in)
+                if level == "sido":
+                    key = (current_sido, None)
+                tree.add(province, vals, key)
+            else:
+                current_sido = canon_sido(name)
+                if level == "sido":
+                    key = (current_sido, None)
+                province = tree.add(nation, vals, key)
+                city = city_name = None
             if level == "sido":
                 _emit_region_row(rows, df, i, year=year, sido=current_sido,
                                  sigungu=None, eupmyeondong=None, cat_cols=cat_cols,
@@ -973,21 +1146,26 @@ def _parse_sido_sigungu_sheet(path: Path, year: int, sheet: str, *, level: str) 
             continue
 
         # not sido — must be sigungu
-        if level == "sigungu":
-            if current_sido is None:
-                # malformed — try to skip
-                continue
-            # detect sub-gu split
-            sub = split_sub_gu(name)
-            if sub:
-                parent, gu = sub
-                sigungu_name = parent + " " + gu
-            else:
-                sigungu_name = name
-            _emit_region_row(rows, df, i, year=year, sido=current_sido,
-                             sigungu=sigungu_name, eupmyeondong=None,
+        sub = split_sub_gu(name)
+        under_city = city is not None and (
+            (sub is not None and sub[0] == city_name) or name in GU_BY_CITY[city_name])
+        key = None
+        if level == "sigungu" and current_sido is not None:
+            key = (current_sido, (sub[0] + " " + sub[1]) if sub else name)
+        node = tree.add(city if under_city else province, vals, key)
+        if not under_city:
+            city, city_name = (node, name) if name in GU_BY_CITY else (None, None)
+        if key is not None:
+            _emit_region_row(rows, df, i, year=year, sido=key[0],
+                             sigungu=key[1], eupmyeondong=None,
                              cat_cols=cat_cols, with_sex=True)
 
+    def settled_row(key, cat, v):
+        row = {"year": year, "sido": key[0], "category": cat, "sex": "total", "n": v}
+        if key[1] is not None:
+            row["sigungu"] = key[1]
+        return row
+    _settle_and_emit(rows, tree, f"{year} {sheet.strip()}", settled_row)
     return rows
 
 
@@ -1048,46 +1226,8 @@ def _parse_eupmyeondong_sheet_2016plus(path: Path, year: int, sheet: str) -> lis
         "외국인주민자녀": 9,
     }
 
-    rows = []
-    current_sido = None
-    current_sigungu = None
-    city_ctx = None
-    for i in range(start, len(df)):
-        name = clean_region_name(df.iat[i, 0])
-        if not name:
-            continue
-        name = fix_known_typos(name)
-        if name == "전국":
-            continue
-        kind = classify_row_name(name)
-
-        if kind == "sido":
-            current_sido = canon_sido(name)
-            current_sigungu = None
-            city_ctx = None
-            continue
-
-        if kind == "sigungu":
-            current_sigungu, city_ctx = resolve_sigungu_row(name, city_ctx)
-            continue
-
-        if kind == "eupmyeondong":
-            # 세종특별자치시는 시군구 없이 시도 바로 아래 읍면동 → 시군구를 '세종시'로 보정
-            if current_sido == "세종특별자치시" and current_sigungu is None:
-                current_sigungu = "세종시"
-            if current_sido is None or current_sigungu is None:
-                # malformed (e.g. orphan 완산구); skip
-                continue
-            for cat, c in cat_cols.items():
-                v = parse_value(df.iat[i, c])
-                if v is None:
-                    continue
-                rows.append({
-                    "year": year, "sido": current_sido, "sigungu": current_sigungu,
-                    "eupmyeondong": name, "category": cat, "n": v,
-                })
-
-    return rows
+    return _subdistrict_rows(df, year, start, cat_cols, POP_ROW_IDS,
+                             f"{year} {sheet.strip()}")
 
 
 def _parse_multicultural_sheet(path: Path, year: int, sheet: str) -> list[dict]:
@@ -1117,43 +1257,8 @@ def _parse_multicultural_sheet(path: Path, year: int, sheet: str) -> list[dict]:
         "기타동거인_소계": 9, "기타동거인_내국인": 10, "기타동거인_외국인": 11,
     }
 
-    rows = []
-    current_sido = None
-    current_sigungu = None
-    city_ctx = None
-    for i in range(start, len(df)):
-        name = clean_region_name(df.iat[i, 0])
-        if not name:
-            continue
-        name = fix_known_typos(name)
-        if name == "전국":
-            continue
-        kind = classify_row_name(name)
-        if kind == "sido":
-            current_sido = canon_sido(name)
-            current_sigungu = None
-            city_ctx = None
-            continue
-        if kind == "sigungu":
-            current_sigungu, city_ctx = resolve_sigungu_row(name, city_ctx)
-            continue
-        if kind == "eupmyeondong":
-            if current_sido == "세종특별자치시" and current_sigungu is None:
-                current_sigungu = "세종시"
-            if current_sido is None or current_sigungu is None:
-                continue
-            vals = {cat: parse_value(df.iat[i, c]) for cat, c in cat_cols.items()
-                    if c < df.shape[1]}
-            _recover_multicultural(vals)
-            for cat in cat_cols:
-                v = vals.get(cat)
-                if v is None:
-                    continue
-                rows.append({
-                    "year": year, "sido": current_sido, "sigungu": current_sigungu,
-                    "eupmyeondong": name, "category": cat, "n": v,
-                })
-    return rows
+    return _subdistrict_rows(df, year, start, cat_cols, MC_ROW_IDS,
+                             f"{year} {sheet.strip()}")
 
 
 # Sheet 11's identities: 합계 is the four household-member groups, and each group
@@ -1164,48 +1269,89 @@ MC_PAIRS = (("결혼이민자귀화자_소계", "결혼이민자", "귀화자등
             ("자녀_소계", "자녀_귀화인지외국국적", "자녀_국내출생"),
             ("기타동거인_소계", "기타동거인_내국인", "기타동거인_외국인"))
 MC_TOP = ("한국인배우자", "결혼이민자귀화자_소계", "자녀_소계", "기타동거인_소계")
+MC_ROW_IDS = [("합계", MC_TOP)] + [(s, (a, b)) for s, a, b in MC_PAIRS]
 
 
-def _recover_multicultural(vals: dict) -> None:
-    """Fill, in place, every masked cell ('*', under 5) of one sub-district row that
-    the row's own identities determine: a part masked alone beside its subtotal and
-    sibling, a group masked alone among the four that make 합계, and a subtotal or
-    total whose parts are all printed. Repeats until nothing moves (a group recovered
-    from 합계 can then settle one of its parts). A cell masked together with another
-    of its identity stays masked.
+def _subdistrict_rows(df, year, start, cat_cols, row_ids, where):
+    """The rows of a sheet printed down to the 읍면동 (1-3 and 11, 2016 on): one row per
+    sub-district and category, printed or settled.
 
-    3라운드 대조 (2026-09-27): the parser dropped every masked cell, so the release
-    had no row for thousands of (dong, year, category) cells a year that the printed
-    cells fix (2022 강릉시 강동면: 결혼이민자 13 - 9 = 4, 기타동거인_외국인 43 - 41 =
-    2), while the person-count tables and children_by_age recover theirs. A value
-    that would come out negative is left masked."""
-    def settle(key, value):
-        if value >= 0:
-            vals[key] = int(value)
-            return True
-        return False
+    The walk reads every row, the nation, province, city and district rows included,
+    into a MaskTree, because those rows are what fix a sub-district's masked cells
+    (the district over its sub-districts, and so on up). Only the sub-district rows
+    are emitted, as before. A sub-district printed before any district row of its
+    province (an orphan line) is skipped and is not in the tree either, so the
+    district identities would stop the parse if such a line held people. 세종 prints
+    its sub-districts under the province row in some editions and under a 세종시 row
+    in others; both are carried under 세종시.
 
-    moved = True
-    while moved:
-        moved = False
-        for s, a, b in MC_PAIRS:
-            if not all(k in vals for k in (s, a, b)):
-                continue
-            miss = [k for k in (s, a, b) if vals[k] is None]
-            if len(miss) != 1:
-                continue
-            if miss[0] == s:
-                moved |= settle(s, vals[a] + vals[b])
+    Until 2026-09-27 sheet 11 settled a masked cell from the sub-district's own row
+    only (_recover_multicultural, 3라운드 대조) and sheet 1-3 not at all here
+    (06_build_summaries.enrich did it from the row); both now take every identity
+    the sheet prints, MaskTree.settle."""
+    rows = []
+    tree = MaskTree(row_ids)
+    current_sido = current_sigungu = None
+    city_ctx = None
+    nation = province = city = district = None
+    city_name = None
+    for i in range(start, len(df)):
+        name = clean_region_name(df.iat[i, 0])
+        if not name:
+            continue
+        name = fix_known_typos(name)
+        vals = {cat: printed_cell(df.iat[i, c]) for cat, c in cat_cols.items()
+                if c < df.shape[1]}
+        if name == "전국":
+            nation = tree.add(None, vals)
+            continue
+        kind = classify_row_name(name)
+
+        if kind == "sido":
+            if name == "세종시" and current_sido == "세종특별자치시":
+                district = tree.add(province, vals)      # 세종's one district row
             else:
-                other = b if miss[0] == a else a
-                moved |= settle(miss[0], vals[s] - vals[other])
-        if "합계" in vals and all(k in vals for k in MC_TOP):
-            miss = [k for k in MC_TOP if vals[k] is None]
-            if vals["합계"] is not None and len(miss) == 1:
-                moved |= settle(miss[0], vals["합계"] - sum(vals[k] for k in MC_TOP
-                                                           if k != miss[0]))
-            elif vals["합계"] is None and not miss:
-                moved |= settle("합계", sum(vals[k] for k in MC_TOP))
+                current_sido = canon_sido(name)
+                province = tree.add(nation, vals)
+                # 세종 prints its sub-districts straight under the province row in
+                # the editions that have no 세종시 row
+                district = province if current_sido == "세종특별자치시" else None
+                city = city_name = None
+            current_sigungu = None
+            city_ctx = None
+            continue
+
+        if kind == "sigungu":
+            current_sigungu, city_ctx = resolve_sigungu_row(name, city_ctx)
+            if city is not None and current_sigungu.startswith(city_name + " "):
+                district = tree.add(city, vals)          # a general district of the city
+            else:
+                district = tree.add(province, vals)
+                city, city_name = ((district, current_sigungu)
+                                   if current_sigungu in GU_BY_CITY else (None, None))
+            continue
+
+        if kind == "eupmyeondong":
+            # 세종특별자치시는 시군구 없이 시도 바로 아래 읍면동 → 시군구를 '세종시'로 보정
+            if current_sido == "세종특별자치시" and current_sigungu is None:
+                current_sigungu = "세종시"
+            if current_sido is None or current_sigungu is None:
+                # malformed (e.g. orphan 완산구); skip
+                continue
+            tree.add(district, vals, (current_sido, current_sigungu, name))
+            for cat in cat_cols:
+                v = vals.get(cat)
+                if not isinstance(v, int):
+                    continue
+                rows.append({
+                    "year": year, "sido": current_sido, "sigungu": current_sigungu,
+                    "eupmyeondong": name, "category": cat, "n": v,
+                })
+
+    _settle_and_emit(rows, tree, where, lambda key, cat, v: {
+        "year": year, "sido": key[0], "sigungu": key[1], "eupmyeondong": key[2],
+        "category": cat, "n": v})
+    return rows
 
 
 def parse_year(year: int) -> dict[str, list[dict]]:
@@ -1688,28 +1834,24 @@ def _parse_age_sheet(path: Path, year: int, sheet: str, *, name_col: int = 0,
             value_shift = 1  # values start at col 2 not col 1
             break
 
-    # A region's own total, and each single age's 계 cell as printed (an int, or
-    # MASKED for '*' / '***'), so an age the table masks can be recovered where it is
-    # the only masked age of the region (below).
-    MASKED = object()
-    blocks = {}
-
-    def block(level_label, sido, sigungu):
-        return blocks.setdefault((level_label, sido, sigungu), {"total": None, "ages": {}})
-
     def printed(i, c):
-        if c >= df.shape[1]:
-            return None
-        v = df.iat[i, c]
-        if isinstance(v, str) and v.strip() in ("*", "***"):
-            return MASKED
-        return parse_value(v)
+        return printed_cell(df.iat[i, c]) if c < df.shape[1] else None
 
-    def region_level(sido, sigungu):
+    # Every region block of the sheet (the nation, the provinces, the cities and their
+    # general districts, the districts), its 합계 and its single ages' 계 cells as
+    # printed, in a MaskTree whatever the levels emitted: a district's masked age can
+    # be fixed by its own total, by its city's row or by its province's row, settled
+    # after the walk. `key` is the block the ages are emitted under, so a settled age
+    # lands where a printed one would.
+    tree = MaskTree([("합계", tuple(str(a) for a in range(19)))])
+    node = nation = province = city = None
+    city_name = None
+
+    def emit_key(sido, sigungu):
         if sigungu is not None and "sigungu" in emit_levels:
-            return "sigungu", sido, sigungu
+            return ("sigungu", sido, sigungu)
         if sido is not None and "sido" in emit_levels:
-            return "sido", sido, None
+            return ("sido", sido, None)
         return None
 
     for i in range(len(df)):
@@ -1721,24 +1863,39 @@ def _parse_age_sheet(path: Path, year: int, sheet: str, *, name_col: int = 0,
             if r_name in ("구분", "Section"):
                 continue
             kind = classify_row_name(r_name)
+            region_total = {"합계": printed(i, value_cols[0])} if age_col == region_col else {}
             if kind == "sido":
-                current_sido = canon_sido(r_name)
+                if r_name == "세종시" and current_sido == "세종특별자치시":
+                    # 세종's one district, printed under its province in some editions
+                    node = tree.add(province, region_total,
+                                    emit_key(current_sido, "세종시") or emit_key(current_sido, None))
+                else:
+                    current_sido = canon_sido(r_name)
+                    # 세종's ages are emitted as its district 세종시 at the district level
+                    node = province = tree.add(
+                        nation, region_total,
+                        (emit_key(current_sido, "세종시") if current_sido == "세종특별자치시"
+                         else None) or emit_key(current_sido, None))
+                    city = city_name = None
                 current_sigungu = None
                 # When age is in a separate col, region row may also have age='합계' → keep checking
                 if age_col == region_col:
-                    lv = region_level(current_sido, None)
-                    if lv and lv[0] == "sido":
-                        block(*lv)["total"] = printed(i, value_cols[0])
                     continue
             elif kind == "sigungu":
                 sub = split_sub_gu(r_name)
                 current_sigungu = (sub[0] + " " + sub[1]) if sub else r_name
+                under_city = city is not None and (
+                    (sub is not None and sub[0] == city_name)
+                    or r_name in GU_BY_CITY[city_name])
+                node = tree.add(city if under_city else province, region_total,
+                                emit_key(current_sido, current_sigungu))
+                if not under_city:
+                    city, city_name = (node, r_name) if r_name in GU_BY_CITY else (None, None)
                 if age_col == region_col:
-                    lv = region_level(current_sido, current_sigungu)
-                    if lv:
-                        block(*lv)["total"] = printed(i, value_cols[0])
                     continue
             elif r_name in ("전국", "합계", "합 계", ""):
+                if r_name and nation is None:
+                    node = nation = tree.add(None, region_total)
                 if age_col == region_col:
                     continue
             elif age_col == region_col:
@@ -1755,13 +1912,14 @@ def _parse_age_sheet(path: Path, year: int, sheet: str, *, name_col: int = 0,
         if not a_name:
             continue
         age = _normalize_age(a_name)
+        c_total, c_m, c_f = (c + value_shift for c in value_cols)
         if age is None:
             # 2012-2013 print the region's total on its own 합계 line
-            if a_name.startswith("합계") and age_col != region_col:
-                lv = region_level(current_sido, current_sigungu)
-                if lv:
-                    block(*lv)["total"] = printed(i, value_cols[0] + value_shift)
+            if a_name.startswith("합계") and age_col != region_col and node is not None:
+                tree.vals[node]["합계"] = printed(i, c_total)
             continue
+        if node is not None:
+            tree.vals[node][age] = printed(i, c_total)
         # 세종특별자치시는 시군구 없이 시도 바로 아래 → 시군구를 '세종시'로 보정
         if current_sido == "세종특별자치시" and current_sigungu is None and "sigungu" in emit_levels:
             current_sigungu = "세종시"
@@ -1772,8 +1930,6 @@ def _parse_age_sheet(path: Path, year: int, sheet: str, *, name_col: int = 0,
             level_label, sido, sigungu = "sido", current_sido, None
         else:
             continue
-        c_total, c_m, c_f = (c + value_shift for c in value_cols)
-        block(level_label, sido, sigungu)["ages"][age] = printed(i, c_total)
         total = parse_value(df.iat[i, c_total]) if c_total < df.shape[1] else None
         male = parse_value(df.iat[i, c_m]) if c_m < df.shape[1] else None
         female = parse_value(df.iat[i, c_f]) if c_f < df.shape[1] else None
@@ -1785,36 +1941,19 @@ def _parse_age_sheet(path: Path, year: int, sheet: str, *, name_col: int = 0,
                 row["sigungu"] = sigungu
             rows.append(row)
 
-    # One masked age under a printed region total is determined: the total less the
-    # other eighteen printed ages. Every region the table prints in full adds up to
-    # its total, age by age, in every edition 2011-2024 (checked 2026-09-27), so the
-    # identity holds. Recovered only when all eighteen other ages are printed as
-    # numbers; with two masked ages, or an age the table does not print, the cell
-    # stays out. Until 2026-09-27 (2라운드 대조) these cells were dropped like the
-    # undetermined ones (41 in 2022-2024; the district summaries already recovered a
-    # single masked component the same way).
-    AGES = [str(a) for a in range(19)]
-    n_rec = 0
-    for (level_label, sido, sigungu), b in blocks.items():
-        tot, ages = b["total"], b["ages"]
-        if not isinstance(tot, int) or set(ages) != set(AGES):
-            continue
-        masked = [a for a in AGES if ages[a] is MASKED]
-        if len(masked) != 1 or any(not isinstance(ages[a], int)
-                                   for a in AGES if a != masked[0]):
-            continue
-        v = tot - sum(ages[a] for a in AGES if a != masked[0])
-        if v < 0:
-            raise SystemExit(f"{year} {sheet}: {sido} {sigungu} prints ages summing above "
-                             f"its total {tot}")
-        row = {"year": year, "sido": sido, "age": masked[0], "sex": "total", "n": v}
-        if sigungu is not None:
-            row["sigungu"] = sigungu
-        rows.append(row)
-        n_rec += 1
-    if n_rec:
-        print(f"  {year} {sheet.strip()}: {n_rec} masked single ages recovered from the "
-              f"region total")
+    # The masked ages the sheet's identities fix (MaskTree.settle), emitted as the 계
+    # of their block. Until 2026-09-27 an age was carried only when it was the one
+    # masked age of its district, fixed by the district total (2라운드 대조; 177 cells
+    # in 2016-2024); the city and province rows now count as well (소유자 결정,
+    # 2026-09-27). A region's own masked 합계 is not emitted, as a printed one is not.
+    def settled_row(key, col, v):
+        if col == "합계":
+            return None
+        row = {"year": year, "sido": key[1], "age": col, "sex": "total", "n": v}
+        if key[2] is not None:
+            row["sigungu"] = key[2]
+        return row
+    _settle_and_emit(rows, tree, f"{year} {sheet.strip()}", settled_row)
     return rows
 
 

@@ -2023,6 +2023,63 @@ def check_visa_eras(d):
         check(not bad, "visa eras: %s keeps each code inside its era" % name, "; ".join(bad))
 
 
+def check_crew_series(d):
+    """The crew status is one code, E10, in every year, and no file carries E0.
+
+    소유자 결정 (2026-09-27). The 2007-2009 editions print the crew status as three
+    columns of their own, E0A 내항선원, E0B 어선원 and (2009) E0C 순항선원, the
+    subdivisions of E-10 선원취업 that the 2006 edition and the 2010 edition on print
+    as E-10. Until that day they were a code of their own, E0, so E10 had no values in
+    2007-2009 and a reader following the crew series lost it for three years. Here: no
+    visa_code is E0 (or E0A to E0C) in any file, crosswalk_visa maps each of E0A, E0B
+    and E0C to E10, E10 has people in every year of visa_national (both populations)
+    and visa_by_nationality, and in every year of visa_by_sido and visa_by_sigungu;
+    and the deposit's wide columns (visa_<code>) have no visa_e0, and national_annual's
+    visa_e10 has people in every year it covers.
+    """
+    bad = []
+    for f in ("visa_national.csv", "visa_by_nationality.csv", "visa_by_sido.csv",
+              "visa_by_sigungu.csv", "crosswalk_visa.csv"):
+        df = d.get(f)
+        if df is None or "visa_code" not in df.columns:
+            continue
+        e0 = df["visa_code"].astype(str).str.fullmatch(r"E0[A-C]?")
+        if e0.any():
+            bad.append("%s: %d rows with visa_code %s" % (f, int(e0.sum()),
+                                                         sorted(set(df.loc[e0, "visa_code"]))))
+    cv = d.get("crosswalk_visa.csv")
+    if cv is not None:
+        src = cv["source_code"].astype(str).str.extract(r"^(E0[A-C])\b")[0]
+        maps = dict(zip(src.dropna(), cv.loc[src.notna(), "visa_code"]))
+        if maps != {"E0A": "E10", "E0B": "E10", "E0C": "E10"}:
+            bad.append("crosswalk_visa maps the crew columns %s" % maps)
+    for f, pops in (("visa_national.csv", True), ("visa_by_nationality.csv", True),
+                    ("visa_by_sido.csv", False), ("visa_by_sigungu.csv", False)):
+        df = d.get(f)
+        if df is None:
+            continue
+        keys = ["population", "year"] if pops and "population" in df.columns else "year"
+        e10 = df[df["visa_code"] == "E10"].groupby(keys)["n"].sum()
+        for k in df.groupby(keys).size().index:
+            if int(e10.get(k, 0)) <= 0:
+                bad.append("%s: no E10 in %s" % (f, k))
+    for f in ("national_annual.csv", "summary_by_sido.csv", "summary_by_sigungu.csv"):
+        df = d.get(f)
+        if df is None:
+            continue
+        if "visa_e0" in df.columns:
+            bad.append("%s has a visa_e0 column" % f)
+        if "visa_e10" in df.columns:
+            per = df.groupby("year")["visa_e10"].sum(min_count=1)
+            per = per[per.index.isin(set(df.loc[df.filter(like="visa_").notna().any(axis=1),
+                                               "year"]))]
+            off = sorted(int(y) for y, v in per.items() if not v > 0)
+            if off:
+                bad.append("%s: visa_e10 has no people in %s" % (f, off))
+    check(not bad, "crew: E10 in every year (the 2007-2009 crew columns E0A-E0C "
+          "included), no E0 anywhere", "; ".join(bad[:4]))
+
+
 def _codes(data, name, cols=None):
     """같은 파일을 코드 칸을 글자로 다시 읽는다. load() 는 형을 짐작하므로
     빈칸이 있는 파일에서 42150 이 42150.0 이 된다."""
@@ -2288,6 +2345,7 @@ def main():
     check_dictionary_years(data, d)
     check_naturalization(d)
     check_visa_eras(d)
+    check_crew_series(d)
     check_one_label_per_code(d)
     check_province_labels(d)
     check_crosswalk_country(d)

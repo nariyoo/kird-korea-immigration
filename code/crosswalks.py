@@ -101,6 +101,24 @@ VARIANT_NOTE = {
 }
 
 
+# The crew columns of the 2007-2009 editions: (source code, the label the editions
+# print over it, the editions that print it, the subdivision of E-10 it is). The
+# national registered and staying tables print them as E0A to E0C and the 2008 and
+# 2009 district tables as E-0-A to E-0-C; none of those editions prints an E-0 or an
+# E-10 column. The 2006 edition prints the status as E-10 (내항선원) and the 2010
+# edition on as E-10 선원취업, whose subdivisions are E-10-1 내항선원, E-10-2 어선원 and
+# E-10-3 순항여객선원. Since the owner's decision of 2026-09-27 the three columns are
+# E10 (01_parse_yearbooks.CREW_SUBCODES); they had been a code of their own, E0.
+# check_published_totals.crew_gate holds these rows to the raw tables, edition by
+# edition.
+CREW_ROWS = [
+    ("E0A", "내항선원", "2007-2009", "E-10-1", "E-0-A in the 2008-2009 district tables"),
+    ("E0B", "어선원", "2007-2009", "E-10-2", "E-0-B in the 2008-2009 district tables"),
+    ("E0C", "순항선원", "2009", "E-10-3", "E-0-C in the 2009 district table"),
+]
+CREW_RULE = "crew column printed as %s (%s; %s), subdivision %s of E-10 선원취업: carried as E10"
+
+
 def variant_source_code(code, editions):
     """The source_code of a label-variant row: the code and the editions that print it."""
     many = "," in editions or "-" in editions
@@ -264,8 +282,16 @@ def visa_crosswalk(data=None):
             folded[r["source_code"]] = r["visa_code"]
     else:
         print("  visa_code_collapse.csv 가 없다. 01 을 한 번 돌려야 하위 코드가 실린다")
+    crew = {r[0] for r in CREW_ROWS}
+    off = {c: folded.get(c) for c in crew if folded.get(c) not in (None, "E10")}
+    if off or "E0" in labels:
+        raise SystemExit("crosswalk_visa: the crew columns must be carried as E10 "
+                         "(01_parse_yearbooks.CREW_SUBCODES): %s%s"
+                         % (off, "; visa_national still has E0" if "E0" in labels else ""))
     rows = []
     for code in sorted(set(labels) | set(folded)):
+        if code in crew:
+            continue                          # CREW_ROWS, below
         parent = folded.get(code, code)
         ko, en = labels.get(parent, labels.get(code, ("", "")))
         if code == "E8T":
@@ -276,6 +302,11 @@ def visa_crosswalk(data=None):
             continue
         rows.append([code, parent, ko, en,
                      "sub-code collapsed to parent" if parent != code else "unchanged"])
+    # the crew columns of 2007-2009, linked to E-10
+    ko, en = labels.get("E10", ("", ""))
+    for code, printed, editions, sub, district in CREW_ROWS:
+        rows.append([variant_source_code(code, editions), "E10", ko, en,
+                     CREW_RULE % (printed, code, district, sub)])
     # the labels an edition prints for a code in place of the released one
     for code, printed, editions in STATUS_LABEL_VARIANTS:
         if code not in labels:
