@@ -239,12 +239,14 @@ def readme_claims():
     emd = pd.read_csv(D + "summary_by_eupmyeondong.csv", encoding="utf-8-sig",
                       low_memory=False)
 
-    # 관측 국적 수: 전국 2013=19, 2014=189 (문서의 「193」은 이름 합치기 전 값). 2026-09-26
+    # 관측 국적 수: 전국 2013=19, 2014=188 (문서의 「193」은 이름 합치기 전 값). 2026-09-26
     # 최종 감사부터 국적 아닌 칸(무국적·미등록국가·기타)을 세지 않는다. 그전의 190 은
-    # 2014년 화성시의 무국적 한 명을 국적 하나로 센 값이었다.
+    # 2014년 화성시의 무국적 한 명을 국적 하나로 센 값이었다. 같은 날 저녁부터 나라
+    # 이름이 없는 줄(국적불명·국제연합·국제연합전문기구)도 세지 않아 189 가 188 이 된다
+    # (2014년 국제연합).
     obs = dict(zip(na["year"], na["n_nationalities_observed"]))
-    check(obs.get(2013) == 19 and obs.get(2014) == 189,
-          "national n_nationalities_observed 2013=19, 2014=189",
+    check(obs.get(2013) == 19 and obs.get(2014) == 188,
+          "national n_nationalities_observed 2013=19, 2014=188",
           {y: obs.get(y) for y in (2013, 2014)})
     check("193 in 2014" not in txt and ", 193" not in txt,
           "README 에 옛 값 193 이 남아 있지 않다")

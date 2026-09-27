@@ -63,7 +63,11 @@ AGG = {"총계", "총합계", "소계", "계"}
 # table's lines (2026-09-26) and the district files the district table's columns
 # (2026-09-26, final audit), so every level adds up to the printed total. They are
 # not nationalities: never counted as one, never ranked into the top 19.
-RESIDUAL_LINES = {"무국적", "기타", "미등록국가", "미상", "한국"}
+# kept here on purpose, apart from kird.RESIDUAL_LINES, so the check does not
+# inherit a pipeline slip; 국적불명, 국제연합 and 국제연합전문기구 (lines that name
+# no country) joined both on 2026-09-26.
+RESIDUAL_LINES = {"무국적", "기타", "미등록국가", "미상", "한국",
+                  "국적불명", "국제연합", "국제연합전문기구"}
 
 FILES = {
     "age_sex_national.csv": ["year", "population", "country", "gender", "age_group"],

@@ -198,7 +198,11 @@ DROP_NAMES = {
 # nationalities alone. The district tables print the same kind of population as
 # columns (무국적, 미등록국가, or one 기타 column, by edition); load_region_country
 # keeps them too since the final audit of 2026-09-26 (DISTRICT_DROP).
-RESIDUAL_LINES = {"무국적", "기타", "미등록국가", "미상", "한국"}
+# 국적불명, 국제연합 and 국제연합전문기구 are district-table labels that name no
+# country either; they joined the set on 2026-09-26 so n_nationalities_observed and
+# the dashboard country lists stop counting them.
+RESIDUAL_LINES = {"무국적", "기타", "미등록국가", "미상", "한국",
+                  "국적불명", "국제연합", "국제연합전문기구"}
 VISA_DROP = DROP_NAMES - RESIDUAL_LINES
 DISTRICT_DROP = DROP_NAMES - RESIDUAL_LINES
 
@@ -831,6 +835,15 @@ def build_long(files):
 
 
 # --- Build datasets --------------------------------------------------------
+
+# This file is a pipeline step, not a library: from here on it reads the raw
+# yearbooks and rewrites 03_cleaned_data and 05_dashboard/data. run_pipeline.py
+# runs it as a script. On 2026-09-26 an audit imported it to reuse one helper
+# and rewrote both folders, so an import stops here, after the definitions
+# (check_published_totals.py execs only the part above "# Continent aggregate").
+if __name__ != "__main__":
+    raise ImportError("01_parse_yearbooks.py is a pipeline step; run it with python, "
+                      "do not import it (copy the helper you need instead)")
 
 print("Loading 등록외국인...")
 reg_long = build_long(REG_FILES)
@@ -3386,7 +3399,20 @@ VISA_INFO_SOURCES = [
 ]
 
 
-def export_json(stay_long, reg_long, out_path):
+def long_to_total_dict(long_df):
+    """{code: {year: n}} over every row, the lines that name no nationality
+    included: the totals the yearbook prints, per visa code, family and ALL."""
+    out = {}
+    for vcode, g in long_df.groupby("visa_code"):
+        out[vcode] = {str(int(y)): int(n) for y, n in g.groupby("year")["n"].sum().items()}
+    fam = long_df.assign(family="FAM_" + long_df["visa_code"].apply(visa_family))
+    for fcode, g in fam.groupby("family"):
+        out[fcode] = {str(int(y)): int(n) for y, n in g.groupby("year")["n"].sum().items()}
+    out["ALL"] = {str(int(y)): int(n) for y, n in long_df.groupby("year")["n"].sum().items()}
+    return out
+
+
+def export_json(stay_long, reg_long, out_path, stay_all=None, reg_all=None):
     years = sorted(set(stay_long["year"]).union(reg_long["year"]))
     # Build ko→en country map from legacy bilingual files + manual overrides
     country_en = extract_country_en_map()
@@ -3479,6 +3505,9 @@ def export_json(stay_long, reg_long, out_path):
                 "description_en": "Registered (long-term) + short-term stays. Includes tourists & short visits.",
                 "visa_options": build_visa_options_i18n(stay_long),
                 "data": long_to_pop_dict(stay_long),
+                # printed totals: the country dicts above leave out the lines that
+                # name no nationality, the yearbook's totals count them
+                "total": long_to_total_dict(stay_all if stay_all is not None else stay_long),
             },
             "reg": {
                 "label_ko": "등록외국인 (장기)",
@@ -3487,6 +3516,7 @@ def export_json(stay_long, reg_long, out_path):
                 "description_en": "Long-term residents staying over 90 days (primarily D/E/F visas).",
                 "visa_options": build_visa_options_i18n(reg_long),
                 "data": long_to_pop_dict(reg_long),
+                "total": long_to_total_dict(reg_all if reg_all is not None else reg_long),
             },
         },
         "country_en": country_en,
@@ -3614,7 +3644,8 @@ def export_region_age_json(region_df, age_df, out_dir):
 print("\nExporting data.json for static site...")
 export_json(stay_long[~stay_long["country"].isin(RESIDUAL_LINES)],
             reg_long[~reg_long["country"].isin(RESIDUAL_LINES)],
-            os.path.join(OUT_SITE_DATA, "data.json"))
+            os.path.join(OUT_SITE_DATA, "data.json"),
+            stay_all=stay_long, reg_all=reg_long)
 print("\nExporting region.json + age.json...")
 export_region_age_json(region_long, age_long, OUT_SITE_DATA)
 

@@ -1010,7 +1010,9 @@ KOREAN_REGION = "동아시아"
 # enclave and never get a segregation row of their own; the indices' residual bin
 # takes them. In the 2008-2013 district tables 기타 is the residual of every
 # nationality those editions do not list by name. (2026-09-26)
-RESIDUAL_LINES = frozenset({"무국적", "기타", "미등록국가", "미상", "한국"})
+# 국적불명, 국제연합 and 국제연합전문기구 name no country either (2026-09-26).
+RESIDUAL_LINES = frozenset({"무국적", "기타", "미등록국가", "미상", "한국",
+                            "국적불명", "국제연합", "국제연합전문기구"})
 
 
 def shannon(counts):

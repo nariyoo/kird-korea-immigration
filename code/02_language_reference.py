@@ -563,8 +563,12 @@ def build_language_shares():
             "한국계러시아인": [{"language": "러시아어", "share": 1.0}],
             "국적불명": [{"language": "기타", "share": 1.0}],
             "무국적": [{"language": "기타", "share": 1.0}],
-            "국제연합": [{"language": "영어", "share": 1.0}],
-            "국제연합전문기구": [{"language": "영어", "share": 1.0}],
+            # UN staff lines name an organization, not a country, and have no L1
+            # distribution. They were assigned to English until 2026-09-26; they
+            # now join the other lines that name no country (kird.RESIDUAL_LINES)
+            # and contribute nothing, at every scope alike.
+            "국제연합": [{"language": "기타", "share": 1.0}],
+            "국제연합전문기구": [{"language": "기타", "share": 1.0}],
             "교황청": [{"language": "이탈리아어", "share": 1.0}],
             "기타": [{"language": "기타", "share": 1.0}],
             # The other lines the yearbook prints without a nationality. They held
