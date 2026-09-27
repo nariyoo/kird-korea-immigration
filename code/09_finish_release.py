@@ -1289,7 +1289,28 @@ def dictionary_facts(data):
     x00 = vbn[(vbn["visa_code"] == "X00") & (vbn["population"] == "stay")]["n"].sum()
     F["x00"] = format(int(x00), ",")
 
-    F["age_bands"] = int(rd("age_sex_national.csv")["age_group"].nunique())
+    # 13 bands in every year: 0-4 ... 60+ from 2009, and in 2006-2008 the bands those
+    # editions print (0-5 ... 56-60 and 60+ or 61+), carried since 2026-09-27
+    age = rd("age_sex_national.csv")
+    per_year = age.groupby(["population", "year"])["age_group"].nunique()
+    if per_year.nunique() != 1:
+        raise SystemExit("age_sex_national: band count varies by year: %s"
+                         % per_year[per_year != per_year.mode()[0]].to_dict())
+    F["age_bands"] = int(per_year.iloc[0])
+    reg_t = age[(age["population"] == "registered") & (age["gender"] == "T")]
+    fm = lambda v: format(int(v), ",")
+    F["age_2008_total"] = fm(reg_t.loc[reg_t["year"] == 2008, "n"].sum())
+    F["age_2008_05"] = fm(reg_t.loc[(reg_t["year"] == 2008) & (reg_t["age_group"] == "0-5"), "n"].sum())
+    F["age_2009_04"] = fm(reg_t.loc[(reg_t["year"] == 2009) & (reg_t["age_group"] == "0-4"), "n"].sum())
+    # the 2008 region-by-age table is not a released file; 03 reads it from the raw
+    # edition (and checks its total against the nationality table's) every build
+    import json
+    facts = json.load(open(os.path.join(ROOT, "03_cleaned_data", "age_band_facts.json"),
+                           encoding="utf-8"))
+    if fm(facts["region_2008_total"]) != F["age_2008_total"]:
+        raise SystemExit("age_band_facts.json region total %s != age_sex_national 2008 %s"
+                         % (facts["region_2008_total"], F["age_2008_total"]))
+    F["age_2008_region_04"] = fm(facts["region_2008_04"])
 
     ann = rd("naturalization_annual.csv")
     F["nat_annual_span"] = "%d-%d" % (ann["year"].min(), ann["year"].max())
@@ -1673,8 +1694,13 @@ def build_data_dictionary():
          "columns of this general-district (gu) row "
          "are estimates apportioned from the parent city's published totals by each gu's "
          "MOJ registered-foreigner share (2008-2015, when MOIS publishes general-district "
-         "cities only at the city level); False where MOIS publishes the district "
-         "directly; blank where no MOIS composition exists for the row. Where MOIS (as "
+         "cities only at the city level); False on every other row: where MOIS publishes "
+         "the district directly, and on the rows under a bare city name beside that "
+         "city's gu (see sigungu), for which MOIS publishes nothing, so their MOIS "
+         "columns are all blank and nothing is apportioned. The column is never blank "
+         "(until 2026-09-27 this line said it was blank where no MOIS composition "
+         "exists; the file has written False there since the fifth check of "
+         "2026-09-26, so the column reads as one boolean). Where MOIS (as "
          "of 1 January) and MOJ (31 December) straddle a merger, each MOIS row goes to the "
          "gu on its own ground: 2010 마산시 to 창원시 마산합포구 and 마산회원구, the old 창원시 "
          "to 성산구 and 의창구 (True), 진해시 to 진해구 whole (False); 2008-2013 청주시 to "
@@ -1684,7 +1710,11 @@ def build_data_dictionary():
          "True / False 로 적는다(pandas 는 CSV 칸을 논리형으로, .dta 는 문자열 'True' / "
          "'False' 로 읽는다). 이 일반구 행의 MOIS 광의 구성이 부모 시 발행값을 구별 MOJ "
          "등록외국인 비중으로 안분한 추정치이면 True(2008-2015, MOIS가 일반구 시를 시 "
-         "단위로만 발행), MOIS가 구를 직접 발행하면 False, 해당 행에 MOIS 구성이 없으면 공란. "
+         "단위로만 발행), 그 밖의 행은 모두 False: MOIS가 구를 직접 발행하는 행, 그리고 그 "
+         "시의 구 옆에 시 이름만으로 찍힌 줄(sigungu 참조). 시 이름 줄에는 MOIS 가 아무것도 "
+         "발행하지 않아 MOIS 칸이 모두 비고 안분한 것도 없다. 이 칸은 비지 않는다(2026-09-27 "
+         "까지 이 글은 MOIS 구성이 없는 행을 공란이라 했으나, 파일은 2026-09-26 다섯째 대조부터 "
+         "그 행에 False 를 적어 한 가지 논리값으로 읽힌다). "
          "행정안전부(1월 1일 기준)와 법무부(12월 31일 기준)가 통합을 사이에 두는 해에는 "
          "행정안전부의 각 행을 제 땅의 구에 나눈다: 2010년 마산시는 창원시 마산합포구·마산회원구, "
          "옛 창원시는 성산구·의창구(True), 진해시는 진해구에 통째로(False). 2008-2013년 "
@@ -1839,9 +1869,11 @@ def build_data_dictionary():
          "Count for that population x nationality x visa x year (2006-2024).",
          "모집단×국적×비자×연도 인원(2006-2024)."),
         ("age_sex_national.csv", "population", "string",
-         "Population base: registered (등록외국인, 2009-2024) or stay (체류외국인, "
+         "Population base: registered (등록외국인, 2006-2024) or stay (체류외국인, "
          "2011-2024). registered comes from the yearbook table 국적(지역) 및 연령별 "
-         "등록외국인 현황. stay adds short-term sojourners and F-4 residence reports to "
+         "등록외국인 현황 (titled 국적 및 연령별 in the 2006 and 2007 editions; "
+         "2006-2008 on the bands those editions print, see age_group; until "
+         "2026-09-27 the file began in 2009). stay adds short-term sojourners and F-4 residence reports to "
          "the registered population and comes from 국적(지역) 및 연령별 체류외국인 현황, "
          "which the yearbook first publishes in its 2011 edition. The two are different populations: "
          "filter to one before summing or comparing years, and never splice one onto "
@@ -1852,7 +1884,9 @@ def build_data_dictionary():
          "in 2014-2016 and 2018 the stay age table's printed total exceeds its rows by "
          "4, 3, 2 and 1 persons, whom the status table holds in its 기타 line.",
          "모집단(값: registered / stay). registered = 등록외국인, 연보 「국적(지역) 및 "
-         "연령별 등록외국인 현황」, 2009-2024. stay = 체류외국인(등록 + 단기체류 + "
+         "연령별 등록외국인 현황」(2006·2007년판은 「국적 및 연령별」), 2006-2024. "
+         "2006-2008년은 그 판들이 찍는 연령대로 싣는다(age_group 참조). 2026-09-27 까지는 "
+         "2009년부터였다. stay = 체류외국인(등록 + 단기체류 + "
          "재외동포 거소신고), 「국적(지역) 및 연령별 체류외국인 현황」, 2011-2024(연보가 "
          "2011년판부터 싣습니다). 서로 다른 모집단이므로 합하거나 연도를 견주기 전에 "
          "하나로 거르고, 한 계열을 다른 계열에 잇지 마십시오. 각 계열은 같은 모집단의 "
@@ -1879,14 +1913,37 @@ def build_data_dictionary():
          "등록외국인 표에는 그 행이 없다. 2026-09-26 전에는 X 를 싣지 않아, 국적별 총계를 "
          "싣지 않는 2019년판의 T 가 그 한 명을 빠뜨렸다. 총계는 T 를 쓰십시오."),
         ("age_sex_national.csv", "age_group", "string",
-         "Age band: 0-4, 5-9, ... 55-59, 60+ (%d bands in every year)." % F["age_bands"],
-         "연령대: 0-4, 5-9, ... 55-59, 60+ (모든 해 13구간)."),
+         "Age band, under the label the edition prints (%d bands in every year). "
+         "2009-2024: 0-4, 5-9, ... 55-59, 60+. The registered tables of the 2006-2008 "
+         "editions print 0-5, 6-10, ... 56-60 and an open band printed 60세이상 in "
+         "2006-2007 (carried as 60+) and 61세 이상 in 2008 (61+). Those three years are "
+         "carried on their own bands and not folded into the later ones, because the "
+         "yearbook does not settle which ages they hold: in 2006-2007 the printed 56-60 "
+         "and 60+ both claim age 60, and the 2008 edition's region-by-age table, which "
+         "counts the same %s people on bands printed 0-4, 5-9, ..., differs from this "
+         "table in every band (0-4 %s there, 0-5 %s here), while the counts here run on "
+         "into 2009's bands as if they were the same ones (0-4 %s in 2009). Compare "
+         "2006-2008 with later years band by band only "
+         "knowing this; the totals over all bands are unaffected."
+         % (F["age_bands"], F["age_2008_total"], F["age_2008_region_04"],
+            F["age_2008_05"], F["age_2009_04"]),
+         "연령대. 판이 찍는 이름 그대로(모든 해 %d구간). 2009-2024년: 0-4, 5-9, ... "
+         "55-59, 60+. 2006-2008년판의 등록외국인 표는 0-5, 6-10, ... 56-60 과 열린 구간 "
+         "하나를 찍는다: 2006-2007년 「60세이상」(60+ 로 싣는다), 2008년 「61세 이상」(61+). "
+         "이 세 해는 제 구간으로 싣고 뒤의 구간에 접지 않는다. 연보가 그 구간이 어느 나이를 "
+         "담는지 정해 주지 않기 때문이다: 2006-2007년은 찍힌 56-60 과 60+ 가 둘 다 60세를 "
+         "포함하고, 같은 %s명을 0-4, 5-9, ... 로 찍는 2008년판 지역별 연령표는 이 표와 모든 "
+         "구간에서 다르며(그 표의 0-4 %s명, 이 표의 0-5 %s명), 이 표의 수는 2009년 구간에 "
+         "같은 구간처럼 이어진다(2009년 0-4 %s명). 2006-2008년을 "
+         "뒤의 해와 구간별로 견줄 때는 이 점을 알고 쓰십시오. 모든 구간의 합은 영향이 없다."
+         % (F["age_bands"], F["age_2008_total"], F["age_2008_region_04"],
+            F["age_2008_05"], F["age_2009_04"])),
         ("age_sex_national.csv", "n", "integer",
          "MOJ count for that population x nationality x age x sex x year: registered "
-         "foreigners 2009-2024 or staying foreigners 2011-2024, as `population` says. "
+         "foreigners 2006-2024 or staying foreigners 2011-2024, as `population` says. "
          "Cells the source prints as zero are omitted.",
          "모집단×국적×연령×성별×연도 MOJ 인원. population 에 따라 등록외국인"
-         "(2009-2024) 또는 체류외국인(2011-2024). 원자료가 0으로 적은 칸은 싣지 않습니다."),
+         "(2006-2024) 또는 체류외국인(2011-2024). 원자료가 0으로 적은 칸은 싣지 않습니다."),
         # ---------- MOIS breakdowns ----------
         ("children_by_age.csv", "sido / sido_en / sigungu / sigungu_en", "string",
          "Province and district (Korean + English).", "시도·시군구(한글+영문)."),
@@ -1961,13 +2018,17 @@ def build_data_dictionary():
          "year", "integer",
          "Reference year. The annual series runs %s; the by-country and by-age "
          "panels run %s, one year per yearbook edition. They start with the 2011 "
-         "edition because the 2009 and 2010 editions print these two tables "
-         "cumulatively, from 1991 to the edition year (363,131 and 405,170 cases "
-         "against 49,820 and 42,039 in the year itself); those two editions are not "
-         "used." % (F["nat_annual_span"], F["nat_panel_span"]),
+         "edition because no earlier edition gives a single year: the 2006, 2007, 2009 "
+         "and 2010 editions print these two tables cumulatively, from 1991 to the "
+         "edition year (242,374, 278,713, 363,131 and 405,170 cases against 31,069, "
+         "36,339, 49,820 and 42,039 in the year itself, by each edition's own trend "
+         "table), and the raw inputs hold no naturalization tables for the 2008 "
+         "edition. Those editions are not used." % (F["nat_annual_span"], F["nat_panel_span"]),
          "기준연도. 연도별 시계열 %s, 국적별·연령별 패널 %s(연보 1권당 1개 연도). "
-         "2009·2010년판의 이 두 표는 1991년부터 그 해까지의 누계(363,131건과 405,170건. "
-         "그 해만은 49,820건과 42,039건)라 쓰지 않고, 패널은 2011년판부터다."
+         "2011년판보다 앞선 판에는 한 해 치 표가 없어 패널은 2011년판부터다: 2006·2007·"
+         "2009·2010년판의 이 두 표는 1991년부터 그 해까지의 누계(242,374건, 278,713건, "
+         "363,131건, 405,170건. 각 판의 연도별 추이표로 그 해만은 31,069건, 36,339건, "
+         "49,820건, 42,039건)이고, 원자료에는 2008년판의 국적처리 표가 없다."
          % (F["nat_annual_span"], F["nat_panel_span"])),
         ("naturalization_by_country.csv", "country / country_en", "string",
          "Former nationality (Korean + English). Three labels are not nationalities "
@@ -2193,13 +2254,19 @@ def build_data_dictionary():
          "그 나라 인구 가운데 그 언어를 모어로 쓰는 비율. language_demand 가 국적을 "
          "나눌 때 쓰는 가중치다. Ethnologue 에서 파생했고 원본은 재배포하지 않는다."),
         ("language_weights.csv", "note", "string",
-         "'no first-language shares available' where the source has no entry and "
-         "for the lines that name no nationality (무국적, 기타, 미등록국가, 미상, 한국, "
-         "국적불명) and the Korean-descent groups whose first language is Korean: their "
-         "people add nothing to language_demand.",
-         "출처에 항목이 없는 나라, 국적 없는 줄(무국적, 기타, 미등록국가, 미상, 한국, "
-         "국적불명), 모어가 한국어인 한국계 집단은 'no first-language shares available'. "
-         "그 사람들은 language_demand 에 더해지지 않는다."),
+         "'no first-language shares available' where the source has no entry "
+         "(한국계미국인), for the lines that name no nationality (무국적, 기타, "
+         "미등록국가, 미상, 한국, 국적불명, 국제연합, 국제연합전문기구), and where the "
+         "first language is Korean (한국계중국인, 북한): their people add nothing to "
+         "language_demand. Until 2026-09-27 북한, 케이맨제도 and 한국계미국인 had no row "
+         "at all; none of them has people in the nationality files language_demand is "
+         "built from (북한 appears only in naturalization_by_country).",
+         "출처에 항목이 없는 경우(한국계미국인), 국적 없는 줄(무국적, 기타, 미등록국가, "
+         "미상, 한국, 국적불명, 국제연합, 국제연합전문기구), 모어가 한국어인 경우"
+         "(한국계중국인, 북한)는 'no first-language shares available'. 그 사람들은 "
+         "language_demand 에 더해지지 않는다. 2026-09-27 까지 북한, 케이맨제도, "
+         "한국계미국인은 행이 없었다. 셋 다 language_demand 가 읽는 국적 파일에는 사람이 "
+         "없다(북한은 naturalization_by_country 에만 나온다)."),
         ("language_demand.csv", "year", "integer", "Reference year (2006-2024).",
          "기준연도(2006-2024)."),
         ("language_demand.csv", "scope", "string",

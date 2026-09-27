@@ -434,7 +434,8 @@ def export_dataset():
 
         # 3) Foreign residents by age x sex x country x year, on both population
         #    bases. 03's extend_age_sex writes age_sex_long.csv from the two
-        #    yearbook tables: registered 2009-, stay 2011-. Until 2026-09-25 this
+        #    yearbook tables: registered 2006- (2009 until 2026-09-27; 2006-2008 on
+        #    the bands those editions print), stay 2011-. Until 2026-09-25 this
         #    read age_long.csv, which held registered rows for 2009-2013 and stay
         #    rows from 2014 under one unlabeled series.
         age = pd.read_csv(os.path.join(PROC, "age_sex_long.csv"), encoding="utf-8-sig")

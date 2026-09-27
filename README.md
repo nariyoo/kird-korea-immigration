@@ -60,7 +60,7 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `visa_by_sido.csv` | a province, visa status and year | 2008-2024 | 7,209 |
 | `visa_national.csv` | a population, visa status and year | 2006-2024 | 1,241 |
 | `visa_by_nationality.csv` | a population, nationality, visa and year | 2006-2024 | 239,081 |
-| `age_sex_national.csv` | a population, nationality, age band, sex and year | registered 2009-2024, stay 2011-2024 | 157,101 |
+| `age_sex_national.csv` | a population, nationality, age band, sex and year | registered 2006-2024, stay 2011-2024 | 168,122 |
 | `language_demand.csv` | a language, scope, place and year | 2006-2024 | 207,962 |
 | `ethnic_enclaves.csv` | an enclave district, nationality and year | 2008-2024 | 738 |
 | `segregation_by_nationality.csv` | a nationality and year | 2014-2024 | 1,064 |
@@ -74,7 +74,7 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `crosswalk_country.csv` | a source nationality label | 2006-2024 | 268 |
 | `crosswalk_region.csv` | a source place name or boundary change | fixed | 88 |
 | `crosswalk_visa.csv` | a source status code | 2006-2024 | 241 |
-| `language_weights.csv` | a nationality and first language | fixed | 4,509 |
+| `language_weights.csv` | a nationality and first language | fixed | 4,515 |
 | `refugee_by_nationality.csv` | a status and nationality, cumulative (deposit only) | 1994-2024 | 33 |
 | `refugee_language_demand.csv` | a status and language, cumulative (deposit only) | 1994-2024 | 60 |
 
@@ -112,7 +112,8 @@ status table (for 2006-2010 the 2장 Ⅱ table, which earlier builds composed fr
 tables and so put the F-4 holders under 중국 and 러시아(연방) instead of 한국계중국인 and
 한국계러시아인). The national tables carry both bases side by side, and a sum over `n`
 that does not filter `population` counts the registered population twice. In `age_sex_national`
-the registered series runs 2009-2024 and the staying series 2011-2024, the first year the yearbook
+the registered series runs 2006-2024 (2006-2008 on the bands those editions print, 0-5 ... 56-60
+and 60+ or 61+, which the data dictionary explains) and the staying series 2011-2024, the first year the yearbook
 prints the staying table by nationality and age; through v1.1.0 that file joined registered
 2009-2013 onto staying 2014-2024 without a label, so the United States went from 23,990 to 136,663
 between 2013 and 2014.

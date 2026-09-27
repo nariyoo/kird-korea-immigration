@@ -40,6 +40,13 @@ PRINTED_TOTALS = {}
 # 42,039 (2010). Until this date the release carried them as if they were annual.
 # The gate in build_panel() compares every edition's detail total with the
 # single-year row of its own trend table and stops on a cumulative table.
+# The earlier editions give no single year either (5라운드 대조, 2026-09-27): the 2006
+# and 2007 by-country and by-age tables are cumulative in the same way (총계 242,374
+# and 278,713, each equal to its trend table's 총계 line, against the single-year
+# 31,069 and 36,339; the 2006 edition keeps them under 3장/ as 3-나 and 3-다, 2007
+# as 4-Ⅱ-2 and 4-Ⅱ-3), and 01_raw_data holds no naturalization table of the 2008
+# edition, whose folder has chapters 1, 2, 5, 7 and 8 only. So 2011 is the first
+# edition that can open the panel, not only the first after 2009-2010.
 PANEL_FIRST_YEAR = 2011
 
 
@@ -360,8 +367,8 @@ def build_panel():
                     report.append((y, kind, "FILE NOT FOUND", 0, 0))
                     continue
                 rows = parse(f, kind)
-                # 관문: 이 표가 한 해 치인가. 2009·2010년판 상세표는 1991년부터의
-                # 누계였다(위 PANEL_FIRST_YEAR). 같은 판 추이표의 그 해 행과 댄다.
+                # 관문: 이 표가 한 해 치인가. 2006·2007·2009·2010년판 상세표는
+                # 1991년부터의 누계다(위 PANEL_FIRST_YEAR). 같은 판 추이표의 그 해 행과 댄다.
                 printed_all = next((v for t, v in PRINTED_TOTALS.get(
                     (os.path.basename(f), kind), {}).items()
                     if t in ("총계", "총합계", "합계", "계")), None)

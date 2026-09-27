@@ -31,7 +31,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 import pandas as pd  # noqa: E402
 
-from kird import RELEASE, RELEASE_DATA  # noqa: E402
+from kird import CLEAN, RELEASE, RELEASE_DATA  # noqa: E402
 
 DEPOSIT = os.path.join(RELEASE, "data deposit", "kird_openicpsr_deposit_staging")
 GITHUB = os.path.join(RELEASE, "data deposit", "kird_dataset_github")
@@ -254,6 +254,21 @@ def facts():
         F["lisa_diff_pre"] = fmt((dd & (m["year"] <= 2013)).sum())
         F["lisa_diff_post"] = fmt((dd & (m["year"] >= 2014)).sum())
 
+    # 5라운드 대조 (2026-09-27): the registered age table of 2006-2008 on the bands
+    # those editions print, and the numbers the note on them quotes. The 2008
+    # region-by-age table is not a released file; 03_extend_panel reads it from the
+    # raw edition into age_band_facts.json, which only a build has, so that one
+    # number is checked where the file exists and left as written elsewhere.
+    ag = rd("age_sex_national.csv")
+    at = ag[(ag["population"] == "registered") & (ag["gender"] == "T")]
+    F["age_2008_total"] = fmt(at.loc[at["year"] == 2008, "n"].sum())
+    F["age_2008_05"] = fmt(at.loc[(at["year"] == 2008) & (at["age_group"] == "0-5"), "n"].sum())
+    F["age_2009_04"] = fmt(at.loc[(at["year"] == 2009) & (at["age_group"] == "0-4"), "n"].sum())
+    fj = os.path.join(CLEAN, "age_band_facts.json")
+    if os.path.exists(fj):
+        import json
+        F["age_2008_region_04"] = fmt(json.load(io.open(fj, encoding="utf-8"))["region_2008_04"])
+
     # the deposit's shape: tables, data files, and columns (= variables)
     csvs = [os.path.join(d, f) for d in data_dirs()[:2] for f in os.listdir(d)
             if f.endswith(".csv")]
@@ -325,6 +340,11 @@ CLAIMS = [
     ("lisa_diff_pre", _p(r"(?:district-years,\s+|\. )(?P<v>[\d,]+) of (?:them|the [\d,]+ are)\s+2008-2013")),
     ("lisa_diff", _p(r"[\d,]+ of the (?P<v>[\d,]+) are\s+2008-2013")),
     ("lisa_diff_post", _p(r"the other (?P<v>[\d,]+) are spread over 2014-2024")),
+    # the 2006-2008 age bands (5라운드 대조, 2026-09-27)
+    ("age_2008_total", _p(r"counts\s+the\s+same\s+(?P<v>[\d,]+)\s+people\s+on\s+bands\s+printed\s+0-4")),
+    ("age_2008_region_04", _p(r"\(0-4\s+(?P<v>[\d,]+)\s+there,\s+0-5")),
+    ("age_2008_05", _p(r"there,\s+0-5\s+(?P<v>[\d,]+)\s+here\)")),
+    ("age_2009_04", _p(r"\(0-4\s+(?P<v>[\d,]+)\s+in\s+2009\)")),
     ("n_tables", _p(r"and its (?P<v>\d+) tables carry")),
     ("vars_all", _p(r"tables carry (?P<v>[\d,]+) variables between them")),
     ("vars_summary", _p(r"variables between them \((?P<v>[\d,]+) in the four summary")),
@@ -341,7 +361,8 @@ REQUIRED = {"f6_first", "f2_first", "f2_next", "f4_stay_last", "residual_min",
             "district_residual_districts", "broad_gap",
             "sido_eq_from", "sido_gap_years", "sido_gap_range", "etc_2020",
             "etc_last", "dist_gap_years", "dist_gap_size", "obs_2013", "obs_2014",
-            "cityline_theil", "cityline_theil_years", "seg_first", "cityline_seg"}
+            "cityline_theil", "cityline_theil_years", "seg_first", "cityline_seg",
+            "age_2008_total", "age_2008_region_04", "age_2008_05", "age_2009_04"}
 
 ROW = re.compile(r"^\|\s*`?([A-Za-z0-9_]+\.csv)`?\s*\|")
 YEARS = re.compile(r"^\s*((?:19|20)\d{2})\s*[-–]\s*((?:19|20)\d{2})\s*$")
@@ -545,6 +566,10 @@ def refresh(path, F, check):
             continue
         seen.add(key)
         m = hits[0]
+        if key not in F:
+            # a fact read from the build's intermediates (age_2008_region_04), absent
+            # outside the authoring tree: the sentence is there, the value unchecked
+            continue
         want = F[key]
         if m.group("v") != want:
             notes.append("%s %r -> %r" % (key, m.group("v"), want))

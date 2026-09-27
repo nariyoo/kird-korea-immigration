@@ -27,22 +27,28 @@ What is checked
     indices        shannon_H, evenness, HHI, index_base_k, n_nationalities_observed
                    and continent_H recomputed from nationality_by_sigungu
     segregation    dissimilarity_D, isolation, interaction_korean and
-                   theil_segregation_H recomputed from the counts and resident_pop
+                   theil_segregation_H recomputed from the counts and resident_pop,
+                   and region_segregation's D and isolation by continent
+    enclaves       every ethnic_enclaves row re-derived from the district counts and
+                   resident_pop (>= 200, LQ >= 2, >= 30%), with no pair missing
     cross-file     district sums reconcile with the sido and national tables, the
                    broad-definition columns included, exactly
-    age bases      age_sex_national carries registered 2009- and stay 2011- as
-                   two labelled series, and each sums to nationality_national
-                   for the same population, line and year (the lines that name no
-                   nationality included), with T = M + F + X in every cell
+    age bases      age_sex_national carries registered 2006- and stay 2011- as
+                   two labelled series, each year on the bands its edition prints,
+                   and each sums to nationality_national for the same population,
+                   line and year (the lines that name no nationality included),
+                   with T = M + F + X in every cell
     crosswalks     every standard nationality name has a row of its own, every
                    country a data file names has a row, every district-table line
-                   carried on another district is listed, and every nationality
-                   line with people has a language_weights row
+                   carried on another district is listed, and every standard
+                   name and every nationality line with people has a
+                   language_weights row
     provinces      the 2006-2007 rows of nationality_by_sido add up to
                    summary_by_sido, and summary_by_sido's indices recompute from
                    nationality_by_sido in every year
     sub-districts  dependence rates are blank where their component is, and no
-                   district's sub-districts add up to more than its broad_total
+                   district's sub-districts add up to more than its broad_total;
+                   broad_apportioned is True or False on every district row
     coverage       no README or dictionary line cites a year the data lacks
 
 The Korean count convention, which the indices depend on: `resident_pop` is the
@@ -739,23 +745,34 @@ def check_age_bases(d):
     if pops != {"registered", "stay"}:
         return
     last = int(a["year"].max())
-    for pop, first in (("registered", 2009), ("stay", 2011)):
+    # registered from the 2006 edition since 2026-09-27 (5라운드 대조): the raw tables
+    # print the 2006-2008 registered population by nationality, age and sex, and
+    # until then the file started in 2009
+    FIRST = {"registered": 2006, "stay": 2011}
+    for pop, first in FIRST.items():
         ys = set(a.loc[a["population"] == pop, "year"].astype(int))
         want = set(range(first, last + 1))
         check(ys == want, "age bases: %s covers %d-%d" % (pop, first, last),
               "missing %s, extra %s" % (sorted(want - ys), sorted(ys - want)))
-    bands = set(a["age_group"].unique())
-    want_b = {"0-4", "5-9", "10-14", "15-19", "20-24", "25-29", "30-34", "35-39",
-              "40-44", "45-49", "50-54", "55-59", "60+"}
-    check(bands == want_b, "age bases: the 13 age bands and no others",
-          "extra %s, missing %s" % (sorted(bands - want_b), sorted(want_b - bands)))
+    # Every year carries the bands its edition prints and no others: 0-4 ... 60+
+    # from 2009; 0-5 ... 56-60 and an open band in 2006-2008, 60+ as the 2006 and
+    # 2007 editions print it (60세이상), 61+ as the 2008 edition does (61세 이상)
+    std = ["0-4", "5-9", "10-14", "15-19", "20-24", "25-29", "30-34", "35-39",
+           "40-44", "45-49", "50-54", "55-59", "60+"]
+    old = ["0-5", "6-10", "11-15", "16-20", "21-25", "26-30", "31-35", "36-40",
+           "41-45", "46-50", "51-55", "56-60"]
+    want_b = lambda y: set(std) if y >= 2009 else set(old) | {"61+" if y == 2008 else "60+"}
+    got_b = a.groupby(["population", "year"])["age_group"].agg(lambda s: set(s))
+    off = ["%s %d: extra %s, missing %s" % (p, y, sorted(g - want_b(y)), sorted(want_b(y) - g))
+           for (p, y), g in got_b.items() if g != want_b(int(y))]
+    check(not off, "age bases: each year on the 13 bands its edition prints "
+          "(0-4 ... 60+ from 2009; 0-5 ... 56-60 and 60+ or 61+ in 2006-2008)", off[:4])
     if n is None:
         return
     t = (a[a["gender"] == "T"].groupby(["population", "year", "country"])["n"].sum())
     m = n.set_index(["population", "year", "country"])["n"]
     j = pd.concat([t.rename("age"), m.rename("nat")], axis=1)
-    keep = [(p == "registered" and y >= 2009) or (p == "stay" and y >= 2011)
-            for p, y, _ in j.index]
+    keep = [(p in FIRST and y >= FIRST[p]) for p, y, _ in j.index]
     j = j[keep].fillna(0)
     j["gap"] = j["age"] - j["nat"]
     bad = j[j["gap"] != 0]
@@ -1514,6 +1531,18 @@ def check_language_weights(d):
     miss = sorted(used - set(lw["country"]))
     check(not miss, "language_weights: a row for every nationality line with people",
           miss[:8])
+    # 5라운드 대조 (2026-09-27): the dictionary promises a row for every standard name
+    # crosswalk_country lists, and 북한, 케이맨제도 and 한국계미국인, standard names
+    # with no people in the nationality files, had none. Both directions: no row for a
+    # name the crosswalk does not list either.
+    cw = d.get("crosswalk_country.csv")
+    if cw is not None:
+        names = set(cw["country"].dropna())
+        have = set(lw["country"].dropna())
+        check(names == have, "language_weights: a row for every standard name "
+              "crosswalk_country lists, and for no other name",
+              "missing %s; not in the crosswalk %s"
+              % (sorted(names - have)[:8], sorted(have - names)[:8]))
 
 
 def check_language_demand(d):
@@ -1657,6 +1686,143 @@ def check_region_totals(d):
           "%d cells, e.g. %s" % (len(bad), bad.head(3).to_dict("index")))
 
 
+def check_apportioned_flag(d):
+    """broad_apportioned 는 모든 행에서 True 나 False 이고, True 는 MOIS 칸이 있는 행에만.
+
+    5라운드 대조 (2026-09-27): 사전은 MOIS 구성이 없는 행을 공란이라 적었는데, 파일은
+    2026-09-26 다섯째 대조부터 그 행(그 시의 구 옆에 시 이름만으로 찍힌 줄 21 행)에
+    False 를 적는다. 사전을 파일에 맞췄고, 이 검사가 그 규칙을 지킨다.
+    """
+    s = d.get("summary_by_sigungu.csv")
+    if s is None or "broad_apportioned" not in s.columns:
+        return
+    f = s["broad_apportioned"]
+    vals = set(map(str, f.dropna().unique()))
+    ok = not f.isna().any() and vals <= {"True", "False"}
+    app = f.astype(str) == "True"
+    bad = s[app & s["broad_total"].isna()]
+    check(ok and bad.empty,
+          "broad_apportioned: True or False on every row, never blank, and True only "
+          "where the MOIS columns are filled",
+          "%d blank; values %s; %d True rows without broad_total"
+          % (int(f.isna().sum()), sorted(vals), len(bad)))
+
+
+def check_region_segregation(d):
+    """region_segregation 의 dissimilarity_D 와 isolation 을 공개된 수에서 다시 얻는다.
+
+    5라운드 대조 (2026-09-27): segregation_by_nationality 에는 재산출 관문이 있는데 이
+    파일은 total 만 보았다(check_region_totals). 같은 정의(09_finish_release.
+    build_segregation): the districts of summary_by_sigungu with a resident_pop,
+    k = resident_pop, t = k + registered_foreigners, x = the continent's registered
+    foreigners in the district (nationality_by_sigungu summed by crosswalk_country's
+    continent), D = 0.5 sum |x/X - k/K|, isolation = sum (x/X)(x/t). Also one row per
+    continent with people that year, and no other.
+    """
+    rs, nb, sm, cw = (d.get(f) for f in ("region_segregation.csv", "nationality_by_sigungu.csv",
+                                         "summary_by_sigungu.csv", "crosswalk_country.csv"))
+    if rs is None or nb is None or sm is None or cw is None:
+        return
+    cont = dict(cw[["country", "continent"]].drop_duplicates("country").values)
+    nb = nb[~nb["sigungu"].isin(AGG) & ~nb["sido"].isin(AGG)]
+    nb = nb.assign(continent=nb["country"].map(cont).fillna("기타"))
+    years = sorted(set(rs["year"].astype(int)))
+    tot = nb[nb["year"].isin(years)].groupby(["year", "continent"])["n"].sum()
+    want = {(int(y), c) for (y, c), v in tot.items() if v > 0}
+    have = {(int(y), c) for y, c in zip(rs["year"], rs["continent"])}
+    check(want == have, "region segregation: one row per continent with people that "
+          "year, and no other",
+          "missing %s; extra %s" % (sorted(want - have)[:6], sorted(have - want)[:6]))
+    rows = []
+    for y in years:
+        g = sm[(sm["year"] == y)].dropna(subset=["resident_pop", "registered_foreigners"])
+        g = g.set_index(["sido", "sigungu"])
+        k = g["resident_pop"].astype(float)
+        t = k + g["registered_foreigners"].astype(float)
+        piv = (nb[nb["year"] == y].pivot_table(index=["sido", "sigungu"], columns="continent",
+                                               values="n", aggfunc="sum")
+               .reindex(g.index).fillna(0.0))
+        for c in rs.loc[rs["year"] == y, "continent"]:
+            x = piv[c] if c in piv.columns else pd.Series(0.0, index=k.index)
+            X, K = x.sum(), k.sum()
+            D = 0.5 * (x / X - k / K).abs().sum() if X else np.nan
+            iso = ((x / X) * (x / t)).sum() if X else np.nan
+            rows.append({"year": y, "continent": c, "_D": D, "_iso": iso})
+    m = rs.merge(pd.DataFrame(rows), on=["year", "continent"], how="left")
+    # the file rounds D to three decimals and isolation to four
+    for pub, cc, tol, name in (("dissimilarity_D", "_D", 5e-4 + 1e-9, "dissimilarity_D"),
+                               ("isolation", "_iso", 5e-5 + 1e-9, "isolation")):
+        both_nan = m[pub].isna() & m[cc].isna()
+        gap = (m[pub] - m[cc]).abs().where(~both_nan, 0.0).fillna(np.inf)
+        check(bool((gap <= tol).all()),
+              "region segregation: %s recomputes from the counts (to its rounding)" % name,
+              worst(m.assign(_g=gap).sort_values("_g", ascending=False).head(1),
+                    pub, cc, ["year", "continent"]))
+
+
+def check_ethnic_enclaves(d):
+    """ethnic_enclaves 의 모든 행과 칸을 공개된 수에서 다시 얻는다.
+
+    5라운드 대조 (2026-09-27): 이 파일에는 키 검사만 있었다. The rule (README Index
+    definitions; 04_reconcile_districts.recompute_enclaves): a district x nationality
+    pair is an enclave when the nationality has at least 200 registered foreigners
+    in the district, a location quotient of at least 2 and at least 30% of the
+    district's registered foreigners. LQ = (x / resident_pop_d) / (X / sum of
+    resident_pop), X being the nationality's total over every district row that year
+    and the resident population summed over the districts that have one. The lines
+    that name no nationality are never enclaves. Every row must re-derive, with its
+    count, lq, share_of_foreign_pct and sigungu_foreign_total, and no pair the rule
+    selects may be missing.
+    """
+    e, sm = d.get("ethnic_enclaves.csv"), d.get("summary_by_sigungu.csv")
+    cnt = district_counts(d)
+    if e is None or sm is None or not cnt:
+        return
+    pop = {(int(r.year), r.sido, r.sigungu): float(r.resident_pop)
+           for r in sm.itertuples() if not pd.isna(r.resident_pop) and r.resident_pop > 0}
+    natpop = {}
+    for (y, _, _), v in pop.items():
+        natpop[y] = natpop.get(y, 0.0) + v
+    calc = {}
+    for y in sorted(set(e["year"].astype(int))):
+        blk = cnt.get(y, {})
+        X = {}
+        for cs in blk.values():
+            for c, v in cs.items():
+                X[c] = X.get(c, 0.0) + v
+        for (sd, sg), cs in blk.items():
+            tp = pop.get((y, sd, sg))
+            tot = sum(cs.values())
+            if not tp or tot <= 0 or not natpop.get(y):
+                continue
+            for c, x in cs.items():
+                if c in RESIDUAL_LINES or x < 200 or X.get(c, 0) <= 0:
+                    continue
+                lq = (x / tp) / (X[c] / natpop[y])
+                share = x / tot
+                if lq >= 2.0 and share >= 0.30:
+                    calc[(y, sd, sg, c)] = (x, lq, share * 100, tot)
+    have = {(int(r.year), r.sido, r.sigungu, r.country): r for r in e.itertuples()}
+    miss, extra = sorted(set(calc) - set(have)), sorted(set(have) - set(calc))
+    check(not miss and not extra,
+          "ethnic enclaves: exactly the district x nationality pairs the rule selects "
+          "(>= 200, LQ >= 2, >= 30%% of the district's foreigners), %d rows" % len(calc),
+          "missing %s; extra %s" % (miss[:4], extra[:4]))
+    off = []
+    for k in set(calc) & set(have):
+        x, lq, sh, tot = calc[k]
+        r = have[k]
+        if (int(r.count) != int(x) or int(r.sigungu_foreign_total) != int(tot)
+                or abs(float(r.lq) - lq) > 0.05 + 1e-9
+                or abs(float(r.share_of_foreign_pct) - sh) > 0.05 + 1e-9):
+            off.append("%s: published %s/%s/%s/%s, recomputed %d/%.3f/%.3f/%d"
+                       % (k, r.count, r.lq, r.share_of_foreign_pct,
+                          r.sigungu_foreign_total, x, lq, sh, tot))
+    check(not off, "ethnic enclaves: count, lq, share_of_foreign_pct and "
+          "sigungu_foreign_total recompute from the counts (to their rounding)",
+          "%d rows, e.g. %s" % (len(off), off[:2]))
+
+
 def check_diaspora_labels(d):
     """재외동포 표에서 한 인구가 두 이름으로 갈리지 않는가.
 
@@ -1741,8 +1907,19 @@ def check_dictionary_numbers(data, d):
                     ["with no status (%s)" % format(x, ",")]))
     a = d.get("age_sex_national.csv")
     if a is not None:
-        exp.append(("age_sex_national.csv", "age_group",
-                    ["(%d bands in every year)" % a["age_group"].nunique()]))
+        per = a.groupby(["population", "year"])["age_group"].nunique()
+        fm = lambda v: format(int(v), ",")
+        rt = a[(a["population"] == "registered") & (a["gender"] == "T")]
+        need = ["(%d bands in every year)" % per.max() if per.nunique() == 1
+                else "(bands vary by year: %s)" % sorted(set(per))]
+        # the 2006-2008 bands and the numbers the note on them quotes (2026-09-27)
+        if (rt["year"] == 2008).any() and (rt["year"] == 2009).any():
+            need += ["the same %s people" % fm(rt.loc[rt["year"] == 2008, "n"].sum()),
+                     "0-5 %s here" % fm(rt.loc[(rt["year"] == 2008)
+                                               & (rt["age_group"] == "0-5"), "n"].sum()),
+                     "(0-4 %s in 2009)" % fm(rt.loc[(rt["year"] == 2009)
+                                                    & (rt["age_group"] == "0-4"), "n"].sum())]
+        exp.append(("age_sex_national.csv", "age_group", need))
     dia, vn = d.get("diaspora_residence_by_sido.csv"), d.get("visa_national.csv")
     if dia is not None and vn is not None:
         k = dia[dia["country"] != "기타"].groupby("year")["country"].nunique()
@@ -2127,6 +2304,9 @@ def main():
     check_subdistrict_rates(d)
     check_subdistrict_sums(d)
     check_region_totals(d)
+    check_region_segregation(d)
+    check_ethnic_enclaves(d)
+    check_apportioned_flag(d)
     check_diaspora_labels(d)
     check_published_residuals(d)
     check_dictionary_numbers(data, d)

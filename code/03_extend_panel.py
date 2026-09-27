@@ -7,7 +7,7 @@ province series back to 2006 with its diversity columns, the national series
 the language series recomputed on the merged names, the district-by-visa panel,
 refugee language demand, the 2008-2013 district backfill out of the pre-2014
 table family, and the nationality x age x sex table on both population bases
-(registered 2009-, staying 2011-).
+(registered 2006-, staying 2011-).
 
 Section order is execution order and it matters: the spatial clusters must come
 before the backfills, whose new records carry no cluster of their own, and the
@@ -2052,8 +2052,9 @@ def extend_age_sex():
     the release carries both with a `population` column, the way
     nationality_national.csv already does:
 
-      registered  국적(지역) 및 연령별 등록외국인 현황   2009-LAST_YEAR
-                  (2장 Ⅲ-2 through the 2013 edition, 2장 Ⅱ-2 from 2014)
+      registered  국적(지역) 및 연령별 등록외국인 현황   2006-LAST_YEAR
+                  (2장 3-다 in 2006, 2-Ⅲ-3 in 2007, 2장 Ⅲ-2 through the 2013
+                  edition, 2장 Ⅱ-2 from 2014)
       stay        국적(지역) 및 연령별 체류외국인 현황   2011-LAST_YEAR
                   (2장 Ⅱ-2 in 2011-2013, 2장 Ⅰ-2 from 2014). Stay adds the
                   short-term sojourners and the F-4 residence reports to the
@@ -2064,15 +2065,29 @@ def extend_age_sex():
     load_age), so the United States went from 23,990 in 2013 to 136,663 in 2014
     with no change in the population behind it.
 
-    2008 stays out. Its edition prints the bands 0~5, 6~10, ... 56~60, 61+
-    (checked again on 2026-09-25 against 2장_Ⅲ_2 of the 2008 edition), which
-    cannot be folded into the 13 bands 0-4 ... 55-59, 60+. The stay table starts
-    with the 2011 edition; the 2009 and 2010 editions carry only the registered
-    and short-term tables.
+    The 2006-2008 editions print the registered table on other bands, labelled
+    0~5, 6~10, ... 56~60 and an open band printed 60세이상 (2006, 2007) or
+    61세 이상 (2008). Until 2026-09-27 (5라운드 대조) those three years were left
+    out because the bands do not fold into 0-4 ... 55-59, 60+; the tables are
+    carried now, each band under the label its edition prints (OLD_BANDS below,
+    and 60+ or 61+), so every line the raw table prints is in the release. They
+    are not folded into BANDS because the yearbook does not settle which ages they
+    hold: in 2006-2007 the printed 56-60 and 60+ both claim age 60, and the 2008
+    edition's own region-by-age table (2장 Ⅲ-4) counts the same 854,007 people on
+    bands printed 0-4, 5-9, ... whose counts differ from these by what one year
+    of age shifts (0-4 7,496 there, 0-5 9,377 here), while these run on into
+    2009's 0-4 ... 60+ as if they were the same bands (0-4 9,971 in 2009). The
+    2006 edition also prints the 2004 and 2005 totals above the table (rows
+    2004년 총계, 2005년 총계); they precede the release and are skipped. The 2006
+    workbook holds the table twice (sheets 'Sheet1 (2)' and 'Sheet1'); every
+    nationality row is the same in both, and the first is read. The stay table
+    starts with the 2011 edition; the 2006-2010 editions carry only the
+    registered and short-term tables.
 
     Three layouts:
-      2009-2013  one row per nationality, T/M/F stacked in each cell with
-                 newlines; country rows carry M/F only.
+      2006-2013  one row per nationality, T/M/F stacked in each cell with
+                 newlines; country rows carry M/F only (2006 puts the name in
+                 the first column and prints no English name).
       2014-2018  one row per sex, the nationality on its (M) row, markers
                  (T)/(M)/(F); country rows carry M/F only.
       2019-      대륙 | 국적 | 성별 (총계/남성/여성), a 총계 row per nationality
@@ -2113,6 +2128,11 @@ def extend_age_sex():
 
     BANDS = ['0-4', '5-9', '10-14', '15-19', '20-24', '25-29', '30-34',
              '35-39', '40-44', '45-49', '50-54', '55-59', '60+']
+    # the 2006-2008 editions' bands, as printed (see the docstring), and the open
+    # band after them: 60세이상 in 2006-2007, 61세 이상 in 2008
+    OLD_BANDS = ['0-5', '6-10', '11-15', '16-20', '21-25', '26-30', '31-35',
+                 '36-40', '41-45', '46-50', '51-55', '56-60']
+    OLD_TOP = ('60+', '61+')
     GRAND = {"계", "총계", "총합계"}
     # Rows that hold persons but are not a nationality. They are carried under the
     # label the status tables give the same line (nationality_national), so the two
@@ -2151,22 +2171,15 @@ def extend_age_sex():
     def is_agg(c):
         return c in DROP or c.endswith("총계") or c.endswith("총합계")
 
-    def band(h):
-        """'0~4세', '5 - 9세', '0세~4세', '60세이상' -> canonical band. Anything
-        from 60 up folds into 60+; a band that cannot be folded is marked '!'."""
+    def bounds(h):
+        """'0~4세', '5 - 9세', '0세~4세', '60세이상' -> (low, high), or (low, None)
+        for an open band; None for a header that is not an age band."""
         s = str(h).split("\n")[0].replace(" ", "").replace("세", "")
         m = re.match(r"^(\d+)[~∼\-](\d+)$", s)
         if m:
-            a, b = int(m.group(1)), int(m.group(2))
-        else:
-            m = re.match(r"^(\d+)(?:이상|\+)$", s)
-            if not m:
-                return None
-            a, b = int(m.group(1)), None
-        if a >= 60:
-            return "60+"
-        lab = "%d-%d" % (a, b) if b is not None else "%d+" % a
-        return lab if lab in BANDS else "!" + lab
+            return int(m.group(1)), int(m.group(2))
+        m = re.match(r"^(\d+)(?:이상|\+)$", s)
+        return (int(m.group(1)), None) if m else None
 
     def ints(cell):
         if cell is None or (isinstance(cell, float) and pd.isna(cell)):
@@ -2181,15 +2194,27 @@ def extend_age_sex():
         return out
 
     def age_cols(header, first=0):
-        cols = {i: band(v) for i, v in enumerate(header)
-                if i >= first and band(v)}
-        bad = sorted({b for b in cols.values() if b.startswith("!")})
+        """{column: band}. On the bands of 2009 on, anything from 60 up folds into
+        60+ and a band outside BANDS stops the build. On the 2006-2008 bands every
+        printed band keeps its own label, and the header must print exactly
+        OLD_BANDS, in order, and one open band (60+ or 61+)."""
+        raw = {i: bounds(v) for i, v in enumerate(header) if i >= first and bounds(v)}
+        lab = {i: ("%d-%d" % ab if ab[1] is not None else "%d+" % ab[0])
+               for i, ab in raw.items()}
+        if "0-5" in lab.values():
+            seq = list(lab.values())
+            if seq[:-1] != OLD_BANDS or seq[-1] not in OLD_TOP:
+                raise SystemExit("2006-2008 bands printed as %s; expected %s and one "
+                                 "of %s" % (seq, OLD_BANDS, OLD_TOP))
+            return lab
+        cols = {i: ("60+" if ab[0] >= 60 else lab[i]) for i, ab in raw.items()}
+        bad = sorted({b for b in cols.values() if b not in BANDS})
         if bad:
             raise SystemExit("age bands %s do not fold into the 13 bands" % bad)
         return cols
 
     def parse_stacked(path, year):
-        """2009-2013. Returns (rows, residual persons, printed grand total)."""
+        """2006-2013. Returns (rows, residual persons, printed grand total)."""
         df = pd.read_excel(path, header=None)
         hr = next(r for r in range(8)
                   if any("국적" in str(c) for c in df.iloc[r])
@@ -2200,10 +2225,14 @@ def extend_age_sex():
         c_tot = next(i for i, v in enumerate(hdr)
                      if str(v).strip().startswith("합계"))
         ages = age_cols(hdr)
+        present = list(dict.fromkeys(ages.values()))   # the bands this edition prints
         rows, resid, grand = [], 0, None
         for r in range(hr + 1, df.shape[0]):
             c = canon(df.iat[r, c_ko])
             if not c:
+                continue
+            if re.match(r"^\d{4}년", c):
+                # the 2006 edition's 2004 and 2005 totals, printed above the table
                 continue
             sl = [SEX[s.strip()] for s in str(df.iat[r, c_sx]).split("\n")
                   if s.strip() in SEX]
@@ -2227,7 +2256,7 @@ def extend_age_sex():
                 for g in ("T", "M", "F", "X"):
                     if g in d:
                         acc[(g, b)] = acc.get((g, b), 0) + d[g]
-            got = sum(acc.get(("T", b), 0) for b in BANDS)
+            got = sum(acc.get(("T", b), 0) for b in present)
             if got != t_row:
                 raise SystemExit("%d %s: bands sum to %d, the row prints %d"
                                  % (year, c, got, t_row))
@@ -2349,7 +2378,20 @@ def extend_age_sex():
                 rows += [(year, c, g, b, n) for b, n in bands.items()]
         return rows, r_tot, g_tot
 
+    # The 2006 and 2007 editions title the table 국적및연령별 alone, beside a
+    # short-term table of the same title (4-나 / 2-Ⅳ-2), and 2006 keeps it under 2장/,
+    # so the pattern below cannot find them.
+    EARLY = {("registered", 2006): os.path.join(YB, "2006_출입국통계연보", "2장",
+                                                "3-다[1].국적및연령별.xls"),
+             ("registered", 2007): os.path.join(YB, "2007_출입국통계연보",
+                                                "2-Ⅲ-3.국적및연령별.xls")}
+
     def find(year, pop):
+        if (pop, year) in EARLY:
+            p = EARLY[(pop, year)]
+            if not os.path.exists(p):
+                raise SystemExit("%d %s: age table missing: %s" % (year, pop, p))
+            return p
         pat = {"registered": "*국적*연령별*등록외국인*",
                "stay": "*국적*연령별*체류외국인*"}[pop]
         g = [p for p in glob.glob(os.path.join(YB, "%d_*" % year, pat))
@@ -2359,7 +2401,8 @@ def extend_age_sex():
                              % (year, pop, [os.path.basename(p) for p in g]))
         return g[0]
 
-    FIRST = {"registered": 2009, "stay": 2011}
+    # registered from 2006 since 2026-09-27 (5라운드 대조; 2009 until then)
+    FIRST = {"registered": 2006, "stay": 2011}
     # Where the table's printed grand total exceeds the sum of its own rows.
     # Four stay tables do this by one to four persons: 2014 prints 계 1,797,618
     # while its (M) and (F) rows add up to 1,797,614 (checked against the raw
@@ -2370,11 +2413,13 @@ def extend_age_sex():
     KNOWN_GAP = {("stay", 2014): 4, ("stay", 2015): 3, ("stay", 2016): 2,
                  ("stay", 2018): 1}
     out = []
+    grands = {}
     print("\nnationality x age x sex, two bases:")
     for pop in ("registered", "stay"):
         for y in range(FIRST[pop], LAST_YEAR + 1):
             p = find(y, pop)
             rows, resid, grand = (parse_stacked if y <= 2013 else parse_rows)(p, y)
+            grands[(pop, y)] = grand
             tot = sum(n for (_, _, g, _, n) in rows if g == "T")
             gap = None if grand is None else grand - tot - resid
             want = KNOWN_GAP.get((pop, y), 0)
@@ -2390,11 +2435,40 @@ def extend_age_sex():
                                  % (pop, y, tot, resid, grand))
             out += [(pop,) + r for r in rows]
 
+    # The dictionary's note on the 2006-2008 bands (09, age_group) quotes the 2008
+    # edition's region-by-age table (2장 Ⅲ-4), which prints the same registered
+    # population on the bands 0-4, 5-9, ...: its printed grand total must be the
+    # nationality table's, and its national 0-4 count goes to 09 through
+    # age_band_facts.json, so the number the dictionary quotes is read from the raw
+    # table in every build.
+    g08 = [q for q in glob.glob(os.path.join(YB, "2008_*", "*지역및연령별*등록외국인*"))]
+    if len(g08) != 1:
+        raise SystemExit("2008 region-by-age table: expected one, found %s" % g08)
+    rg = pd.read_excel(g08[0], header=None)
+    rh = next(r for r in range(8) if any(str(v).replace(" ", "") == "총계"
+                                          for v in rg.iloc[r]))
+    rhdr = [str(v).split("\n")[0].replace(" ", "") for v in rg.iloc[rh]]
+    c_all, c_04 = rhdr.index("총계"), rhdr.index("0-4세")
+    rtot = next(rg.iloc[r] for r in range(rh + 1, rg.shape[0])
+                if str(rg.iat[r, 1]).replace(" ", "") == "총계")
+    facts = {"region_2008_total": int(rtot.iloc[c_all]),
+             "region_2008_04": int(rtot.iloc[c_04])}
+    if facts["region_2008_total"] != grands[("registered", 2008)]:
+        raise SystemExit("2008: the region-by-age table prints %s, the nationality "
+                         "table %s; the two no longer count the same people"
+                         % (facts["region_2008_total"], grands[("registered", 2008)]))
+    json.dump(facts, open(os.path.join(PROC, "age_band_facts.json"), "w",
+                          encoding="utf-8"), ensure_ascii=False, indent=1)
+    print("  2008 region-by-age table: %s people, 0-4 %s (age_band_facts.json)"
+          % (format(facts["region_2008_total"], ","),
+             format(facts["region_2008_04"], ",")))
+
     K = ["population", "year", "country", "gender", "age_group"]
     long = pd.DataFrame(out, columns=K + ["n"])
     long = long.groupby(K, as_index=False)["n"].sum()
     long = long[long["n"] != 0]
-    order = {b: i for i, b in enumerate(BANDS)}
+    order = {**{b: i for i, b in enumerate(OLD_BANDS + ["61+"])},
+             **{b: i for i, b in enumerate(BANDS)}}
     long = (long.assign(_b=long["age_group"].map(order))
                 .sort_values(["population", "year", "country", "_b", "gender"])
                 .drop(columns="_b").reset_index(drop=True))
@@ -2424,7 +2498,7 @@ def extend_age_sex():
     print("  wrote age_sex_long.csv: %s rows" % format(len(long), ","))
     print(long.groupby(["year", "population"]).size().unstack(1).to_string())
     # age_long.csv is 01's stay parse. The registered 2009-2013 rows this
-    # function used to append are what mixed the two bases; take them out.
+    # function used to append there are what mixed the two bases; take them out.
     base.to_csv(csv, index=False, encoding="utf-8-sig")
 
     # The dashboard's age.json is labelled 체류외국인. It is rewritten here from

@@ -307,7 +307,12 @@ def language_weights(data=None, countries=None):
     `countries` is the standard-name vocabulary of crosswalk_country. The shares
     table also holds a few other spellings of the same countries (마셜제도 beside the
     data's 마샬군도, 솔로몬제도 beside 솔로몬군도, ...) that no data file uses; they are
-    left out, so every country here has its crosswalk row (1라운드 수정, 2026-09-26)."""
+    left out, so every country here has its crosswalk row (1라운드 수정, 2026-09-26).
+    The other direction holds too: every standard name gets a row, with the note
+    'no first-language shares available' where the shares table has no entry. Until
+    2026-09-27 (5라운드 대조) the loop ran over the shares table alone, so 북한,
+    케이맨제도 and 한국계미국인, standard names with no people in the nationality files,
+    had no row although the dictionary promises one for every standard name."""
     data = data or RELEASE_DATA
     src = os.path.join(CLEAN, "country_language_shares.json")
     if not os.path.exists(src):
@@ -325,10 +330,8 @@ def language_weights(data=None, countries=None):
     skipped = sorted(c for c in shares if countries is not None and c not in countries)
     if skipped:
         print("     크로스워크에 없는 표기 %d개는 싣지 않는다: %s" % (len(skipped), ", ".join(skipped)))
-    for country in sorted(shares):
-        if countries is not None and country not in countries:
-            continue
-        items = shares[country] or []
+    for country in (sorted(countries) if countries is not None else sorted(shares)):
+        items = shares.get(country) or []
         if not items:
             rows.append([country, "", "", "", "no first-language shares available"])
             continue

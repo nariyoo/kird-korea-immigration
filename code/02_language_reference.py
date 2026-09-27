@@ -410,6 +410,10 @@ def build_language_shares():
         "팔레스타인": "PS", "리히텐슈타인": "LI", "모나코": "MC",
         "안도라": "AD", "산마리노": "SM", "지브롤터": "GI",
         "버뮤다": "BM", "마르티니크": "MQ", "괌": "GU", "스발바르": "SJ",
+        # crosswalk_country 의 표준 이름인데 CC_KO 에 없던 속령. 국적 파일에는 사람이
+        # 없지만 language_weights 는 표준 이름마다 행을 싣는다고 적고, Ethnologue 에는
+        # 항목이 있다(KY: English 50,000 L1). 2026-09-27 (5라운드 대조) 전에는 행이 없었다.
+        "케이맨제도": "KY",
     })
 
 
@@ -561,6 +565,14 @@ def build_language_shares():
         SPECIAL = {
             "한국계중국인": [{"language": "한국어", "share": 1.0}],
             "한국계러시아인": [{"language": "러시아어", "share": 1.0}],
+            # North Korea, under the name the data use (Ethnologue's KP sits under
+            # CC_KO's 조선민주주의인민공화국, which no data file uses). Its first
+            # language is Korean, as for 한국계중국인, so it adds nothing to
+            # language demand; left to Ethnologue, the Korean filter below would
+            # renormalize its 0.5% Korean Sign Language to 100%. The name had no
+            # language_weights row until 2026-09-27 (5라운드 대조); it has people only
+            # in the naturalization panels, which language_demand does not read.
+            "북한": [{"language": "한국어", "share": 1.0}],
             "국적불명": [{"language": "기타", "share": 1.0}],
             "무국적": [{"language": "기타", "share": 1.0}],
             # UN staff lines name an organization, not a country, and have no L1
