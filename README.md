@@ -69,9 +69,9 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `naturalization_by_country.csv` | a year, former nationality and route | 2011-2024 | 16,210 |
 | `naturalization_by_age.csv` | a year, age band and route | 2011-2024 | 1,620 |
 | `children_by_age.csv` | a district, single year of age and year | 2011-2024 | 63,486 |
-| `multicultural_households.csv` | a sub-district, household category and year | 2016-2024 | 299,791 |
+| `multicultural_households.csv` | a sub-district, household category and year | 2016-2024 | 342,016 |
 | `diaspora_residence_by_sido.csv` | a province, nationality and year (F-4 residence reports) | 2008-2024 | 6,172 |
-| `crosswalk_country.csv` | a source nationality label | 2006-2024 | 250 |
+| `crosswalk_country.csv` | a source nationality label | 2006-2024 | 268 |
 | `crosswalk_region.csv` | a source place name or boundary change | fixed | 87 |
 | `crosswalk_visa.csv` | a source status code | 2006-2024 | 231 |
 | `language_weights.csv` | a nationality and first language | fixed | 4,509 |
@@ -161,8 +161,9 @@ shares from the [Ethnologue 24 Global Dataset](https://www.ethnologue.com/), so 
 contributes fractionally to several languages. Korean is excluded, which is why the national total
 is well below the foreign population: nationalities whose first language is Korean, such as ethnic
 Koreans from China, contribute no demand. District rows carry the 20 languages with the largest
-estimate. Each estimate is summed over nationalities and rounded once, half up, so every row
-re-derives from the released counts and `language_weights.csv` (`validate_release.py` checks it).
+estimate. Each estimate is summed over nationalities and rounded once, half up, and a language is
+kept only when that sum reaches one person before rounding, so every row re-derives from the
+released counts and `language_weights.csv` (`validate_release.py` checks it).
 The national scope is computed from the published national staying-foreigners composition, the
 province and district scopes from the registered district-assigned tables, so the scopes are not
 nested sums.

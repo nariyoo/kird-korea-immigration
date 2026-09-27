@@ -57,8 +57,12 @@ VISA_LABEL_EN = {
     "F4": "Overseas Korean", "F5": "Permanent Residence", "F6": "Marriage Migration",
     "G1": "Other (Miscellaneous)",
     "H1": "Working Holiday", "H2": "Visiting Employment",
+    "M1": "Military Personnel",
     "T1": "Tourist Landing",
-    "ETC": "Unclassified (SOFA / Treaty)", "E0": "Treaty Activity",
+    "ETC": "Unclassified (SOFA / Treaty)",
+    # 2007-2009 editions: E0A 내항선원, E0B 어선원, E0C 순항선원 (3라운드 대조, 2026-09-27;
+    # it read Treaty Activity, and M1 had no entry, so its English label was the code)
+    "E0": "Crew Employment (coastal, fishing and cruise crew, to 2009)",
     "X00": "No status (0-0)",
 }
 
@@ -667,6 +671,33 @@ def add_emd_code_to_multicultural():
     emd = emd.drop_duplicates(subset=["year", "sigungu_code", "eupmyeondong"])
     key = ["year", "sigungu_code", "eupmyeondong"]
     merged = mc.merge(emd, on=key, how="left")
+    # MOIS spells some dongs differently in the two sheets of one workbook: sheet 11
+    # (this file) 신천1·2동 and 벌용동 where sheet 1-3 (summary_by_eupmyeondong) prints
+    # 신천1.2동 and 벌룡동 (2016-2019), and the 2023 sheet 1-3 dots five 대구 dongs
+    # that sheet 11 prints with a middle dot. The exact join left 14 dong-years
+    # without the code their counterpart has (3라운드 대조, 2026-09-27). A second pass
+    # compares the names with separators removed and the one spelling pair read as
+    # one, and takes a code only when a single sub-district of the district matches.
+    sep = re.compile(r"[\s·.,・ㆍᆞ‧･]")
+    same = {"벌룡동": "벌용동"}
+
+    def loose(name):
+        n = sep.sub("", str(name))
+        return same.get(n, n)
+
+    look = {}
+    for y, sg, nm, code in zip(emd["year"], emd["sigungu_code"], emd["eupmyeondong"],
+                               emd["adm_code"]):
+        look.setdefault((y, sg, loose(nm)), set()).add(code)
+    blank = merged["adm_code"].isna()
+    fill = [next(iter(look[k])) if len(look.get(k, ())) == 1 else None
+            for k in zip(merged.loc[blank, "year"], merged.loc[blank, "sigungu_code"],
+                         merged.loc[blank, "eupmyeondong"].map(loose))]
+    merged.loc[blank, "adm_code"] = fill
+    n_fill = sum(1 for v in fill if v is not None)
+    if n_fill:
+        print("add_emd_code_to_multicultural: %d행은 구분 기호·표기 쌍을 빼고 견줘 "
+              "코드를 붙였다" % n_fill)
     got = merged["adm_code"].notna().sum()
     merged = insert_after(merged.drop(columns=["adm_code"]), "adm_code", "eupmyeondong",
                           merged["adm_code"].values)
@@ -1575,17 +1606,31 @@ def build_data_dictionary():
          "exactly one of the five under a published non_naturalized, the masked value is "
          "recovered as the subtotal minus the other four, at every level (the sub-district "
          "file did not recover it before 2026-09-26); with two or more masked, they stay "
-         "blank.",
+         "blank. In summary_by_sido 2006 only, marriage_migrants is the source's "
+         "국제결혼이주자 group total, which includes that group's children, the same "
+         "children the children column counts, so marriage_migrants and children overlap "
+         "that year (Seoul: 19,848 = 2,719 men + 12,255 women + 4,874 children); from 2007 "
+         "the two are disjoint.",
          "미취득자 세부: 외국인근로자/결혼이민자/유학생/외국국적동포/기타. 행정안전부가 공표한 "
          "non_naturalized 아래 다섯 가운데 하나만 가렸으면 그 값은 소계에서 나머지 넷을 뺀 "
          "값으로 복원한다(모든 층; 읍면동 파일은 2026-09-26 전에는 복원하지 않았다). 둘 "
-         "이상 가렸으면 빈칸으로 둔다."),
+         "이상 가렸으면 빈칸으로 둔다. summary_by_sido 의 2006년만 marriage_migrants 가 "
+         "원자료의 국제결혼이주자 무리 합계라 그 무리의 자녀를 품고, 그 자녀는 children 칸에도 "
+         "있어 그 해에는 두 칸이 겹친다(서울 19,848 = 남 2,719 + 여 12,255 + 자녀 4,874). "
+         "2007년부터는 겹치지 않는다."),
         (SUMMARY_FILES, "naturalized", "integer",
-         "Residents who acquired Korean nationality (naturalized).",
-         "한국국적 취득자(귀화)."),
+         "Residents who acquired Korean nationality (naturalized). Where MOIS masks it "
+         "and prints broad_total, non_naturalized and children, it is broad_total less "
+         "the other two, at every level (the sub-district file left 1,443 such cells of "
+         "naturalized and children blank in 2016-2024 until 2026-09-27).",
+         "한국국적 취득자(귀화). 행정안전부가 이 칸만 가리고 broad_total, non_naturalized, "
+         "children 을 찍었으면 broad_total 에서 둘을 뺀 값으로 싣는다(모든 층; 읍면동 파일은 "
+         "2026-09-27 까지 2016-2024년의 그런 칸 1,443 개를 naturalized 와 children 에서 "
+         "비워 두었다)."),
         (SUMMARY_FILES, "children", "integer",
-         "Children of foreign residents (MOIS multicultural-family children).",
-         "외국인주민 자녀."),
+         "Children of foreign residents (MOIS multicultural-family children). Recovered "
+         "as naturalized is where it alone of the three is masked.",
+         "외국인주민 자녀. 셋 가운데 이 칸만 가렸으면 naturalized 와 같이 복원한다."),
         (SUMMARY_FILES, "foreign_resident_households", "integer",
          "MOIS foreign-resident households (외국인주민 세대수): the column the 2009-2015 "
          "editions print after the children block, at the province and district level "
@@ -1655,7 +1700,7 @@ def build_data_dictionary():
          "MOJ 국적구성 기반 다양성·집중·균등 지표(정의는 README). 2008/2009~. 지수는 "
          "층마다 그 단위를 하나로 보고 다시 계산하며, 아래 층의 평균이 아니다."),
         ("summary_by_sido.csv / summary_by_sigungu.csv", "index_base_k", "integer",
-         "Number of categories the diversity indices are computed over: those of the year's national top 19 nationalities present in the unit, plus one residual bin. It is at most 20: 20 for the country in every year and for every province from 2014, and less wherever some of the national top 19 are absent. It describes the index basis, not the unit. Carried the name n_nationalities through v1.1.0.", "다양성 지수를 계산한 칸 수. 그 해 전국 상위 19개국 가운데 그 단위에 있는 나라와 잔여 한 칸이며, 최대 20이다. 전국은 해마다, 시도는 2014년부터 20이고, 전국 상위 19개국 가운데 빠진 나라가 있는 곳은 20보다 작다. 그 지역의 성질이 아니라 지수의 밑변이다. v1.1.0 까지 n_nationalities 라는 이름으로 실렸다."),
+         "Number of categories the diversity indices are computed over: those of the year's national top 19 nationalities present in the unit, plus one residual bin. It is at most 20: 20 for the country in every year, and less wherever some of the national top 19 are absent. The province rows of 2006-2007, which have no district table, are computed over the five nationalities the province table names plus its Other column, so 6. It describes the index basis, not the unit. Carried the name n_nationalities through v1.1.0; until 2026-09-27 the province rows of 2006-2013 left the residual bin out (5 in 2006-2007, 18-19 in 2008-2013).", "다양성 지수를 계산한 칸 수. 그 해 전국 상위 19개국 가운데 그 단위에 있는 나라와 잔여 한 칸이며, 최대 20이다. 전국은 해마다 20이고, 전국 상위 19개국 가운데 빠진 나라가 있는 곳은 20보다 작다. 시군구 표가 없는 2006-2007년의 시도 행은 시도 표가 이름을 적은 다섯 국적과 그 표의 기타 칸으로 계산하므로 6이다. 그 지역의 성질이 아니라 지수의 밑변이다. v1.1.0 까지 n_nationalities 라는 이름으로 실렸다. 2026-09-27 까지 2006-2013년 시도 행은 잔여 칸을 빼고 계산했다(2006-2007 은 5, 2008-2013 은 18-19)."),
         ("summary_by_sido.csv / summary_by_sigungu.csv", "n_nationalities_observed",
          "integer", "Distinct nationalities the source lists for that unit and year, with the residual bin and every line that names no country (무국적, 미등록국가, 기타, 국적불명, 국제연합, 국제연합전문기구) excluded. Capped at 19 for 2008-2013, when the yearbook publishes only the top 19 plus a residual at the district level; full detail from 2014.", "그 단위·그 해에 연감이 싣는 국적 수(잔여 칸과 나라 이름이 없는 줄, 곧 무국적·미등록국가·기타·국적불명·국제연합·국제연합전문기구 제외). 연감이 시군구 단위에서 전체 국적을 싣기 시작한 해가 2014년이라 2008-2013 은 19에서 막힌다."),
         ("summary_by_sigungu.csv", "lisa", "string",
@@ -1876,11 +1921,16 @@ def build_data_dictionary():
         ("multicultural_households.csv", "adm_code", "string",
          "Administrative-dong code of the eupmyeondong for that year, the same code "
          "summary_by_eupmyeondong carries (joined on year, sigungu_code and the dong "
-         "name); blank where the sub-district could not be matched that year. Added in "
-         "v1.2.0 so this file joins on a code and not a name.",
+         "name; where MOIS spells one dong differently in its two sheets, 신천1·2동 "
+         "against 신천1.2동 or 벌용동 against 벌룡동, the names are compared with "
+         "separators removed and the one listed spelling pair read as one); blank "
+         "where summary_by_eupmyeondong has no code for that sub-district either. Added "
+         "in v1.2.0 so this file joins on a code and not a name.",
          "그 해 읍면동의 행정동코드. summary_by_eupmyeondong 과 같은 코드를 (연도, "
-         "sigungu_code, 동 이름)으로 옮겨 붙였고, 그 해에 짝을 못 찾은 곳은 공백이다. 이름이 "
-         "아니라 코드로 붙이라고 v1.2.0 에서 넣었다."),
+         "sigungu_code, 동 이름)으로 옮겨 붙였다. MOIS 가 한 동을 두 시트에서 달리 적은 "
+         "곳(신천1·2동 과 신천1.2동, 벌용동 과 벌룡동)은 구분 기호를 빼고, 목록에 적은 한 "
+         "쌍은 같은 이름으로 견준다. summary_by_eupmyeondong 에도 코드가 없는 곳은 "
+         "공백이다. 이름이 아니라 코드로 붙이라고 v1.2.0 에서 넣었다."),
         ("multicultural_households.csv", "eupmyeondong", "string",
          "Sub-district (eup/myeon/dong), Korean only.", "읍·면·동(한글만)."),
         ("multicultural_households.csv", "category / category_en", "string",
@@ -1895,8 +1945,17 @@ def build_data_dictionary():
          "카테고리 계층: 'total'(합계)/'subtotal'(3개 _소계)/'leaf'(말단). 합산 전 한 레벨만 "
          "골라야 중복집계 방지."),
         ("multicultural_households.csv", "n", "integer",
-         "MOIS multicultural household members of that type (2016-2024).",
-         "해당 유형 다문화가구원 수(2016-2024)."),
+         "MOIS multicultural household members of that type (2016-2024). MOIS masks "
+         "every count under 5 ('*'). A masked cell the sub-district's own printed cells "
+         "determine is carried (a part masked alone beside its subtotal and sibling, "
+         "one of the four groups masked alone under the total, a subtotal whose parts "
+         "are printed), and may be 0; a cell masked together with another of its "
+         "identity has no row. Until 2026-09-27 no masked cell had a row.",
+         "해당 유형 다문화가구원 수(2016-2024). MOIS 는 5 미만을 모두 가린다('*'). 그 "
+         "읍면동의 찍힌 칸으로 정해지는 가린 칸(소계와 짝 항목 곁에 홀로 가린 항목, 합계 "
+         "아래 네 무리 가운데 홀로 가린 무리, 항목이 모두 찍힌 소계)은 싣고 0 일 수 있다. "
+         "같은 항등식의 다른 칸과 함께 가린 칸은 행이 없다. 2026-09-27 까지는 가린 칸에 "
+         "행이 하나도 없었다."),
         # ---------- naturalization ----------
         ("naturalization_annual.csv / naturalization_by_country.csv / naturalization_by_age.csv",
          "year", "integer",
@@ -2025,7 +2084,9 @@ def build_data_dictionary():
         ("crosswalk_country.csv", "rule", "string",
          "'source label variant' where an edition spells a nationality differently "
          "(the 2017 edition's parenthesized labels are listed as printed, "
-         "'(printed in parentheses)'); 'separate yearbook line folded into this "
+         "'(printed in parentheses)', and so is a name printed with a space between "
+         "words, such as 한국계 중국인 or 국제연합 전문기구, '(printed with a space)'); "
+         "'separate yearbook line folded into this "
          "country' where the label is a line of its own that the release adds to "
          "another nationality: a territory (미국인근섬, 영령인도양섬, ...), a British "
          "nationality class (영국외지민, 영국외지시민, 영국해외영토시민, ...), the legacy "
@@ -2035,10 +2096,14 @@ def build_data_dictionary():
          "홍콩거주난민 14); 'unchanged' where the label is the standard name itself. "
          "Every standard name has an 'unchanged' row, including those other labels "
          "merge into (미국, 영국, 타이, 러시아(연방), ...), which lacked one until "
-         "2026-09-26. Every label the raw status and district tables print has a row "
-         "(check_published_totals.py holds the raw tables to this file).",
+         "2026-09-26. Every label the raw status and district tables print has a row, "
+         "and every 'source label variant' row is a label they print "
+         "(check_published_totals.py holds the raw tables to this file both ways; "
+         "until 2026-09-27 a 대만 row stood for a spelling no edition prints).",
          "어느 판이 국적을 다르게 적은 자리는 'source label variant'(2017년판의 괄호 "
-         "표기는 찍힌 그대로 '(printed in parentheses)'); 연보가 따로 찍는 줄을 배포본이 "
+         "표기는 찍힌 그대로 '(printed in parentheses)', 낱말 사이를 띄어 찍은 이름(한국계 "
+         "중국인, 국제연합 전문기구 등)도 찍힌 그대로 '(printed with a space)'); 연보가 따로 "
+         "찍는 줄을 배포본이 "
          "다른 국적에 더하는 자리는 'separate yearbook line folded into this country': "
          "속령(미국인근섬, 영령인도양섬 등), 영국 국적 부류(영국외지민, 영국외지시민, "
          "영국해외영토시민 등), 옛 코드 자이르와 홍콩거주난민으로, 최근 판은 합쳐지는 나라 "
@@ -2047,7 +2112,9 @@ def build_data_dictionary():
          "14). 표기가 곧 표준 이름이면 'unchanged'. 다른 표기가 합쳐지는 이름(미국, 영국, "
          "타이, 러시아(연방) 등)을 포함해 모든 표준 이름에 'unchanged' 행이 있다"
          "(2026-09-26 전에는 없었다). 원자료의 체류자격·시군구 표가 찍는 모든 표기에 행이 "
-         "있다(check_published_totals.py 가 원자료와 맞댄다)."),
+         "있고, 'source label variant' 행은 모두 그 표가 찍는 표기다(check_published_totals.py "
+         "가 두 방향으로 원자료와 맞댄다; 2026-09-27 까지는 어느 판도 찍지 않는 대만 행이 "
+         "있었다)."),
         ("crosswalk_region.csv", "level", "string",
          "Administrative level the row applies to: sido, sigungu, eupmyeondong, or "
          "'lineage' for a boundary-change record.",
@@ -2158,11 +2225,14 @@ def build_data_dictionary():
          "Estimated speakers = nationality count x that country's L1 (mother-tongue) "
          "speaker share (Ethnologue 24; the shares are language_weights.csv), summed "
          "over nationalities and rounded once, half up, to whole persons. Korean "
-         "excluded; an estimate below one person is dropped. Every row re-derives "
-         "exactly from the released nationality counts and language_weights.csv.",
+         "excluded. A language is kept only when that sum, before rounding, reaches "
+         "one person: a sum of 0.5 to 0.999 is dropped, although rounding alone would "
+         "give 1. Every row re-derives exactly from the released nationality counts "
+         "and language_weights.csv.",
          "추정 화자수 = 국적별 인원 x 해당국 L1 모어 share(Ethnologue 24; 비중은 "
          "language_weights.csv) 를 국적마다 더한 뒤 한 번만, 반올림(0.5 올림)으로 정수. "
-         "한국어 제외, 1명 미만 추정치는 뺀다. 모든 행이 공개된 국적 인원과 "
+         "한국어 제외. 반올림하기 전의 합이 1명에 이르는 언어만 싣는다. 합이 0.5 이상 1 "
+         "미만이면 반올림만으로는 1 이지만 뺀다. 모든 행이 공개된 국적 인원과 "
          "language_weights.csv 에서 그대로 다시 나온다."),
         ("segregation_by_nationality.csv", "year", "integer", "Reference year (2014-2024).",
          "기준연도(2014-2024)."),
@@ -2375,7 +2445,7 @@ def build_data_dictionary():
          "Moran's I of the district foreign-share surface (spatial autocorrelation).",
          "시군구 외국인비율의 Moran's I(공간 자기상관)."),
         ("national_annual.csv", "index_base_k", "integer",
-         "Number of categories the diversity indices are computed over: those of the year's national top 19 nationalities present in the unit, plus one residual bin. It is at most 20: 20 for the country in every year and for every province from 2014, and less wherever some of the national top 19 are absent. It describes the index basis, not the unit. Carried the name n_nationalities through v1.1.0.", "다양성 지수를 계산한 칸 수. 그 해 전국 상위 19개국 가운데 그 단위에 있는 나라와 잔여 한 칸이며, 최대 20이다. 전국은 해마다, 시도는 2014년부터 20이고, 전국 상위 19개국 가운데 빠진 나라가 있는 곳은 20보다 작다. 그 지역의 성질이 아니라 지수의 밑변이다. v1.1.0 까지 n_nationalities 라는 이름으로 실렸다."),
+         "Number of categories the diversity indices are computed over: those of the year's national top 19 nationalities present in the unit, plus one residual bin. It is at most 20: 20 for the country in every year, and less wherever some of the national top 19 are absent. The province rows of 2006-2007, which have no district table, are computed over the five nationalities the province table names plus its Other column, so 6. It describes the index basis, not the unit. Carried the name n_nationalities through v1.1.0; until 2026-09-27 the province rows of 2006-2013 left the residual bin out (5 in 2006-2007, 18-19 in 2008-2013).", "다양성 지수를 계산한 칸 수. 그 해 전국 상위 19개국 가운데 그 단위에 있는 나라와 잔여 한 칸이며, 최대 20이다. 전국은 해마다 20이고, 전국 상위 19개국 가운데 빠진 나라가 있는 곳은 20보다 작다. 시군구 표가 없는 2006-2007년의 시도 행은 시도 표가 이름을 적은 다섯 국적과 그 표의 기타 칸으로 계산하므로 6이다. 그 지역의 성질이 아니라 지수의 밑변이다. v1.1.0 까지 n_nationalities 라는 이름으로 실렸다. 2026-09-27 까지 2006-2013년 시도 행은 잔여 칸을 빼고 계산했다(2006-2007 은 5, 2008-2013 은 18-19)."),
         ("national_annual.csv", "n_nationalities_observed", "integer",
          "Distinct nationalities the source lists for that unit and year, with the residual bin and every line that names no country (무국적, 미등록국가, 기타, 국적불명, 국제연합, 국제연합전문기구) excluded. Capped at 19 for 2008-2013, when the yearbook publishes only the top 19 plus a residual at the district level; full detail from 2014.", "그 단위·그 해에 연감이 싣는 국적 수(잔여 칸과 나라 이름이 없는 줄, 곧 무국적·미등록국가·기타·국적불명·국제연합·국제연합전문기구 제외). 연감이 시군구 단위에서 전체 국적을 싣기 시작한 해가 2014년이라 2008-2013 은 19에서 막힌다."),
         ("national_annual.csv", "n_enclaves", "integer",

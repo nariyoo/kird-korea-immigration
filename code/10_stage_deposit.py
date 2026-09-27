@@ -194,10 +194,11 @@ def add_refugee_files():
 
     Language demand is derived exactly like the general language_demand.csv: each
     nationality's count is split across its country's first-language (L1) speaker
-    shares from Ethnologue 24 (SIL Global 2021), Korean excluded. The counts are read
-    from refugee_data.language_demand in data.json (built by add_refugee_language() in
-    03_extend_panel.py, off country_language_shares.json); English language labels are taken from the same
-    lang_ko_en.json the deposit uses.
+    shares from Ethnologue 24 (SIL Global 2021), Korean excluded, in kird's exact
+    integer units and rounded once. The nationality counts are the refugee_data lists
+    in data.json and the shares country_language_shares.json (the table
+    language_weights.csv publishes); English language labels are taken from the same
+    lang_ko_en.json the deposit uses, then from the dashboard's refugee block.
     """
     HERE = os.path.dirname(os.path.abspath(__file__))
     DJ = os.path.join(ROOT, "05_dashboard", "data", "data.json")
@@ -276,28 +277,47 @@ def add_refugee_files():
                   nat_rows)
 
         # ---- 2) refugee_language_demand.csv (estimated, Ethnologue L1 split) ----
-        # Counts are person counts: round to whole persons (round half up) and keep
-        # the top 20 languages per status, matching the deposit's integer convention
-        # and the sigungu-scope top-~20 cap in the general language_demand. (The 20th
-        # language is well above 1 person in every status, so rounding never erases a
-        # kept language; the fractional long tail is dropped as spurious precision on
-        # this small, approximate population.)
-        lang_rows = []
+        # Each status's ten named nationalities x their first-language shares, summed
+        # in kird.language_estimate's exact integer units and rounded once, half up, to
+        # whole persons; the 20 largest languages per status, a language kept only
+        # when its sum before rounding reaches one person, as in language_demand. 보호
+        # is recognized + humanitarian, ranked on its own sum. 3라운드 대조
+        # (2026-09-27): the counts were read from data.json's refugee block, already
+        # rounded to one decimal, and rounded again, so 난민인정 암하라어 (49.49) read 50,
+        # 인도적체류 아르메니아어 (4.50) 5, and 아시리아어 (13.48) 14 in two statuses.
+        from kird import LANG_UNIT, language_estimate, lang_persons
+        shares = json.load(open(os.path.join(ROOT, "03_cleaned_data",
+                                             "country_language_shares.json"),
+                                encoding="utf-8"))
         ld = rd["language_demand"]
+        ld_en = {d["language"]: d.get("language_en") for lst in ld.values() for d in lst}
+        counts = {}
+        for status, key in (("난민인정", "top_recognized_nationalities"),
+                            ("인도적체류", "top_humanitarian_nationalities")):
+            c_ = {}
+            for ko, _en, n, _pct in rd.get(key, []):
+                c = COUNTRY_CANONICAL.get(ko, ko)
+                c = c if c in shares else ko
+                if c not in shares:
+                    raise SystemExit(f"refugee {status}: {ko} has no first-language shares")
+                c_[c] = c_.get(c, 0) + int(n)
+            counts[status] = c_
+        counts["보호"] = {c: counts["난민인정"].get(c, 0) + counts["인도적체류"].get(c, 0)
+                        for c in set(counts["난민인정"]) | set(counts["인도적체류"])}
+        lang_rows = []
         TOP_N = 20
         for status in ("난민인정", "인도적체류", "보호"):
             skey = STATUS_EN[status]
-            top = sorted(ld[skey], key=lambda d: -d["count"])[:TOP_N]
-            for d in top:
-                count = int(float(d["count"]) + 0.5)  # round half up to whole persons
-                if count < 1:
+            est = language_estimate(counts[status], shares)
+            for src, u in sorted(est.items(), key=lambda kv: (-kv[1], kv[0]))[:TOP_N]:
+                if u < LANG_UNIT:
                     continue
-                src = d["language"]
+                count = lang_persons(u)
                 if src in LANG_LABEL:
                     ko, en = LANG_LABEL[src]
                 else:
                     ko = src
-                    en = lang_en.get(src) or d.get("language_en") or src
+                    en = lang_en.get(src) or ld_en.get(src) or src
                 lang_rows.append([status, skey, ko, en, count])
 
         # Verify every label is bilingual: Korean column in Hangul, English column not.
@@ -341,8 +361,8 @@ def add_refugee_files():
             ["refugee_language_demand.csv", "language / language_en", "string",
              "Estimated first language (Korean + English).", "추정 모어(한글+영문)."],
             ["refugee_language_demand.csv", "count", "integer",
-             "Estimated speakers = cumulative nationality count x that country's L1 (mother-tongue) share (Ethnologue 24, SIL Global 2021), rounded to whole persons; Korean excluded. Top 20 languages per status. Built from the published top-10 nationalities only: the 기타 line of refugee_by_nationality names no nationality and is not allocated to a language (approximation of the full population's interpretation demand).",
-             "추정 화자수 = 누적 국적 인원 x 해당국 L1 모어 share(Ethnologue 24), 사람 수로 반올림; 한국어 제외. 구분별 상위 20개 언어. 공개 top-10 국적만 반영하며, refugee_by_nationality 의 기타 줄은 국적이 없어 언어로 나누지 않는다(근사치)."],
+             "Estimated speakers = cumulative nationality count x that country's L1 (mother-tongue) share (Ethnologue 24, SIL Global 2021; the shares are language_weights.csv), summed over nationalities and rounded once, half up, to whole persons; Korean excluded. Top 20 languages per status, a language kept only when its sum before rounding reaches one person. Every row re-derives from refugee_by_nationality.csv and language_weights.csv (qc_deposit_staging.py checks it; until 2026-09-27 the counts were rounded twice and four rows were one person high). Built from the published top-10 nationalities only: the 기타 line of refugee_by_nationality names no nationality and is not allocated to a language (approximation of the full population's interpretation demand).",
+             "추정 화자수 = 누적 국적 인원 x 해당국 L1 모어 share(Ethnologue 24; 비중은 language_weights.csv) 를 국적마다 더한 뒤 한 번만, 반올림(0.5 올림)으로 사람 수; 한국어 제외. 구분별 상위 20개 언어이고, 반올림 전 합이 1명에 이르는 언어만 싣는다. 모든 행이 refugee_by_nationality.csv 와 language_weights.csv 에서 다시 나온다(qc_deposit_staging.py 가 본다; 2026-09-27 까지는 두 번 반올림해 네 행이 1명 많았다). 공개 top-10 국적만 반영하며, refugee_by_nationality 의 기타 줄은 국적이 없어 언어로 나누지 않는다(근사치)."],
         ]
         # Idempotent: drop any existing refugee_* dictionary rows, then re-append, so
         # this script can be re-run without duplicating rows. Rewrite with one BOM and

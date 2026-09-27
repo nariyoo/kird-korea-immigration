@@ -817,7 +817,9 @@ def build_long(files):
     CANONICAL_LABELS = {
         "A1": "외교", "A2": "공무", "A3": "협정",
         "B1": "사증면제", "B2": "관광통과",
-        "C1": "일시취재", "C3": "단기방문", "C4": "단기취업",
+        # C-2 단기상용 and M-1 군인 are printed through the 2011 and 2009 editions;
+        # without a key here their label was the bare code (3라운드 대조, 2026-09-27)
+        "C1": "일시취재", "C2": "단기상용", "C3": "단기방문", "C4": "단기취업",
         "D1": "문화예술", "D2": "유학", "D3": "기술연수", "D4": "일반연수",
         "D5": "취재", "D6": "종교", "D7": "주재", "D8": "기업투자",
         "D9": "무역경영", "D10": "구직",
@@ -828,10 +830,15 @@ def build_long(files):
         "F5": "영주", "F6": "결혼이민",
         "G1": "기타비자",
         "H1": "관광취업", "H2": "방문취업",
+        "M1": "군인",  # 2006-2009 editions
         "T1": "관광상륙",
         "ETC": "분류외 (SOFA·협정 등)",
         "X00": "자격없음 (0-0)",  # 2014 stay edition only
-        "E0": "협정활동",  # 2007-2009 only
+        # 2007-2009 editions only. They print no E-0 column, only E0A 내항선원, E0B
+        # 어선원 and (2009) E0C 순항선원, the three subdivisions of the crew status the
+        # 2010 edition on prints as E-10 선원취업. Until 2026-09-27 (3라운드 대조) the
+        # label read 협정활동 (treaty activity), which no edition prints.
+        "E0": "선원취업 (내항·어선·순항선원, 2009년까지)",
     }
     long["visa_label"] = long["visa_code"].map(
         lambda c: CANONICAL_LABELS.get(c, c)
@@ -1253,7 +1260,7 @@ COUNTRY_EN_OVERRIDES = {
 CANONICAL_LABELS_KO = {
     "A1": "외교", "A2": "공무", "A3": "협정",
     "B1": "사증면제", "B2": "관광통과",
-    "C1": "일시취재", "C3": "단기방문", "C4": "단기취업",
+    "C1": "일시취재", "C2": "단기상용", "C3": "단기방문", "C4": "단기취업",
     "D1": "문화예술", "D2": "유학", "D3": "기술연수", "D4": "일반연수",
     "D5": "취재", "D6": "종교", "D7": "주재", "D8": "기업투자",
     "D9": "무역경영", "D10": "구직",
@@ -1264,10 +1271,11 @@ CANONICAL_LABELS_KO = {
     "F5": "영주", "F6": "결혼이민",
     "G1": "기타비자",
     "H1": "관광취업", "H2": "방문취업",
+    "M1": "군인",
     "T1": "관광상륙",
     "ETC": "분류외 (SOFA·협정 등)",
     "X00": "자격없음 (0-0)",
-    "E0": "협정활동",
+    "E0": "선원취업 (내항·어선·순항선원, 2009년까지)",
 }
 
 
@@ -1596,10 +1604,13 @@ VISA_INFO = {
         "max_stay_en": "Per agreement/mission",
     },
     "E0": {
-        "purpose_ko": "(2007~2009 한정) 협정활동 비자. 이후 E-7 등으로 통합",
-        "purpose_en": "(2007 to 2009 only) Treaty activity visa, later absorbed into E-7 etc.",
-        "eligibility_ko": "이 시기 협정 기반 활동자",
-        "eligibility_en": "Treaty-activity workers during this period",
+        # 2007-2009 editions print E0A 내항선원, E0B 어선원 and (2009) E0C 순항선원 and no
+        # E-0 column; E-10's subdivisions are E-10-1 내항선원, E-10-2 어선원 and E-10-3
+        # 순항여객선원. This entry said 협정활동 until 2026-09-27 (3라운드 대조).
+        "purpose_ko": "(2007~2009년판) 선원 취업: 내항선원(E0A), 어선원(E0B), 순항선원(E0C, 2009년판). 2010년판부터 연보가 선원취업(E-10)으로 싣는 자격의 세 구분(E-10-1 내항선원, E-10-2 어선원, E-10-3 순항여객선원)과 같다",
+        "purpose_en": "(2007 to 2009 editions) Crew employment: coastal-route crew (E0A), fishing-vessel crew (E0B) and cruise-ship crew (E0C, 2009 edition), the three subdivisions of the crew status (E-10-1, E-10-2, E-10-3) the yearbook prints as Crew Employment (E-10) from the 2010 edition",
+        "eligibility_ko": "선원 자격 + 선사·선주와의 고용계약",
+        "eligibility_en": "Maritime crew qualifications + employment contract with a shipping company or vessel owner",
         "max_stay_ko": "-",
         "max_stay_en": "-",
     },
@@ -2788,7 +2799,9 @@ REFUGEE_DATA = {
         ["단기종합 (C-3)", "Short-term (C-3)", 40773, 33.4],
         ["관광통과 (B-2)", "Tourist Transit (B-2)", 9395, 7.7],
         ["비전문취업 (E-9)", "Non-professional Employment (E-9)", 8622, 7.1],
-        ["난민신청자 재신청 (G-1-5)", "Refugee Re-applicant (G-1-5)", 7221, 5.9],
+        # the bulletin's column is 난민 신청자 (G1-5): the visa status held when filing,
+        # not a re-application (3라운드 대조, 2026-09-27; it read 재신청 / Re-applicant)
+        ["난민신청자 (G-1-5)", "Refugee Applicant (G-1-5)", 7221, 5.9],
         ["출국기한유예", "Departure Postponed", 3814, 3.1],
         ["유학 (D-2/D-4)", "Student (D-2/D-4)", 2808, 2.3],
         ["기타", "Other", 5166, 4.2],
@@ -3433,7 +3446,8 @@ def export_json(stay_long, reg_long, out_path, stay_all=None, reg_all=None):
     VISA_LABEL_EN = {
         "A1": "Diplomatic", "A2": "Official Mission", "A3": "Treaty",
         "B1": "Visa Exemption", "B2": "Tourist Transit",
-        "C1": "Temporary Coverage", "C3": "Short-term Visit", "C4": "Short-term Employment",
+        "C1": "Temporary Coverage", "C2": "Short-term Business", "C3": "Short-term Visit",
+        "C4": "Short-term Employment",
         "D1": "Culture & Arts", "D2": "Student", "D3": "Industrial Trainee",
         "D4": "General Trainee", "D5": "Journalism", "D6": "Religious Worker",
         "D7": "Intra-company Transferee", "D8": "Corporate Investment",
@@ -3448,10 +3462,11 @@ def export_json(stay_long, reg_long, out_path, stay_all=None, reg_all=None):
         "F4": "Overseas Korean", "F5": "Permanent Residence", "F6": "Marriage Migration",
         "G1": "Other (Miscellaneous)",
         "H1": "Working Holiday", "H2": "Visiting Employment",
+        "M1": "Military Personnel",
         "T1": "Tourist Landing",
         "ETC": "Unclassified (SOFA · Treaty)",
         "X00": "No status (0-0)",
-        "E0": "Treaty Activity",
+        "E0": "Crew Employment (coastal, fishing and cruise crew, to 2009)",
     }
 
     VISA_FAMILY_LABELS_EN = {

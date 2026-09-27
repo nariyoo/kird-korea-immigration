@@ -9,6 +9,7 @@ CSVs follow from the same reconciled JSON.
 from collections import defaultdict
 import csv
 import json
+import math
 import os
 import re
 
@@ -63,6 +64,16 @@ def enrich(r):
             r[missing[0]] = max(r["한국국적미취득_소계"] - present, 0)
     if "한국국적취득자" not in r and ("혼인귀화자" in r or "기타귀화자" in r):
         r["한국국적취득자"] = (r.get("혼인귀화자") or 0) + (r.get("기타귀화자") or 0)
+    # The same one level up: 합계 = 미취득_소계 + 취득 + 자녀, so under a published
+    # 합계 and 미취득_소계 (2009+ schema) one masked of 한국국적취득자 and 외국인주민자녀
+    # is the total less the other two. 3라운드 대조 (2026-09-27): the sub-district file
+    # left 1,443 such cells blank in 2016-2024 (2016 강릉시 경포동: 303 - 290 - 11 = 2
+    # naturalized), though the same file recovers a masked leaf under 미취득_소계.
+    if r.get("합계") is not None and r.get("한국국적미취득_소계") is not None:
+        top = [k for k in ("한국국적취득자", "외국인주민자녀") if r.get(k) is None]
+        if len(top) == 1:
+            other = "외국인주민자녀" if top[0] == "한국국적취득자" else "한국국적취득자"
+            r[top[0]] = max(r["합계"] - r["한국국적미취득_소계"] - r[other], 0)
     if "한국국적미취득_소계" not in r and all(k in r for k in ("합계", "한국국적취득자", "외국인주민자녀")):
         r["한국국적미취득_소계"] = r["합계"] - r["한국국적취득자"] - r["외국인주민자녀"]
     return r
@@ -204,19 +215,47 @@ def summary_sigungu_and_sido():
          ("청주시 상당구", "청주시 서원구", "청주시 청원구", "청주시 흥덕구"))]
 
 
-    def apportion(cr, frac):
-        """A share `frac` of the enriched MOIS row `cr`: the published leaves are
-        rounded, then the subtotal and total rebuilt from them, so the source identity
-        holds row by row. Categories the row does not publish stay absent."""
-        r = {k: round((cr[k] or 0) * frac) for k in CNT
-             if k in cr and k not in ("합계", "한국국적미취득_소계")}
-        comps = [k for k in COMP_KO if k in r]
-        if comps and "한국국적취득자" in r and "외국인주민자녀" in r:
-            r["한국국적미취득_소계"] = sum(r[k] for k in comps)
-            r["합계"] = r["한국국적미취득_소계"] + r["한국국적취득자"] + r["외국인주민자녀"]
+    def split_count(total, weights):
+        """`total` whole persons split over the units in proportion to `weights` by the
+        largest-remainder rule: each unit takes the whole part of its share, and the
+        persons left go one each to the largest fractions (ties to the larger weight,
+        then the name), so the parts add up to `total` exactly."""
+        W = float(sum(weights.values()))
+        raw = {u: total * w / W for u, w in weights.items()}
+        got = {u: int(math.floor(v + 1e-9)) for u, v in raw.items()}
+        left = int(total) - sum(got.values())
+        for u in sorted(weights, key=lambda u: (-(raw[u] - got[u]), -weights[u], u))[:max(left, 0)]:
+            got[u] += 1
+        return got
+
+
+    def split_exact(cr, weights):
+        """The enriched MOIS row `cr` split over the units in `weights` ({unit:
+        weight}): every published leaf by split_count, so the units add up to the
+        row's published value in every field, then each unit's subtotal and total
+        rebuilt from its own leaves, so the source identity holds row by row too.
+        Categories the row does not publish stay absent.
+
+        Until 2026-09-27 (3라운드 대조) each unit rounded its own share of each field,
+        so a city's gu missed the city's published value by 1-3 people in a field
+        (2014 용인시: broad_total 23,589 against 23,592); the exact split moved 181
+        district cells of 2008-2015 by 1 to 3."""
+        out = {u: {} for u in weights}
+        for k in CNT:
+            if k not in cr or k in ("합계", "한국국적미취득_소계"):
+                continue
+            for u, n in split_count(int(round(cr[k] or 0)), weights).items():
+                out[u][k] = n
+        full = all(k in cr for k in ("한국국적취득자", "외국인주민자녀")) and \
+            any(k in cr for k in COMP_KO)
+        if full:
+            for r in out.values():
+                r["한국국적미취득_소계"] = sum(r[k] for k in COMP_KO if k in r)
+                r["합계"] = r["한국국적미취득_소계"] + r["한국국적취득자"] + r["외국인주민자녀"]
         elif "합계" in cr:
-            r["합계"] = round((cr["합계"] or 0) * frac)
-        return r
+            for u, n in split_count(int(round(cr["합계"] or 0)), weights).items():
+                out[u]["합계"] = n
+        return out
 
 
     def add_broad(r, extra):
@@ -259,10 +298,12 @@ def summary_sigungu_and_sido():
                 pool = rows_[0]
                 for e in rows_[1:]:
                     pool = add_broad(pool, e)
-                W = sum(w_of[d] for d in dsts)
-                for d in dsts:
-                    out[(sd, d)] = ((dict(pool), False) if len(dsts) == 1
-                                    else (apportion(pool, w_of[d] / W), True))
+                if len(dsts) == 1:
+                    out[(sd, dsts[0])] = (dict(pool), False)
+                else:
+                    parts = split_exact(pool, {d: w_of[d] for d in dsts})
+                    for d in dsts:
+                        out[(sd, d)] = (parts[d], True)
                 used |= {(sd, m) for m in srcs}
         return out, used
 
@@ -320,12 +361,31 @@ def summary_sigungu_and_sido():
             residual_si = {k for k in bare_si if k in gu_parent and not any(
                 u.get("total_pop") for u in units if (u["sido"], u["sigungu"]) == k)}
             bare_si -= residual_si
+            city_gu = defaultdict(dict)
             for u in units:
                 sg = u["sigungu"]
                 if " " in sg and sg.split(" ", 1)[1].endswith("구") and sg.split(" ", 1)[0].endswith("시"):
                     key = (u["sido"], sg.split(" ", 1)[0])
                     child_reg[key] += (u.get("foreign_total") or 0)
                     child_pop[key] += (u.get("total_pop") or 0)
+                    city_gu[key][sg] = u
+            gu_split = {}
+
+            def city_split(sido, city, cr):
+                """The city's MOIS row split over every gu of the city at once, by
+                registered foreigners, or by resident population where the city has
+                none. A gu with no registered foreigners in a city that has some
+                would take no share, where the per-gu rule gave it a population
+                share; none occurs, and the build stops if one does."""
+                gus = city_gu[(sido, city)]
+                w = {g: (u.get("foreign_total") or 0) for g, u in gus.items()}
+                if not sum(w.values()):
+                    w = {g: (u.get("total_pop") or 0) for g, u in gus.items()}
+                elif not all(w.values()):
+                    raise SystemExit(f"{y} {sido} {city}: a gu without registered "
+                                     f"foreigners, {w}; decide its share before splitting")
+                return split_exact(cr, w) if sum(w.values()) else {}
+
             for u in units:
                 sido = u["sido"]; sg0 = u["sigungu"]
                 sg = canon(sido, sg0)
@@ -340,18 +400,19 @@ def summary_sigungu_and_sido():
                 elif r is None and " " in sg0 and sg0.split(" ", 1)[1].endswith("구") and sg0.split(" ", 1)[0].endswith("시") \
                         and (sido, sg0.split(" ", 1)[0]) not in bare_si:
                     # 일반구 구인데 MOIS엔 부모 시만(2008-2015) → 부모 시 광의를 구 등록외국인 비중으로 안분.
-                    # 발행된 카테고리만 안분(미발행은 공란 유지). leaf를 먼저 반올림한 뒤
-                    # 소계/합계를 그 합으로 재구성해 공개 항등식이 행 단위로 정확히 성립.
+                    # 발행된 카테고리만 안분(미발행은 공란 유지). 시 하나의 구 전부를 한 번에
+                    # 나누어(최대잉여) 구의 합이 시의 공표값과 칸마다 같고, 소계/합계는 구의
+                    # leaf 합으로 재구성해 공개 항등식이 행 단위로도 정확히 성립(2026-09-27).
                     city = sg0.split(" ", 1)[0]
                     cr = enrich(ml.get(norm(city)))
-                    w = u.get("foreign_total") or 0
-                    denom = child_reg.get((sido, city), 0)
-                    if not (w and denom):                      # fallback: 인구가중
-                        w, denom = tp or 0, child_pop.get((sido, city), 0)
-                    if cr and denom and w:
-                        r = apportion(cr, w / denom)
-                        napprox += 1
-                        apportioned = True
+                    if cr:
+                        if (sido, city) not in gu_split:
+                            gu_split[(sido, city)] = city_split(sido, city, cr)
+                        part = gu_split[(sido, city)].get(sg0)
+                        if part is not None:
+                            r = dict(part)
+                            napprox += 1
+                            apportioned = True
                 r = r or {}
                 if (sido, sg) in extra_y:            # fold a predecessor district's broad onto its successor
                     r = add_broad(r, extra_y[(sido, sg)])

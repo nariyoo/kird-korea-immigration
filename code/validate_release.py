@@ -20,14 +20,16 @@ What is checked
     dictionary     data_dictionary.csv covers every column, both directions
     bilingual      an English value wherever a Korean one appears
     identities     broad_total = non_naturalized + naturalized + children, and
-                   non_naturalized = its five components
+                   non_naturalized = its five components; no cell blank that
+                   these identities, or multicultural_households' own, determine
     rates          foreign_share_pct, settlement_rate_pct and the three dependence
                    rates recompute from the published counts
     indices        shannon_H, evenness, HHI, index_base_k, n_nationalities_observed
                    and continent_H recomputed from nationality_by_sigungu
     segregation    dissimilarity_D, isolation, interaction_korean and
                    theil_segregation_H recomputed from the counts and resident_pop
-    cross-file     district sums reconcile with the sido and national tables
+    cross-file     district sums reconcile with the sido and national tables, the
+                   broad-definition columns included, exactly
     age bases      age_sex_national carries registered 2009- and stay 2011- as
                    two labelled series, and each sums to nationality_national
                    for the same population, line and year (the lines that name no
@@ -37,7 +39,8 @@ What is checked
                    carried on another district is listed, and every nationality
                    line with people has a language_weights row
     provinces      the 2006-2007 rows of nationality_by_sido add up to
-                   summary_by_sido and reproduce its indices
+                   summary_by_sido, and summary_by_sido's indices recompute from
+                   nationality_by_sido in every year
     sub-districts  dependence rates are blank where their component is, and no
                    district's sub-districts add up to more than its broad_total
     coverage       no README or dictionary line cites a year the data lacks
@@ -154,6 +157,23 @@ def find_file(data, name):
     return None
 
 
+def resolve_data(path):
+    """The folder the tables sit in. A downloaded deposit has README.md,
+    data_dictionary.csv and data/ at its top and the tables under data/ and
+    data/detailed_data/, two levels down, where find_file looks one level down. So
+    pointed at that top folder, as the code README says to, this goes down to data/.
+    3라운드 대조 (2026-09-27): run on the top folder the script reported 22 files
+    missing and 3 checks failed; run on data/ it passed. Whichever of the folder and
+    its data/ reaches more of the tables is used (the top folder reaches only the
+    four summaries in data/), and data/ on a tie, as for the release folder."""
+    sub = os.path.join(path, "data")
+    if not os.path.isdir(sub):
+        return path
+    here = sum(find_file(path, f) is not None for f in FILES)
+    there = sum(find_file(sub, f) is not None for f in FILES)
+    return sub if there and there >= here else path
+
+
 def load(data):
     out = {}
     missing = []
@@ -268,6 +288,117 @@ def check_identities(d):
             check(bool((gap <= 1).all()),
                   "identity: %s non_naturalized = its five components" % f,
                   "max gap %s" % (gap.max() if len(gap) else 0))
+
+
+def check_determined_blanks(d):
+    """No composition cell is blank where the published identities fix it.
+
+    3라운드 대조 (2026-09-27). broad_total = non_naturalized + naturalized + children
+    determines any one of the three that MOIS masks when the other two and the total
+    are printed; the sub-district file left 394 such cells blank in 2016-2017 (2016
+    강릉시 경포동: 303 - 290 - 11 = 2 naturalized), though it recovers a masked
+    component under non_naturalized. And in multicultural_households the four
+    household-member groups make 합계 and each two-part group its subtotal; the file
+    carried none of the masked cells those identities fix (2022 강릉시 강동면: 결혼이민자
+    13 - 9 = 4).
+    """
+    three = ["non_naturalized", "naturalized", "children"]
+    for f in ("summary_by_sigungu.csv", "summary_by_sido.csv", "summary_by_eupmyeondong.csv"):
+        df = d.get(f)
+        if df is None or not all(c in df.columns for c in ["broad_total"] + three):
+            continue
+        blank = df[three].isna().sum(axis=1)
+        bad = df[df["broad_total"].notna() & (blank == 1)]
+        check(bad.empty, "identity: %s has no blank the broad_total identity determines" % f,
+              "%d rows, e.g. %s" % (len(bad), bad[["year", "sigungu" if "sigungu" in bad
+                                                   else "sido"] + three].head(2)
+                                    .to_dict("records")))
+    mc = d.get("multicultural_households.csv")
+    if mc is None:
+        return
+    top = ["한국인배우자", "결혼이민자귀화자_소계", "자녀_소계", "기타동거인_소계"]
+    pairs = [("결혼이민자귀화자_소계", "결혼이민자", "귀화자등"),
+             ("자녀_소계", "자녀_귀화인지외국국적", "자녀_국내출생"),
+             ("기타동거인_소계", "기타동거인_내국인", "기타동거인_외국인")]
+    w = mc.pivot_table(index=["year", "sido", "sigungu", "eupmyeondong"], columns="category",
+                       values="n", aggfunc="sum")
+    for c in ["합계"] + top + [x for p in pairs for x in p]:
+        if c not in w.columns:
+            w[c] = np.nan
+    have = w.notna()
+    n_top = have[top].sum(axis=1)
+    fixed = (have["합계"] & (n_top == 3)) | (~have["합계"] & (n_top == 4))
+    for s, a, b in pairs:
+        fixed |= (have[[s, a, b]].sum(axis=1) == 2)
+    bad = w[fixed]
+    check(bad.empty, "identity: multicultural_households has no absent cell its "
+          "sub-district's printed cells determine",
+          "%d dong-years, e.g. %s" % (len(bad), list(bad.index[:3])))
+
+
+def check_multicultural_codes(d):
+    """multicultural_households has the adm_code of every sub-district
+    summary_by_eupmyeondong codes, however MOIS spells it in the other sheet.
+
+    3라운드 대조 (2026-09-27): MOIS prints 신천1·2동 and 벌용동 in sheet 11 (this file)
+    and 신천1.2동 and 벌룡동 in sheet 1-3 (summary_by_eupmyeondong) in 2016-2019, and
+    dots five 대구 dongs differently in 2023, so the exact name join left 14
+    dong-years without the code their counterpart carries.
+    """
+    mc, e = d.get("multicultural_households.csv"), d.get("summary_by_eupmyeondong.csv")
+    if mc is None or e is None or "adm_code" not in mc.columns:
+        return
+    sep = re.compile(r"[\s·.,・ㆍᆞ‧･]")
+    same = {"벌룡동": "벌용동"}
+
+    def loose(v):
+        n = sep.sub("", str(v))
+        return same.get(n, n)
+
+    code = {}
+    for y, sg, nm, c in zip(e["year"], e["sigungu_code"], e["eupmyeondong"], e["adm_code"]):
+        if pd.notna(c) and str(c).strip():
+            code.setdefault((int(y), _code(sg), loose(nm)), set()).add(str(c))
+    b = mc[mc["adm_code"].isna()].drop_duplicates(["year", "sigungu_code", "eupmyeondong"])
+    miss = [(int(r.year), r.sigungu, r.eupmyeondong) for r in b.itertuples()
+            if len(code.get((int(r.year), _code(r.sigungu_code), loose(r.eupmyeondong)),
+                            ())) == 1]
+    check(not miss, "codes: multicultural_households carries the adm_code of every "
+          "sub-district summary_by_eupmyeondong codes", "%d dong-years, e.g. %s"
+          % (len(miss), miss[:4]))
+
+
+def check_broad_levels(d):
+    """The MOIS broad-definition columns of the districts add up to their province
+    row exactly, each district in the province it belonged to that year.
+
+    3라운드 대조 (2026-09-27): the general districts of 2008-2015 took their shares of
+    the city's published row each rounded on its own, so a city's gu missed the city
+    by 1-3 people in a field and the district sums the province row by up to 6
+    (2014 용인시: broad_total 23,589 against 23,592). The shares are now split by the
+    largest-remainder rule.
+    """
+    sg, ss = d.get("summary_by_sigungu.csv"), d.get("summary_by_sido.csv")
+    if sg is None or ss is None or "sigungu_code" not in sg.columns:
+        return
+    cols = [c for c in ("broad_total", "non_naturalized", "workers", "marriage_migrants",
+                        "students", "ethnic_koreans", "other_foreigners", "naturalized",
+                        "children", "foreign_resident_households")
+            if c in sg.columns and c in ss.columns]
+    lo = sg.assign(_p=sg["sigungu_code"].map(lambda v: _code(v)[:2])) \
+        .groupby(["year", "_p"])[cols].sum(min_count=1)
+    hi = ss.assign(_p=ss["sido_code"].map(_code)).groupby(["year", "_p"])[cols].sum(min_count=1)
+    hi = hi[hi.index.get_level_values(0).isin(set(lo.index.get_level_values(0)))]
+    j = lo.join(hi, lsuffix="_d", rsuffix="_p", how="inner")
+    bad = []
+    for c in cols:
+        x = j[[c + "_d", c + "_p"]].dropna()
+        off = x[(x[c + "_d"] - x[c + "_p"]).abs() > 0]
+        bad += ["%s %s %s: %s vs %s" % (y, p, c, r[c + "_d"], r[c + "_p"])
+                for (y, p), r in off.iterrows()]
+    check(len(j) > 0 and not bad, "cross-file: the districts' broad-definition columns "
+          "add up to their province row exactly (%d province-years)" % len(j),
+          "%d cells, e.g. %s" % (len(bad), bad[:3]))
 
 
 def check_rates(d):
@@ -896,6 +1027,18 @@ def check_visa_label_per_code(d):
     bad = {k: sorted(v) for k, v in seen.items() if len(v) > 1}
     check(not bad, "labels: one visa_label per (year, visa_code) across the visa files",
           "%d codes, e.g. %s" % (len(bad), list(bad.items())[:3]))
+    # 3라운드 대조 (2026-09-27): C2 (단기상용, 2006-2011) and M1 (군인, 2006-2009) had no
+    # label, so the label column repeated the code, in English too for M1.
+    bare = set()
+    for f in ("visa_by_nationality.csv", "visa_national.csv", "crosswalk_visa.csv"):
+        df = d.get(f)
+        if df is None:
+            continue
+        for col in ("visa_label", "visa_label_en"):
+            if col in df.columns:
+                m = df[col].astype(str).str.strip() == df["visa_code"].astype(str).str.strip()
+                bare |= {"%s %s" % (c, col) for c in df.loc[m, "visa_code"]}
+    check(not bare, "labels: no visa_label or visa_label_en is the bare code", sorted(bare))
 
 
 def check_stata_labels(data):
@@ -1087,20 +1230,81 @@ def check_early_provinces(d):
           "provinces %s: nationality_by_sido sums to summary_by_sido.registered_foreigners"
           % "-".join(str(y) for y in (early[0], early[-1])),
           "%d province-years differ, e.g. %s" % (len(bad), bad.head(3).to_dict("index")))
+    # The indices of these years are held with every other province-year by
+    # check_province_indices. Until 2026-09-27 this check held them to the five named
+    # nationalities alone, the rule the 3라운드 대조 found departing from every other
+    # level (the residual bin, 기타, was left out).
+
+
+def check_province_indices(d):
+    """summary_by_sido's diversity indices re-derive from nationality_by_sido, every year.
+
+    3라운드 대조 (2026-09-27). The province indices of 2006-2013 were computed on the
+    nationalities the province table names without its Other column, where the
+    district and national indices keep the residual as one more group (2010 강원도:
+    shannon_H 2.220 over the 19 named, 2.303 with the 605 in Other; index_base_k 5 in
+    2006-2007 and 18-19 in 2008-2013). Rebuilt here from nationality_by_sido:
+    shannon_H, evenness, index_base_k and continent_H on the year's national top 19
+    (ranked on the district table) plus one residual bin, and in 2006-2007, which have
+    no district table, on the five named nationalities plus 기타; HHI and
+    shannon_H_inclusive on every row as a group, as the province series has always
+    kept them, the latter with resident_pop as the Korean group.
+    """
+    ns, ss, cw = (d.get(f) for f in ("nationality_by_sido.csv", "summary_by_sido.csv",
+                                     "crosswalk_country.csv"))
+    if ns is None or ss is None:
+        return
+    tops = national_top19(district_counts(d))
+    c2c = dict(zip(cw["country"], cw["continent"])) if cw is not None else {}
     rows = []
-    for (y, sd), g in x.groupby(["year", "sido"]):
-        named = [float(v) for c, v in zip(g["country"], g["n"]) if c != "기타" and v > 0]
+    for (y, sd), g in ns.groupby(["year", "sido"]):
+        cs = {c: float(v) for c, v in zip(g["country"], g["n"]) if v > 0}
         s_ = ss[(ss["year"] == y) & (ss["sido"] == sd)]
-        if s_.empty or not named:
+        if s_.empty or not cs:
             continue
         r = s_.iloc[0]
-        rows.append((y, sd, r["shannon_H"], round(ent(named), 3), r["HHI"],
-                     round(sum((v / sum(named)) ** 2 for v in named), 4),
-                     r["index_base_k"], len(named)))
-    off = [r for r in rows if abs(r[2] - r[3]) > 1e-3 or abs(r[4] - r[5]) > 1e-4 or r[6] != r[7]]
-    check(rows and not off,
-          "provinces 2006-2007: shannon_H, HHI and index_base_k recompute from the named "
-          "nationalities of nationality_by_sido", off[:3])
+        top = tops.get(y) or {c for c in cs if c not in RESIDUAL_LINES}
+        base = {c: v for c, v in cs.items() if c in top}
+        rest = sum(v for c, v in cs.items() if c not in top)
+        vals = list(base.values()) + ([rest] if rest > 0 else [])
+        H, k = ent(vals), len(vals)
+        pop = r.get("resident_pop")
+        full = list(cs.values())
+        by = {}
+        for c, v in base.items():
+            by[c2c.get(c, "기타")] = by.get(c2c.get(c, "기타"), 0.0) + v
+        if rest > 0:
+            by["기타"] = by.get("기타", 0.0) + rest
+        if pd.notna(pop):
+            by["동아시아"] = by.get("동아시아", 0.0) + float(pop)
+        rows.append({
+            "year": y, "sido": sd,
+            "shannon_H": r["shannon_H"], "_H": H,
+            "evenness": r["evenness"], "_J": H / math.log(k) if k > 1 else float("nan"),
+            "index_base_k": r["index_base_k"], "_k": k,
+            "HHI": r["HHI"], "_HHI": sum((v / sum(full)) ** 2 for v in full),
+            "shannon_H_inclusive": r["shannon_H_inclusive"],
+            "_I": ent(full + [float(pop)]) if pd.notna(pop) else float("nan"),
+            "continent_H": r["continent_H"],
+            "_C": ent(list(by.values())) if pd.notna(pop) else float("nan"),
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        check(False, "index: summary_by_sido recomputes from nationality_by_sido", "no rows")
+        return
+    for pub, calc in (("shannon_H", "_H"), ("evenness", "_J"), ("HHI", "_HHI"),
+                      ("shannon_H_inclusive", "_I"), ("continent_H", "_C")):
+        sub = df.dropna(subset=[pub, calc])
+        gap = (sub[pub] - sub[calc]).abs()
+        check(len(sub) > 0 and bool((gap <= 6e-3).all()),
+              "index: summary_by_sido.%s recomputes from nationality_by_sido, "
+              "%d-%d (%d province-years)" % (pub, df["year"].min(), df["year"].max(), len(sub)),
+              worst(sub.assign(_g=gap).sort_values("_g", ascending=False).head(1),
+                    pub, calc, ["year", "sido"]) + "; %d off" % int((gap > 6e-3).sum()))
+    bad = df[df["index_base_k"] != df["_k"]]
+    check(bad.empty, "count: summary_by_sido.index_base_k recomputes, every year",
+          "%d rows differ, e.g. %s" % (len(bad), bad[["year", "sido", "index_base_k", "_k"]]
+                                       .head(3).to_dict("records")))
 
 
 def check_subdistrict_rates(d):
@@ -1214,7 +1418,8 @@ def check_language_demand(d):
     were one person off (카메룬 2014 x Aghem 0.0039 = 2.52, released as 2) and some
     estimates under one person passed the one-person floor. Here each scope is rebuilt
     the way the dictionary states it: persons x share, in units of 1/10,000 so the
-    sum is exact, rounded once half up, estimates under one person dropped;
+    sum is exact, rounded once half up, a language dropped when its sum before
+    rounding is under one person;
     national from nationality_national (stay), sido from nationality_by_sido,
     sigungu from nationality_by_sigungu keeping each district's 20 largest (ties by
     label). The same date: the Korean column repeated the English name for most
@@ -1315,11 +1520,11 @@ def check_households(d):
         lo = p_.groupby(["year", "_p"])[col].sum(min_count=1)
         hi = ss.assign(_p=ss["sido_code"].map(_code)).groupby(["year", "_p"])[col].sum(min_count=1)
         j = pd.concat([lo.rename("lo"), hi.rename("hi")], axis=1).dropna()
-        n_gu = p_[p_["broad_apportioned"].astype(str).str.lower() == "true"].groupby(
-            ["year", "_p"]).size().reindex(j.index).fillna(0)
-        bad = j[(j["lo"] - j["hi"]).abs() > n_gu]
+        # exactly, since the general districts' shares are split by the largest-
+        # remainder rule (3라운드 대조, 2026-09-27; it allowed one household per gu)
+        bad = j[(j["lo"] - j["hi"]).abs() > 0]
         check(len(j) > 0 and bad.empty, "households: the districts of a province add up "
-              "to it, to the rounding of apportioned general districts",
+              "to it exactly",
               "%d province-years off, e.g. %s" % (len(bad), bad.head(3).to_dict("index")))
 
 
@@ -1774,6 +1979,7 @@ def main():
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
     if not os.path.isdir(data):
         raise SystemExit("no such directory: %s" % data)
+    data = resolve_data(data)
     print("validate_release: %s" % data)
     d = load(data)
     print("  %d released files read" % len(d))
@@ -1806,6 +2012,10 @@ def main():
     check_language_demand(d)
     check_households(d)
     check_early_provinces(d)
+    check_province_indices(d)
+    check_determined_blanks(d)
+    check_multicultural_codes(d)
+    check_broad_levels(d)
     check_subdistrict_rates(d)
     check_subdistrict_sums(d)
     check_region_totals(d)

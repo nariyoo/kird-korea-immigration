@@ -107,10 +107,10 @@ COUNTRY_CANONICAL = {
     "러시아": "러시아(연방)",   # 2008 district table and the 2010 stay table use the short form
     "벨로루시": "벨라루스",     # newer official spelling
     "슬로바크": "슬로바키아",   # 2017 used 슬로바키아; others 슬로바크
-    # Taiwan: every table prints 타이완. 대만 is kept in COUNTRY_REGION from an earlier
-    # map; without this line crosswalk_country listed it as its own 'unchanged'
-    # nationality that no file carries (2026-09-26, 3차 대조).
-    "대만": "타이완",
+    # Taiwan: every table prints 타이완, and no edition 2006-2025 prints 대만 anywhere
+    # (all 901 yearbook workbooks read, 2026-09-27). A 대만 -> 타이완 line here made
+    # crosswalk_country claim a merge no table makes; the key it papered over, a 대만
+    # left in COUNTRY_REGION from an earlier map, is gone too (3라운드 대조).
     "마케도니아": "북마케도니아", # official rename 2019
     "스와질란드": "에스와티니",  # official rename 2018
     # Zaire -> DR Congo (renamed 1997). The yearbook keeps the legacy code and
@@ -145,7 +145,7 @@ COUNTRY_CANONICAL = {
 # World-region classification of nationalities, for region-level segregation.
 COUNTRY_REGION = {
     # East Asia
-    "중국": "동아시아", "한국계중국인": "동아시아", "일본": "동아시아", "대만": "동아시아",
+    "중국": "동아시아", "한국계중국인": "동아시아", "일본": "동아시아",
     "몽골": "동아시아", "홍콩": "동아시아", "마카오": "동아시아",
     # 2026-08-25 에 채운 것. 이 표에 없는 이름은 「기타」로 떨어지는데,
     # 자료가 실제로 쓰는 이름 116개가 빠져 있어 2025년 기준 25,232명이

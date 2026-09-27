@@ -166,9 +166,14 @@ def parse(path, year):
 
     The residual column is recomputed rather than read. In 2011 the source's
     기타 cell holds 73,992 where the province rows imply 1,122, and reading it
-    put the year 54% above its own stated total. Every year is checked against
-    the sheet's grand total afterwards, so a source error of that kind fails
-    loudly instead of being released.
+    put the year 54% above its own stated total. In 2017 the 총계 row prints 기타
+    12, though its own total (411,337) less its 80 named columns (411,316) leaves
+    21, and the 기타 cells of its 17 province rows, each equal to that row's total
+    less its named columns, also add up to 21: the national cell is 9 short, the
+    province rows are right, and the release, which never reads a 기타 cell, carries
+    21 (3라운드 대조, 2026-09-27). Every year is checked against the sheet's grand
+    total afterwards, so a source error of that kind fails loudly instead of being
+    released.
     """
     raw = pd.read_excel(path, sheet_name=0, header=None)
     h, lead = find_header(raw)

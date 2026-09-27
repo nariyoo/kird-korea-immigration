@@ -39,6 +39,20 @@ from kird import (CLEAN, COUNTRY_CANONICAL, COUNTRY_REGION, EMD_RENAME, OTHER_RE
 # print to this file.
 PAREN_LABELS = ("(마카오)", "(영국속국민)", "(영국외지민)", "(타이완)", "(홍콩)")
 
+# Labels an edition prints with a space between words that the standard name does
+# not have, which every parser reads with the spaces removed (한국계 중국인 in the
+# 2006 and 2014-2018 tables, 국제연합 전문기구 in the 2023 and 2024 district tables,
+# ...). 2026-09-27 (3라운드 대조): the crosswalk had only the unspaced names, and
+# check_published_totals compared labels with every space removed, so the gap
+# passed; it now holds a label printed with a word space to a row of its own. A
+# name padded one character at a time (2006: 가 이 아 나) or to a fixed width (2009:
+# 중      국) is layout, not spelling, and has no row.
+SPACED_LABELS = ("(영국 속국민)", "(영국 외지민)", "국제연합 전문기구", "남아프리카 공화국",
+                 "미령 버진아일랜드", "불령 가이아나", "상투메 프린시페", "세르비아 몬테네그로",
+                 "세인트빈센트 그레나딘", "세인트크리스토퍼 네비스", "앤티가 바부다",
+                 "앤티카 바부다", "영국 속령지 시민", "영국 외지민", "영국 외지시민",
+                 "중앙 아프리카 공화국", "티모르 민주공화국", "한국계 러시아인", "한국계 중국인")
+
 # The labels COUNTRY_CANONICAL folds that are not a spelling of their target but a
 # line of their own in the yearbook: a territory, a nationality class, a legacy code
 # the register still keeps, or refugees resident in Hong Kong. Editions print them
@@ -88,7 +102,7 @@ def country_crosswalk(data=None):
                      cur[1] or (r.get("continent") or COUNTRY_REGION.get(c, "")),
                      cur[2] or (r.get("continent_en") or ""))
     # 자료에 한 번도 나오지 않아 영문이 어디에도 없는 이름. 연감이 쓰면 잡히도록 남긴다
-    EXTRA_EN = {"대만": "Taiwan", "한국계미국인": "Korean-American",
+    EXTRA_EN = {"한국계미국인": "Korean-American",
                 "북한": "North Korea", "케이맨제도": "Cayman Islands",
                 "동독": "East Germany", "유고슬라비아": "Yugoslavia",
                 "자이르": "Zaire", "스발바르": "Svalbard",
@@ -112,12 +126,17 @@ def country_crosswalk(data=None):
         inner = src[1:-1]
         rows.append(row(src, COUNTRY_CANONICAL.get(inner, inner),
                         "source label variant (printed in parentheses)"))
+    for src in SPACED_LABELS:
+        bare = "".join(src.split()).strip("()")
+        rows.append(row(src, COUNTRY_CANONICAL.get(bare, bare),
+                        FOLDED_RULE + " (printed with a space)" if bare in FOLDED_LINES
+                        else "source label variant (printed with a space)"))
     for canon in sorted(set(COUNTRY_REGION) | set(en) | set(COUNTRY_CANONICAL.values())):
         # Every standard name has a row of its own, as the label the editions print.
         # Until 2026-09-26 (1라운드 수정) a name was skipped when some retired spelling
         # pointed to it, so 미국, 영국, 타이, 타이완, 러시아(연방) and 13 more had no row
         # under the spelling most editions print. A name that is itself a retired
-        # spelling (자이르, 대만) is not listed twice: the source_label uniqueness gate
+        # spelling (자이르) is not listed twice: the source_label uniqueness gate
         # caught that on 2026-08-26.
         if canon not in COUNTRY_CANONICAL:
             rows.append(row(canon, canon, "unchanged"))

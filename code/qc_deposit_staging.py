@@ -408,6 +408,38 @@ def refugee_language():
                                   "crosswalk_country.csv"), encoding="utf-8-sig")
     off = sorted(set(rn["country"]) - set(cw["country"]))
     check(not off, "난민 국적표의 국적이 모두 crosswalk_country 의 표준 이름이다", off)
+    # 3라운드 대조 (2026-09-27): 난민 언어 수요는 데이터 사전이 적은 대로 기탁본만으로
+    # 다시 나와야 한다. 구분마다 이름 붙은 10개 국적 x language_weights 비중을 1만분의
+    # 1 명 단위로 더해 한 번만 반올림하고, 상위 20개 가운데 반올림 전 합이 1명에 이르는
+    # 언어만 싣는다(보호 = 난민인정 + 인도적체류). 전에는 소수 한 자리로 반올림된 값을
+    # 다시 반올림해 네 행이 1명 많았다(난민인정 암하라어 50, 인도적체류 아시리아어 14 등).
+    lw = pd.read_csv(os.path.join(STG, "data", "detailed_data", "language_weights.csv"),
+                     encoding="utf-8-sig")
+    U = 10000
+    sh = {}
+    for c, lang, s_ in zip(lw["country"], lw["language"], lw["share"]):
+        if isinstance(lang, str) and lang:
+            sh.setdefault(c, []).append((lang, int(round(float(s_) * U))))
+    named = rn[rn["country"] != "기타"]
+    cnt = {st: dict(zip(g["country"], g["count"])) for st, g in named.groupby("status")}
+    cnt["보호"] = {c: cnt.get("난민인정", {}).get(c, 0) + cnt.get("인도적체류", {}).get(c, 0)
+                 for c in set(cnt.get("난민인정", {})) | set(cnt.get("인도적체류", {}))}
+    want = {}
+    for st in ("난민인정", "인도적체류", "보호"):
+        est = {}
+        for c, n in cnt.get(st, {}).items():
+            for lang, u in sh.get(c, ()):
+                est[lang] = est.get(lang, 0) + int(n) * u
+        for lang, u in sorted(est.items(), key=lambda kv: (-kv[1], kv[0]))[:20]:
+            if u >= U:
+                want[(st, lang)] = (u + U // 2) // U
+    got = {(st, lang): int(n) for st, lang, n in
+           zip(rl["status"], rl["language"], rl["count"])}
+    diff = sorted(k for k in set(want) | set(got) if want.get(k) != got.get(k))
+    check(not diff, "난민 언어 수요가 refugee_by_nationality x language_weights 에서 한 번 "
+          "반올림으로 다시 나온다 (%d행)" % len(want),
+          ["%s %s: 실린 %s, 다시 낸 %s" % (k[0], k[1], got.get(k), want.get(k))
+           for k in diff[:6]])
 
 
 # --------------------------------------------------- 6. 쓰는 사람의 자리

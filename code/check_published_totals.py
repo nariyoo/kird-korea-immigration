@@ -181,7 +181,8 @@ def main():
     rc5 = early_province_gate()
     rc6 = crosswalk_labels_gate(ns)
     rc7 = children_age_gate()
-    return rc or rc2 or rc3 or rc4 or rc5 or rc6 or rc7
+    rc8 = status_label_gate(ns)
+    return rc or rc2 or rc3 or rc4 or rc5 or rc6 or rc7 or rc8
 
 
 def _canon(name):
@@ -646,13 +647,26 @@ def crosswalk_labels_gate(ns):
     nationality columns and province lines of the district tables, and the code-less
     status columns of both, and checks each against crosswalk_country.source_label,
     crosswalk_region's province rows and crosswalk_visa.source_code, spaces removed.
+    Since 2026-09-27 (3라운드 대조) a nationality printed with a space between words
+    must also have its literal row, and every crosswalk_country row that says an
+    edition prints a spelling must name one these tables print.
     `ns` holds the file lists main() read from the head of 01_parse_yearbooks.py.
     """
     ws = lambda v: re.sub(r"\s+", "", str(v).split("\n")[0])
+    # The label as printed. A run of two or more spaces is padding (the 2009 sheets
+    # pad 중      국 to a fixed width), and so is a name spaced one character at a time
+    # (2006: 가 이 아 나); a single space between words is part of the spelling
+    # (한국계 중국인, 국제연합 전문기구) and needs a row of its own (crosswalks.
+    # SPACED_LABELS). 2026-09-27 (3라운드 대조): comparing on ws() alone let a spaced
+    # label pass on the unspaced row, though the crosswalk promises a row for every
+    # label the tables print.
+    lit = lambda v: re.sub(r"\s+", " ", re.sub(r"\s{2,}", "", str(v).split("\n")[0])).strip()
+    word_spaced = lambda v: " " in lit(v) and any(len(t) > 1 for t in lit(v).split(" "))
     cw = pd.read_csv(os.path.join(RELEASE_DATA, "crosswalk_country.csv"), encoding="utf-8-sig")
     cv = pd.read_csv(os.path.join(RELEASE_DATA, "crosswalk_visa.csv"), encoding="utf-8-sig")
     cr = pd.read_csv(os.path.join(RELEASE_DATA, "crosswalk_region.csv"), encoding="utf-8-sig")
     C = set(cw["source_label"].map(ws))
+    C_LIT = set(cw["source_label"].map(lit))
     V = set(cv["source_code"].map(ws))
     S = set(cr.loc[cr["level"] == "sido", "source_sido"].map(ws))
     national = dict(ns["REG_FILES"])
@@ -663,17 +677,20 @@ def crosswalk_labels_gate(ns):
     visa_d = _visa_files()
     miss = {"country": set(), "status": set(), "province": set()}
     n_seen = {"country": set(), "status": set(), "province": set()}
+    n_cols = {}
 
     def korean(v):
         return isinstance(v, str) and re.search(r"[가-힣]", v)
 
-    def note_country(y, lab, where):
-        lab = ws(lab)
+    def note_country(y, raw, where):
+        lab = ws(raw)
         if not lab or lab.lower() in LABEL_SKIP or lab in LABEL_SKIP or FOOTNOTE.match(lab):
             return
         n_seen["country"].add(lab)
         if lab not in C:
             miss["country"].add((y, lab, where))
+        elif word_spaced(raw) and lit(raw) not in C_LIT:
+            miss["country"].add((y, lit(raw), where + ", printed with a space"))
 
     def note_status(y, df, i, j, where):
         """A header cell headed 기타 with no status code in its column is the
@@ -705,11 +722,25 @@ def crosswalk_labels_gate(ns):
             if y > RELEASE_LAST_YEAR or not os.path.exists(path):
                 continue
             df = pd.read_excel(path, sheet_name=0, header=None)
-            nc = max(range(min(4, df.shape[1])),
-                     key=lambda j: int(df.iloc[:, j].astype(str).str.contains(r"[가-힣]").sum()))
+            # The nationality column is the one of the first four with the most
+            # distinct labels. Counting Korean cells instead picked the sex column of
+            # the 2019-on tables, which name a country once per 남성/여성 pair and print
+            # 남성 or 여성 on every row, so the scan drew no nationality from those
+            # editions (3라운드 대조, 2026-09-27; 2019 staying: 217 cells of 국적
+            # against 434 of 성별).
+            def distinct(j):
+                return len({ws(v) for v in df.iloc[:, j]
+                            if korean(v) and ws(v) not in LABEL_SKIP})
+            nc = max(range(min(4, df.shape[1])), key=distinct)
+            n_cols[(tag, y)] = nc
             col = df.iloc[:, nc].tolist()
-            start = next((i for i, v in enumerate(col)
-                          if korean(v) and ws(v) in ("총계", "합계", "계", "총합계")), None)
+            TOT = ("총계", "합계", "계", "총합계")
+            start = next((i for i, v in enumerate(col) if korean(v) and ws(v) in TOT), None)
+            if start is None:
+                # 2021-2024: the grand-total line is headed in the continent column
+                # (총합계) and the nationality column is blank on it
+                start = next((i for i in range(len(df)) for j in range(nc)
+                              if korean(df.iat[i, j]) and ws(df.iat[i, j]) in TOT), None)
             if start is None:
                 miss["country"].add((y, "(no grand-total line found)", tag))
                 continue
@@ -741,9 +772,17 @@ def crosswalk_labels_gate(ns):
         for j in (0, 1):
             for v in df.iloc[:, j].tolist():
                 note_province(y, v, "district")
+    # The other direction (3라운드 대조, 2026-09-27): a row that says an edition prints
+    # a spelling must name one the tables print. A 대만 -> 타이완 row stood for a merge
+    # no edition makes; no workbook 2006-2025 prints 대만.
+    variant = cw[cw["rule"].astype(str).str.startswith("source label variant")]
+    for lab in sorted(set(variant["source_label"].map(ws)) - n_seen["country"]):
+        miss["country"].add((0, lab, "crosswalk row for a spelling no table prints"))
     print()
     print("원자료의 표기 대 crosswalk: 국적 %d, 기타 자격 칸 %d, 시도 %d 가지"
           % tuple(len(n_seen[k]) for k in ("country", "status", "province")))
+    print("   국적 열: %s" % ", ".join("%s %d:%d" % (t[:3], y, c)
+                                    for (t, y), c in sorted(n_cols.items())))
     bad = [(k, sorted(v)[:10]) for k, v in miss.items() if v]
     for k, v in bad:
         print("   no crosswalk row (%s): %s" % (k, v))
@@ -752,6 +791,65 @@ def crosswalk_labels_gate(ns):
         return 1
     print("GATE OK: every nationality, code-less status and province label the raw "
           "tables print has a crosswalk row")
+    return 0
+
+
+SUBCODE = re.compile(r"^\(?([A-Z])-?(\d)([A-Z])\)?$")
+OWNCODE = re.compile(r"^\(?([A-Z])-?(\d{1,2})\)?$")
+
+
+def status_label_gate(ns):
+    """A status no edition prints under its own code takes its label from the
+    sub-statuses the editions print, so the released label must name each of them.
+
+    3라운드 대조 (2026-09-27). The 2007-2009 editions print E0A 내항선원, E0B 어선원 and
+    (2009) E0C 순항선원 and never an E-0 column; the parser folds the three into E0,
+    and its label read 협정활동 (treaty activity), a status no edition prints for these
+    columns (they are the crew subdivisions of E-10 선원취업). Here, over the national
+    status tables of every edition to the release year, a code with lettered
+    sub-codes (E0A) and no column of its own must carry a visa_label in
+    visa_national that contains the first two characters of every sub-label printed.
+    """
+    national = dict(ns["REG_FILES"])
+    stay = dict(ns["STAY_FILES"])
+    stay.update(HEADLINE_STAY)
+    own, subs = set(), {}
+    for files in (national, stay):
+        for y, path in sorted(files.items()):
+            if y > RELEASE_LAST_YEAR or not os.path.exists(path):
+                continue
+            df = pd.read_excel(path, sheet_name=0, header=None)
+            for j in range(df.shape[1]):
+                for i in range(1, min(8, len(df))):
+                    v = re.sub(r"\s+", "", str(df.iat[i, j]).split("\n")[-1])
+                    m, o = SUBCODE.match(v), OWNCODE.match(v)
+                    if o:
+                        own.add(o.group(1) + o.group(2))
+                        break
+                    if m:
+                        lab = re.sub(r"\s+", "", str(df.iat[i - 1, j]).split("\n")[0])
+                        if re.search(r"[가-힣]", lab):
+                            subs.setdefault(m.group(1) + m.group(2), set()).add(lab)
+                        break
+    vn = pd.read_csv(os.path.join(RELEASE_DATA, "visa_national.csv"), encoding="utf-8-sig")
+    labels = vn.drop_duplicates("visa_code").set_index("visa_code")["visa_label"].to_dict()
+    bad = []
+    for code, labs in sorted(subs.items()):
+        if code in own or code not in labels:
+            continue
+        miss = sorted(l for l in labs if l[:2] not in str(labels[code]))
+        if miss:
+            bad.append((code, labels[code], miss))
+    print()
+    print("부모 코드 칸이 없는 자격: %s" % ", ".join(
+        "%s (%s)" % (c, "/".join(sorted(l))) for c, l in sorted(subs.items())
+        if c not in own and c in labels))
+    if bad:
+        print("FAIL: a released status label does not name the sub-statuses printed: %s"
+              % bad)
+        return 1
+    print("GATE OK: every status printed only as lettered sub-codes carries a label "
+          "that names them")
     return 0
 
 

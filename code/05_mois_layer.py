@@ -1142,10 +1142,11 @@ def _parse_multicultural_sheet(path: Path, year: int, sheet: str) -> list[dict]:
                 current_sigungu = "세종시"
             if current_sido is None or current_sigungu is None:
                 continue
-            for cat, c in cat_cols.items():
-                if c >= df.shape[1]:
-                    continue
-                v = parse_value(df.iat[i, c])
+            vals = {cat: parse_value(df.iat[i, c]) for cat, c in cat_cols.items()
+                    if c < df.shape[1]}
+            _recover_multicultural(vals)
+            for cat in cat_cols:
+                v = vals.get(cat)
                 if v is None:
                     continue
                 rows.append({
@@ -1153,6 +1154,58 @@ def _parse_multicultural_sheet(path: Path, year: int, sheet: str) -> list[dict]:
                     "eupmyeondong": name, "category": cat, "n": v,
                 })
     return rows
+
+
+# Sheet 11's identities: 합계 is the four household-member groups, and each group
+# with two parts is the sum of the two. They hold in every row MOIS prints in full,
+# 2016-2024 (checked 2026-09-27 on the 9,193 fully printed rows of every level, no
+# exception). MOIS prints no zero in this sheet: every count under 5 is '*'.
+MC_PAIRS = (("결혼이민자귀화자_소계", "결혼이민자", "귀화자등"),
+            ("자녀_소계", "자녀_귀화인지외국국적", "자녀_국내출생"),
+            ("기타동거인_소계", "기타동거인_내국인", "기타동거인_외국인"))
+MC_TOP = ("한국인배우자", "결혼이민자귀화자_소계", "자녀_소계", "기타동거인_소계")
+
+
+def _recover_multicultural(vals: dict) -> None:
+    """Fill, in place, every masked cell ('*', under 5) of one sub-district row that
+    the row's own identities determine: a part masked alone beside its subtotal and
+    sibling, a group masked alone among the four that make 합계, and a subtotal or
+    total whose parts are all printed. Repeats until nothing moves (a group recovered
+    from 합계 can then settle one of its parts). A cell masked together with another
+    of its identity stays masked.
+
+    3라운드 대조 (2026-09-27): the parser dropped every masked cell, so the release
+    had no row for thousands of (dong, year, category) cells a year that the printed
+    cells fix (2022 강릉시 강동면: 결혼이민자 13 - 9 = 4, 기타동거인_외국인 43 - 41 =
+    2), while the person-count tables and children_by_age recover theirs. A value
+    that would come out negative is left masked."""
+    def settle(key, value):
+        if value >= 0:
+            vals[key] = int(value)
+            return True
+        return False
+
+    moved = True
+    while moved:
+        moved = False
+        for s, a, b in MC_PAIRS:
+            if not all(k in vals for k in (s, a, b)):
+                continue
+            miss = [k for k in (s, a, b) if vals[k] is None]
+            if len(miss) != 1:
+                continue
+            if miss[0] == s:
+                moved |= settle(s, vals[a] + vals[b])
+            else:
+                other = b if miss[0] == a else a
+                moved |= settle(miss[0], vals[s] - vals[other])
+        if "합계" in vals and all(k in vals for k in MC_TOP):
+            miss = [k for k in MC_TOP if vals[k] is None]
+            if vals["합계"] is not None and len(miss) == 1:
+                moved |= settle(miss[0], vals["합계"] - sum(vals[k] for k in MC_TOP
+                                                           if k != miss[0]))
+            elif vals["합계"] is None and not miss:
+                moved |= settle("합계", sum(vals[k] for k in MC_TOP))
 
 
 def parse_year(year: int) -> dict[str, list[dict]]:

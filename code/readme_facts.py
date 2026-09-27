@@ -138,14 +138,17 @@ def facts():
     b = sd.assign(_p=sd["sido_code"].astype(str)).groupby(["year", "_p"])[BROAD].sum(min_count=1)
     gap = (a - b).abs().max(axis=1).dropna()
     gap = gap[gap > 0]
+    # Exact since 2026-09-27 (3라운드 대조), when the general districts' shares of a
+    # city's row came to be split by the largest-remainder rule; each gu rounded its
+    # own share before, and the sums missed the province row by up to 6 people.
     if gap.empty:
-        F["broad_gap"] = "nothing"
+        F["broad_gap"] = "exactly"
     else:
         names = dict(zip(sd["sido_code"].astype(str), sd["sido"]))
         provs = sorted({p_ for _, p_ in gap.index})
         ys = sorted({int(y) for y, _ in gap.index})
         pl = [names.get(p_, p_) for p_ in provs]
-        F["broad_gap"] = ("at most %d people, in %s in %d-%d"
+        F["broad_gap"] = ("to within %d people, in %s in %d-%d"
                           % (int(gap.max()), (", ".join(pl[:-1]) + " and " + pl[-1])
                              if len(pl) > 1 else pl[0], ys[0], ys[-1]))
 
@@ -292,7 +295,7 @@ CLAIMS = [
     ("district_other_years", _p(r"and\s+a\s+single\s+기타\s+column\s+in\s+(?P<v>[\d,\sand-]+?)\.")),
     ("district_residual_range", _p(r"district\s+by\s+district\s+as\s+printed\s+\((?P<v>[\d,]+\s+to\s+[\d,]+)\s+people\s+a\s+year")),
     ("district_residual_districts", _p(r"people\s+a\s+year\s+over\s+up\s+to\s+(?P<v>\d+)\s+districts\)")),
-    ("broad_gap", _p(r"differ from the\s+province row by\s+(?P<v>[^;]*);")),
+    ("broad_gap", _p(r"so\s+the\s+district\s+sums\s+equal\s+the\s+province\s+row\s+(?P<v>exactly|to within [^;]*?);")),
     ("reg_2006", _p(r"Registered 2006 is (?P<v>[\d,]+) in the deposited files")),
     ("stay_2006", _p(r"staying 2006\s+(?P<v>[\d,]+)\s+\(")),
     ("stay_2008", _p(r"staying 2006\s+[\d,]+\s+\([\d,]+\), 2008\s+(?P<v>[\d,]+)")),

@@ -157,6 +157,18 @@ def parse_sido_2006_2013():
             except: pass
         return tot
 
+    def unreadable(x):
+        """A cell that prints something other than a number, a dash or nothing (2012:
+        강원도's 미얀마 cell is a backquote)."""
+        s = str(x).split("\n")[0].replace(",", "").strip()
+        if s in ("", "nan", "-"):
+            return False
+        try:
+            float(s)
+            return False
+        except ValueError:
+            return True
+
     # ---------- population per sido, 2006-2013 ----------
     def pop_sido():
         out = {}  # {year: {sido: pop}}
@@ -258,11 +270,24 @@ def parse_sido_2006_2013():
                              and not mk.split("\n")[0].strip().startswith("계"))
                     cell = num_sum if parts else num
                     rec = {"_total": tval}
+                    bad = []
                     for c, nm in nats.items():
                         v = cell(df.iloc[rr, c])
                         if v > 0: rec[nm] = rec.get(nm, 0) + v
+                        elif unreadable(df.iloc[rr, c]): bad.append(nm)
                     if oc is not None:
                         rec["_other"] = cell(df.iloc[rr, oc])
+                        # One cell of the row the parser cannot read is the printed
+                        # total less the other nationalities and Other: 2012 강원도
+                        # prints a backquote for 미얀마, whose district lines add up to
+                        # the 21 that recovers (3라운드 대조, 2026-09-27).
+                        if len(bad) == 1:
+                            rest = (tval - rec["_other"]
+                                    - sum(v for k, v in rec.items() if not k.startswith("_")))
+                            if rest > 0:
+                                rec[bad[0]] = rest
+                                print(f"    {os.path.basename(path)[:4]}: {sd} {bad[0]} "
+                                      f"cell unreadable, recovered as {rest:,} from the total")
                     out[sd] = rec
             # 연기군 was abolished on 2012-07-01 and its whole territory became
             # 세종특별자치시, but the 2012 and 2013 editions still print a residual
@@ -297,6 +322,12 @@ def parse_sido_2006_2013():
                             if src[nm] <= 0:
                                 del src[nm]
                             dst[nm] = dst.get(nm, 0) + v
+                    if oc is not None:
+                        # the line's Other cell moves with it (the province indices
+                        # count Other as their residual bin since 2026-09-27)
+                        ov = num(df.iloc[rr, oc])
+                        src["_other"] = src.get("_other", 0) - ov
+                        dst["_other"] = dst.get("_other", 0) + ov
                     print(f"    {os.path.basename(path)[:4]}: residual 연기군 line "
                           f"({tval:,}) moved from 충청남도 to 세종특별자치시")
             return out
@@ -320,6 +351,8 @@ def parse_sido_2006_2013():
             for c, nm in nats.items():
                 v = num(df.iloc[rr, c])
                 if v > 0: rec[nm] = rec.get(nm, 0) + v
+            if oc is not None:
+                rec["_other"] = rec.get("_other", 0) + num(df.iloc[rr, oc])
         return out
 
     # ---------- compute by_sido record + merge ----------
@@ -371,15 +404,26 @@ def parse_sido_2006_2013():
         for sd, rec0 in parsed.items():
             ftot = rec0.pop("_total")
             other = rec0.pop("_other", None)
-            counts = rec0  # listed nationalities (subset; for diversity approximation)
+            named = rec0  # the nationalities the table names
+            # Every year's table is named nationalities plus an Other column that
+            # together make the printed total (2008-2013 as well: checked 2026-09-27).
+            if other is None or sum(named.values()) + other != ftot:
+                raise SystemExit(f"{year} {sd}: the named nationalities and Other "
+                                 f"({sum(named.values())} + {other}) do not add up "
+                                 f"to the printed total {ftot}")
             if year <= 2007:
                 # the province table is the only nationality detail these years have
-                if other is None or sum(counts.values()) + other != ftot:
-                    raise SystemExit(f"{year} {sd}: the named nationalities and Other "
-                                     f"({sum(counts.values())} + {other}) do not add up "
-                                     f"to the printed total {ftot}")
-                early_rows += [(year, sd, c, n) for c, n in sorted(counts.items())]
+                early_rows += [(year, sd, c, n) for c, n in sorted(named.items())]
                 early_rows.append((year, sd, "기타", other))
+            # The indices count Other as one more group, the residual bin the district
+            # and national indices keep (index_base_k: the top 19 present plus one
+            # residual bin). Until 2026-09-27 (3라운드 대조) the province indices of
+            # 2006-2013 dropped it, so they were computed on the named nationalities
+            # alone (2010 강원도: shannon_H 2.220 over 19 groups, 2.303 with the 605 in
+            # Other), unlike every other level and year.
+            counts = dict(named)
+            if other:
+                counts["기타"] = other
             pop = (POPS.get(str(year), {}) or {}).get(sd)
             cH, shares = continent(counts, pop or ftot)
             rec = {"sido": sd, "foreign_total": ftot,
