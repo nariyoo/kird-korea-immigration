@@ -18,6 +18,71 @@ from kird import ROOT
 from kird import SITE_DATA as SITE
 
 
+# The MOIS composition and the measures derived from it. One set of rules for the
+# district and province summaries and for the sub-district summary: until
+# 2026-09-26 (1라운드 수정) the sub-district file had its own copy, which read a
+# masked category as 0, so a dependence rate came out 0.0 where the category was
+# masked (and recoverable), and never recovered the one masked component the
+# district files recover.
+CNT = {"합계": "broad_total", "한국국적미취득_소계": "non_naturalized", "외국인근로자": "workers",
+       "결혼이민자": "marriage_migrants", "유학생": "students", "외국국적동포": "ethnic_koreans",
+       "기타외국인": "other_foreigners", "한국국적취득자": "naturalized", "외국인주민자녀": "children"}
+COMP_KO = ["외국인근로자", "결혼이민자", "유학생", "외국국적동포", "기타외국인"]
+DERIVED_COLS = ["settlement_rate_pct", "labor_dependence_pct", "marriage_dependence_pct",
+                "study_dependence_pct", "settlement_type"]
+
+
+def pct(n, d, dec=2):
+    return round(100 * n / d, dec) if d else ""
+
+
+def enrich(r):
+    """Recover the canonical category keys from the pre-2009 MOIS labels.
+    2007-2008 publish naturalized citizens as 혼인귀화자 + 기타귀화자 (no
+    한국국적취득자 key), and the non-naturalized subtotal is published only from
+    2009 — recovered via the source identity 합계(B) = 미취득(C) + 취득(D) + 자녀(E).
+    Categories the source does not publish that year stay ABSENT (released as
+    blank), never 0."""
+    if not r: return r
+    r = dict(r)
+    # Exactly one masked (***) component under a SOURCE-published subtotal (2009+
+    # schema) is arithmetically determined: subtotal minus the published siblings
+    # (e.g. 2016 함안군 유학생 *** = 4452 - 4452 = 0). Recover it instead of
+    # treating it as 0 (v1.1.0 behavior, wrong when > 0) or blanking the derived
+    # rates. Never applied when the subtotal itself is derived (pre-2009 schema,
+    # where absent categories are genuinely unpublished, not masked).
+    if "한국국적미취득_소계" in r:
+        missing = [k for k in COMP_KO if k not in r]
+        if len(missing) == 1:
+            present = sum(r.get(k) or 0 for k in COMP_KO if k in r)
+            r[missing[0]] = max(r["한국국적미취득_소계"] - present, 0)
+    if "한국국적취득자" not in r and ("혼인귀화자" in r or "기타귀화자" in r):
+        r["한국국적취득자"] = (r.get("혼인귀화자") or 0) + (r.get("기타귀화자") or 0)
+    if "한국국적미취득_소계" not in r and all(k in r for k in ("합계", "한국국적취득자", "외국인주민자녀")):
+        r["한국국적미취득_소계"] = r["합계"] - r["한국국적취득자"] - r["외국인주민자녀"]
+    return r
+
+
+def settle_type(r):
+    u = r.get("한국국적미취득_소계")
+    # the typology needs all three numerators; 유학생 is not published before 2008
+    if not u or any(r.get(k) is None for k in ("외국인근로자", "유학생", "결혼이민자")): return ""
+    w_, s_, m_ = (r["외국인근로자"] / u) / 0.38, (r["유학생"] / u) / 0.16, (r["결혼이민자"] / u) / 0.15
+    mx = max(w_, s_, m_)
+    return "다목적형(Multi-purpose)" if mx < 1 else ("산업형(Industrial)" if mx == w_ else ("대학·유학형(University)" if mx == s_ else "결혼정주형(Marriage-settled)"))
+
+
+def derived(r):
+    tot, nat, ch = r.get("합계"), r.get("한국국적취득자"), r.get("외국인주민자녀")
+    und = r.get("한국국적미취득_소계")
+    w, m, s = r.get("외국인근로자"), r.get("결혼이민자"), r.get("유학생")
+    return [pct(nat + ch, tot) if (tot and nat is not None and ch is not None) else "",
+            pct(w, und) if (und and w is not None) else "",
+            pct(m, und) if (und and m is not None) else "",
+            pct(s, und) if (und and s is not None) else "",
+            settle_type(r)]
+
+
 def summary_sigungu_and_sido():
     """summary_by_sigungu.csv and summary_by_sido.csv, on the MOJ district grain.
 
@@ -53,10 +118,6 @@ def summary_sigungu_and_sido():
             return RENAME[(sido, sg)][1]
         return SGG_EN.get(f"{sido}|{sg}") or SGG_EN.get(f"{sido}|{sg.replace(' ', '')}") or ""
 
-    CNT = {"합계": "broad_total", "한국국적미취득_소계": "non_naturalized", "외국인근로자": "workers",
-           "결혼이민자": "marriage_migrants", "유학생": "students", "외국국적동포": "ethnic_koreans",
-           "기타외국인": "other_foreigners", "한국국적취득자": "naturalized", "외국인주민자녀": "children"}
-    COMP_KO = ["외국인근로자", "결혼이민자", "유학생", "외국국적동포", "기타외국인"]
     # v1.2.0: the idx field n_nationalities holds the size of the index basis
     # (top 19 + residual), so it is released as index_base_k; the count its old
     # name promised is n_nationalities_observed. IDX lists the released column
@@ -64,49 +125,6 @@ def summary_sigungu_and_sido():
     IDX = ["shannon_H", "shannon_H_inclusive", "continent_H", "HHI", "evenness",
            "index_base_k", "n_nationalities_observed", "lisa", "lisa_fdr"]
     IDX_SRC = {"index_base_k": "n_nationalities"}
-    def pct(n, d, dec=2): return round(100 * n / d, dec) if d else ""
-    def enrich(r):
-        """Recover the canonical category keys from the pre-2009 MOIS labels.
-        2007-2008 publish naturalized citizens as 혼인귀화자 + 기타귀화자 (no
-        한국국적취득자 key), and the non-naturalized subtotal is published only from
-        2009 — recovered via the source identity 합계(B) = 미취득(C) + 취득(D) + 자녀(E).
-        Categories the source does not publish that year stay ABSENT (released as
-        blank), never 0."""
-        if not r: return r
-        r = dict(r)
-        # Exactly one masked (***) component under a SOURCE-published subtotal (2009+
-        # schema) is arithmetically determined: subtotal minus the published siblings
-        # (e.g. 2016 함안군 유학생 *** = 4452 - 4452 = 0). Recover it instead of
-        # treating it as 0 (v1.1.0 behavior, wrong when > 0) or blanking the derived
-        # rates. Never applied when the subtotal itself is derived (pre-2009 schema,
-        # where absent categories are genuinely unpublished, not masked).
-        if "한국국적미취득_소계" in r:
-            missing = [k for k in COMP_KO if k not in r]
-            if len(missing) == 1:
-                present = sum(r.get(k) or 0 for k in COMP_KO if k in r)
-                r[missing[0]] = max(r["한국국적미취득_소계"] - present, 0)
-        if "한국국적취득자" not in r and ("혼인귀화자" in r or "기타귀화자" in r):
-            r["한국국적취득자"] = (r.get("혼인귀화자") or 0) + (r.get("기타귀화자") or 0)
-        if "한국국적미취득_소계" not in r and all(k in r for k in ("합계", "한국국적취득자", "외국인주민자녀")):
-            r["한국국적미취득_소계"] = r["합계"] - r["한국국적취득자"] - r["외국인주민자녀"]
-        return r
-    def settle_type(r):
-        u = r.get("한국국적미취득_소계")
-        # the typology needs all three numerators; 유학생 is not published before 2008
-        if not u or any(r.get(k) is None for k in ("외국인근로자", "유학생", "결혼이민자")): return ""
-        w_, s_, m_ = (r["외국인근로자"] / u) / 0.38, (r["유학생"] / u) / 0.16, (r["결혼이민자"] / u) / 0.15
-        mx = max(w_, s_, m_)
-        return "다목적형(Multi-purpose)" if mx < 1 else ("산업형(Industrial)" if mx == w_ else ("대학·유학형(University)" if mx == s_ else "결혼정주형(Marriage-settled)"))
-    def derived(r):
-        tot, nat, ch = r.get("합계"), r.get("한국국적취득자"), r.get("외국인주민자녀")
-        und = r.get("한국국적미취득_소계")
-        w, m, s = r.get("외국인근로자"), r.get("결혼이민자"), r.get("유학생")
-        return [pct(nat + ch, tot) if (tot and nat is not None and ch is not None) else "",
-                pct(w, und) if (und and w is not None) else "",
-                pct(m, und) if (und and m is not None) else "",
-                pct(s, und) if (und and s is not None) else "",
-                settle_type(r)]
-    DERIVED_COLS = ["settlement_rate_pct", "labor_dependence_pct", "marriage_dependence_pct", "study_dependence_pct", "settlement_type"]
 
     SP = json.load(open(f"{SITE}/mois/sigungu_population.json", encoding="utf-8"))["by_sigungu"]
     IDXD = json.load(open(f"{SITE}/indices.json", encoding="utf-8"))["data"]
@@ -145,6 +163,54 @@ def summary_sigungu_and_sido():
     }
 
 
+    # ---- MOIS rows that straddle a merger ------------------------------------------
+    # MOIS counts as of 1 January, MOJ as of 31 December, so in a merger year the two
+    # describe different districts, and before a merger the spine may carry a
+    # predecessor under its successor's name. For these (year, province) the MOIS rows
+    # named here are pooled and apportioned across the spine units named with them, by
+    # MOJ registered foreigners, as a general-district city's total is; a single unit
+    # takes its pool whole and is not flagged as apportioned. Until 2026-09-26
+    # (1라운드 수정) the city-name rule apportioned 청주시 across the 청원구 unit too and
+    # then added all of 청원군 on top of it, and apportioned the old 창원시 across all
+    # five of the new city's gu before adding 마산시 to 마산합포구 and 진해시 to 진해구:
+    # 청주시 청원구 read 4,969 in 2008 where 청원군 alone published 3,000, and 창원시
+    # 진해구 read 4,421 in 2010 where 진해시 published 3,053.
+    TRANSITION = {}
+    # 창원 + 마산 + 진해 became the new 창원시 on 2010-07-01. Its five gu follow the old
+    # city lines: 마산합포구 + 마산회원구 are the old 마산시, 성산구 + 의창구 the old
+    # 창원시, 진해구 the old 진해시. MOIS 2010 still lists the three cities.
+    TRANSITION[("2010", "경상남도")] = [
+        (("마산시",), ("창원시 마산합포구", "창원시 마산회원구")),
+        (("창원시",), ("창원시 성산구", "창원시 의창구")),
+        (("진해시",), ("창원시 진해구",))]
+    # 청원군 was a county of its own until 2014-07-01. The spine carries it as 청주시
+    # 청원구 (its lineage, with 청원군's code 43710), beside the two gu the old 청주시 had.
+    for _y in range(2008, 2014):
+        TRANSITION[(str(_y), "충청북도")] = [
+            (("청주시",), ("청주시 상당구", "청주시 흥덕구")),
+            (("청원군",), ("청주시 청원구",))]
+    # MOIS 2014 still lists 청주시 and 청원군; MOJ 2014 the merged city's four gu, each of
+    # which took ground from both. The two rows are the one city's total.
+    TRANSITION[("2014", "충청북도")] = [
+        (("청주시", "청원군"),
+         ("청주시 상당구", "청주시 서원구", "청주시 청원구", "청주시 흥덕구"))]
+
+
+    def apportion(cr, frac):
+        """A share `frac` of the enriched MOIS row `cr`: the published leaves are
+        rounded, then the subtotal and total rebuilt from them, so the source identity
+        holds row by row. Categories the row does not publish stay absent."""
+        r = {k: round((cr[k] or 0) * frac) for k in CNT
+             if k in cr and k not in ("합계", "한국국적미취득_소계")}
+        comps = [k for k in COMP_KO if k in r]
+        if comps and "한국국적취득자" in r and "외국인주민자녀" in r:
+            r["한국국적미취득_소계"] = sum(r[k] for k in comps)
+            r["합계"] = r["한국국적미취득_소계"] + r["한국국적취득자"] + r["외국인주민자녀"]
+        elif "합계" in cr:
+            r["합계"] = round((cr["합계"] or 0) * frac)
+        return r
+
+
     def add_broad(r, extra):
         """Add an enriched predecessor broad dict `extra` into `r` (both MOIS-Korean-
         keyed), component-wise on the published leaves, then rebuild the subtotal and
@@ -168,14 +234,42 @@ def summary_sigungu_and_sido():
         return out
 
 
-    def build_extra(y):
+    def build_transition(y, units):
+        """{(sido, spine sigungu): (broad dict, apportioned)} for the TRANSITION units
+        of year y, and the set of (sido, MOIS row) it consumed."""
+        out, used = {}, set()
+        for (ty, sd), groups in TRANSITION.items():
+            if ty != y:
+                continue
+            ml = mois_norm_lookup(y, sd)
+            w_of = {u["sigungu"]: (u.get("foreign_total") or 0) for u in units if u["sido"] == sd}
+            for srcs, dsts in groups:
+                rows_ = [enrich(ml.get(norm(m))) for m in srcs]
+                if not all(rows_) or not all(d in w_of for d in dsts):
+                    raise SystemExit(f"{y} {sd}: TRANSITION rows {srcs} or units {dsts} "
+                                     f"missing from MOIS or the spine")
+                pool = rows_[0]
+                for e in rows_[1:]:
+                    pool = add_broad(pool, e)
+                W = sum(w_of[d] for d in dsts)
+                for d in dsts:
+                    out[(sd, d)] = ((dict(pool), False) if len(dsts) == 1
+                                    else (apportion(pool, w_of[d] / W), True))
+                used |= {(sd, m) for m in srcs}
+        return out, used
+
+
+    def build_extra(y, skip=()):
         """{(succ_sido, succ_sigungu): enriched predecessor broad} for the residual
-        old-name/merged units in year y (see RECOVER)."""
+        old-name/merged units in year y (see RECOVER). A predecessor a TRANSITION
+        group already placed (`skip`) is not added again."""
         spine = {(u["sido"], norm(u["sigungu"])) for u in IDXD["by_sigungu"].get(y, [])}
         out = {}
         for (ps, pg), (ts, tg) in RECOVER.items():
             row = SP.get(y, {}).get(ps, {}).get(pg)
             if row is None or (ps, norm(pg)) in spine:    # absent, or matched directly as its own spine unit
+                continue
+            if (ps, pg) in skip:
                 continue
             assert (ts, norm(tg)) in spine, f"{y}: recover target {ts}|{tg} missing from spine"
             e = enrich(row)
@@ -191,7 +285,8 @@ def summary_sigungu_and_sido():
         napprox = 0
         for y in sorted(IDXD["by_sigungu"]):
             units = IDXD["by_sigungu"][y]            # ≈250 시군구(일반구 포함)
-            extra_y = build_extra(y)                 # boundary-change recovery for this year
+            trans, trans_used = build_transition(y, units)   # merger-year MOIS rows
+            extra_y = build_extra(y, trans_used)     # boundary-change recovery for this year
             ml = mois_norm_lookup(y, None) if False else None
             # 일반구 부모 시별 자식 가중치 합(안분 분모용). 가중치는 MOJ 등록외국인:
             # 2016-2019 backcast에서 인구가중(중위 APE 20.4%, p90 98.5%) 대비
@@ -230,7 +325,11 @@ def summary_sigungu_and_sido():
                 ml = mois_norm_lookup(y, sido)
                 r = None if (sido, sg0) in residual_si else enrich(ml.get(norm(sg0)) or ml.get(norm(sg)))
                 apportioned = False
-                if r is None and " " in sg0 and sg0.split(" ", 1)[1].endswith("구") and sg0.split(" ", 1)[0].endswith("시") \
+                if (sido, sg0) in trans:
+                    r, apportioned = trans[(sido, sg0)]
+                    r = dict(r)
+                    napprox += int(apportioned)
+                elif r is None and " " in sg0 and sg0.split(" ", 1)[1].endswith("구") and sg0.split(" ", 1)[0].endswith("시") \
                         and (sido, sg0.split(" ", 1)[0]) not in bare_si:
                     # 일반구 구인데 MOIS엔 부모 시만(2008-2015) → 부모 시 광의를 구 등록외국인 비중으로 안분.
                     # 발행된 카테고리만 안분(미발행은 공란 유지). leaf를 먼저 반올림한 뒤
@@ -242,15 +341,7 @@ def summary_sigungu_and_sido():
                     if not (w and denom):                      # fallback: 인구가중
                         w, denom = tp or 0, child_pop.get((sido, city), 0)
                     if cr and denom and w:
-                        frac = w / denom
-                        r = {k: round((cr[k] or 0) * frac) for k in CNT
-                             if k in cr and k not in ("합계", "한국국적미취득_소계")}
-                        comps = [k for k in COMP_KO if k in r]
-                        if comps and "한국국적취득자" in r and "외국인주민자녀" in r:
-                            r["한국국적미취득_소계"] = sum(r[k] for k in comps)
-                            r["합계"] = r["한국국적미취득_소계"] + r["한국국적취득자"] + r["외국인주민자녀"]
-                        elif "합계" in cr:
-                            r["합계"] = round((cr["합계"] or 0) * frac)
+                        r = apportion(cr, w / denom)
                         napprox += 1
                         apportioned = True
                 r = r or {}
@@ -269,6 +360,42 @@ def summary_sigungu_and_sido():
                 rows.append(row)
         write("summary_by_sigungu.csv", head, rows)
         print(f"  (MOIS 광의 안분된 일반구-구 행: {napprox})")
+        transition_gate(rows, head)
+
+
+    def transition_gate(rows, head):
+        """GATE (1라운드 수정, 2026-09-26): each TRANSITION group's spine units hold
+        exactly the MOIS rows the group names, to rounding (a unit's rounded leaves),
+        so no merger-year row leaks into a unit on the other side of the old city line.
+        The province sums could not see the old leak, which only moved people within
+        충청북도 and 경상남도."""
+        ix = {c: i for i, c in enumerate(head)}
+        got = {(r[ix["year"]], r[ix["sido"]], r[ix["sigungu"]]): r for r in rows}
+        reg = {(r[ix["year"]], r[ix["sido"]], r[ix["sigungu"]]): float(r[ix["registered_foreigners"]] or 0)
+               for r in rows}
+        bad = []
+        for (y, sd), groups in TRANSITION.items():
+            ml = mois_norm_lookup(y, sd)
+            for srcs, dsts in groups:
+                for k in CNT:
+                    want = sum((enrich(ml.get(norm(m))) or {}).get(k) or 0 for m in srcs)
+                    have = sum(float(got[(y, sd, d)][ix[CNT[k]]] or 0) for d in dsts)
+                    tol = 0 if len(dsts) == 1 else len(dsts) * (1 if k not in ("합계", "한국국적미취득_소계") else len(COMP_KO) + 2)
+                    if abs(have - want) > tol:
+                        bad.append((y, sd, srcs, CNT[k], want, have))
+                # and within a group, each unit's share follows its MOJ registered
+                # foreigners (the 2014 청주 rows once gave one gu all of 청원군)
+                W = sum(reg[(y, sd, d)] for d in dsts)
+                pool = sum((enrich(ml.get(norm(m))) or {}).get("합계") or 0 for m in srcs)
+                for d in dsts:
+                    exp = pool * reg[(y, sd, d)] / W if W else 0
+                    if abs(float(got[(y, sd, d)][ix["broad_total"]] or 0) - exp) > len(COMP_KO) + 3:
+                        bad.append((y, sd, d, "share", round(exp), got[(y, sd, d)][ix["broad_total"]]))
+        if bad:
+            raise SystemExit("summary_by_sigungu: merger-year MOIS rows landed outside "
+                             "their units: %s" % bad[:6])
+        print(f"  gate: {sum(len(g) for g in TRANSITION.values())} merger-year MOIS groups "
+              f"hold exactly their own rows")
 
 
     def build_sido():
@@ -326,24 +453,10 @@ def summary_eupmyeondong():
     SEP = re.compile(r"[\s·.,・ㆍᆞ‧･]")
     norm = lambda s: re.sub(r"제(\d)", r"\1", SEP.sub("", s or ""))
     sido_en = lambda s: SIDO_EN.get(s, "")
-
-    # MOIS 광의 count 필드(영문 컬럼) + 파생
-    CNT = {"합계": "broad_total", "한국국적미취득_소계": "non_naturalized", "외국인근로자": "workers",
-           "결혼이민자": "marriage_migrants", "유학생": "students", "외국국적동포": "ethnic_koreans",
-           "기타외국인": "other_foreigners", "한국국적취득자": "naturalized", "외국인주민자녀": "children"}
-    def pct(n, d, dec=2): return round(100 * n / d, dec) if d else ""
-    def settle_type(r):
-        u = (r.get("한국국적미취득_소계") or 0) or max((r.get("합계") or 0) - (r.get("한국국적취득자") or 0) - (r.get("외국인주민자녀") or 0), 0)
-        if not u or not r.get("합계"): return ""
-        w_, s_, m_ = (r.get("외국인근로자", 0) / u) / 0.38, (r.get("유학생", 0) / u) / 0.16, (r.get("결혼이민자", 0) / u) / 0.15
-        mx = max(w_, s_, m_)
-        return "다목적형(Multi-purpose)" if mx < 1 else ("산업형(Industrial)" if mx == w_ else ("대학·유학형(University)" if mx == s_ else "결혼정주형(Marriage-settled)"))
-    def derived(r):
-        tot = r.get("합계") or 0
-        und = (r.get("한국국적미취득_소계") or 0) or max(tot - (r.get("한국국적취득자") or 0) - (r.get("외국인주민자녀") or 0), 0)
-        return [pct((r.get("한국국적취득자", 0) + r.get("외국인주민자녀", 0)), tot), pct(r.get("외국인근로자", 0), und),
-                pct(r.get("결혼이민자", 0), und), pct(r.get("유학생", 0), und), settle_type(r)]
-    DERIVED_COLS = ["settlement_rate_pct", "labor_dependence_pct", "marriage_dependence_pct", "study_dependence_pct", "settlement_type"]
+    # The composition columns and the derived measures follow the module-level rules
+    # the district summaries use (enrich, derived, settle_type): one masked component
+    # under a published subtotal is recovered, and a rate whose numerator is still
+    # unreported is blank, never 0.0 (1라운드 수정, 2026-09-26).
 
     def w(fn, head, rows):
         with open(f"{OUT}/{fn}", "w", encoding="utf-8-sig", newline="") as f:
@@ -376,6 +489,7 @@ def summary_eupmyeondong():
                 for sg in ep[y][sido]:
                     for dong, r in ep[y][sido][sg].items():
                         code = cs.get((sido, norm(sg), norm(dong))) or cl.get((sido, norm(dong)), "")
+                        r = enrich(r) or {}
                         row = [y, sido, sido_en(sido), sg, dong, code]
                         row += [r.get(k, "") for k in CNT]
                         row += derived(r)

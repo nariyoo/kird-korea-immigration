@@ -561,9 +561,17 @@ def export_panels():
 
 
     # ---- annual (the trend table prints every year) ----
+    # The annual file names a type as the two panels do, so the three join on
+    # `type`: the trend table's own headers 회복, 국적취득 (인지) and 국적취득 (재취득)
+    # are the panels' 국적회복, 국적취득(인지) and 국적취득(재취득), the spelling the
+    # chapter's detail tables print (1라운드 수정, 2026-09-26). 귀화 stays: it is the
+    # annual table's name for the sum the panels call 귀화소계 (귀화 before 2014).
+    ANNUAL_TYPE = {"회복": "국적회복", "국적취득 (인지)": "국적취득(인지)",
+                   "국적취득 (재취득)": "국적취득(재취득)"}
     rows = []
     for y, yd in sorted(D["naturalization_data"]["annual"].items(), key=lambda kv: int(kv[0])):
         for typ, n in yd.items():
+            typ = ANNUAL_TYPE.get(typ, typ)
             rows.append([int(y), typ, TYPE_EN.get(typ, ""), n])
     w("naturalization_annual.csv", ["year", "type", "type_en", "n"], rows)
 

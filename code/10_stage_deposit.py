@@ -290,6 +290,14 @@ def add_refugee_files():
                   ["status", "status_en", "language", "language_en", "count"],
                   lang_rows)
 
+        # 보호 is ranked on its own combined population, so its top 20 need not be the
+        # union of the other two statuses' lists (1라운드 수정, 2026-09-26: the
+        # dictionary said "top 20 per status" and "recognized + humanitarian" without
+        # saying the two interact). The sums are read from the rows just written.
+        tot = {}
+        for st, _, _, _, n_ in lang_rows:
+            tot[st] = tot.get(st, 0) + n_
+        rec_, hum_, pro_ = tot.get("난민인정", 0), tot.get("인도적체류", 0), tot.get("보호", 0)
         # ---- 3) append data dictionary rows (file, variable, type, en, ko) ----
         new_dict = [
             ["refugee_by_nationality.csv", "status / status_en", "string",
@@ -298,14 +306,14 @@ def add_refugee_files():
             ["refugee_by_nationality.csv", "country / country_en", "string",
              "Nationality (Korean + English).", "국적(한글+영문)."],
             ["refugee_by_nationality.csv", "count", "integer",
-             "Cumulative cases 1994-2024 for that status and nationality (MOJ top-10 per status; full national totals: 122,095 applied / 1,544 recognized / 2,696 humanitarian).",
-             "1994-2024 누적 건수(MOJ 구분별 top-10; 전체: 신청 122,095·인정 1,544·인도적 2,696)."],
+             "Cumulative cases 1994-2024 for that status and nationality (MOJ top-10 per status; full national totals: 122,095 applied / 1,544 recognized / 2,696 humanitarian), as MOJ's bulletin of February 2025 (1994-2024 난민 신청 및 심사 통계) prints them. MOJ's next bulletin (난민 종합 통계), which runs a year further, revises the 2023 and 2024 humanitarian permits from 125 and 101 to 119 and 97, so its cumulative count through 2024 is 2,686 (by nationality, e.g. 아이티 116 and 아프가니스탄 31 against 117 and 34 here), and the 2024 applications from 18,336 to 18,335; recognized refugees are the same in both.",
+             "1994-2024 누적 건수(MOJ 구분별 top-10; 전체: 신청 122,095·인정 1,544·인도적 2,696). 법무부 2025년 2월 자료(1994-2024 난민 신청 및 심사 통계) 그대로다. 한 해를 더 싣는 법무부의 다음 자료(난민 종합 통계)는 2023·2024년 인도적체류 허가를 125·101 에서 119·97 로 고쳐 2024년까지 누적이 2,686 이고(국적별로는 예컨대 아이티 116, 아프가니스탄 31; 여기서는 117, 34), 2024년 신청을 18,336 에서 18,335 로 고쳤다. 난민인정은 두 자료가 같다."],
             ["refugee_by_nationality.csv", "share_pct", "float",
              "Nationality's percent of that status's cumulative total.",
              "해당 구분 누적 총계 대비 국적 비중(%)."],
             ["refugee_language_demand.csv", "status / status_en", "string",
-             "Protected population: 난민인정 recognized, 인도적체류 humanitarian, 보호 protected (recognized + humanitarian).",
-             "보호 인구 구분: 난민인정/인도적체류/보호(난민인정+인도적체류)."],
+             "Protected population: 난민인정 recognized, 인도적체류 humanitarian, 보호 protected (recognized + humanitarian). 보호 is computed on the combined population and then cut to its own top 20 languages, so its rows are not the sum of the other two statuses' rows: a language in one status's top 20 can fall outside 보호's (치타공어, 10 recognized, has no 보호 row), and 보호 summed over its rows is %s against %s + %s = %s for the other two." % (format(pro_, ","), format(rec_, ","), format(hum_, ","), format(rec_ + hum_, ",")),
+             "보호 인구 구분: 난민인정/인도적체류/보호(난민인정+인도적체류). 보호는 합친 인구로 계산한 뒤 제 상위 20개 언어로 자르므로, 그 행은 다른 두 구분의 행을 더한 것이 아니다. 한 구분의 상위 20에 든 언어가 보호의 상위 20 밖에 있을 수 있고(치타공어: 난민인정 10명, 보호 행 없음), 보호 행의 합은 %s 으로 다른 두 구분의 %s + %s = %s 와 다르다." % (format(pro_, ","), format(rec_, ","), format(hum_, ","), format(rec_ + hum_, ","))],
             ["refugee_language_demand.csv", "language / language_en", "string",
              "Estimated first language (Korean + English).", "추정 모어(한글+영문)."],
             ["refugee_language_demand.csv", "count", "integer",

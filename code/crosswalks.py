@@ -27,8 +27,8 @@ import os
 
 from kird import (CLEAN, COUNTRY_CANONICAL, COUNTRY_REGION, EMD_RENAME, OTHER_REGION,
                   LANG_EN_KO, RELEASE_DATA, RELEASE_PARENT, RELEASE_SGG_NAME,
-                  RELEASE_SIDO_NAME, SGG_LINEAGE,
-                  SGG_NAME_ALIAS, SGG_RENAME, SGG_SIDO_MOVE, SIDO_ALIAS,
+                  RELEASE_SIDO_NAME, SGG_LINE_FOLD, SGG_LINEAGE,
+                  SGG_NAME_ALIAS, SGG_RENAME, SGG_SIDO_MOVE, SGG_SPLIT_LINEAGE, SIDO_ALIAS,
                   SIDO_LINEAGE)
 
 # 대륙 이름의 영문. 기탁본의 다른 표와 같은 표기를 쓴다.
@@ -84,15 +84,16 @@ def country_crosswalk(data=None):
         return [src, canon, e[0], cont, e[2] or CONTINENT_EN.get(cont, ""), rule]
 
     rows = []
-    seen = set()
     for src, canon in sorted(COUNTRY_CANONICAL.items()):
         rows.append(row(src, canon, "source label variant"))
-        seen.add(canon)
-    for canon in sorted(set(COUNTRY_REGION) | set(en)):
-        # 원천 라벨로 이미 실린 이름은 「unchanged」로 다시 싣지 않는다. 자이르가
-        # COUNTRY_REGION 의 보호용 항목에 남아 있어 두 줄이 되었고, source_label
-        # 유일성 관문이 그것을 잡았다(2026-08-26).
-        if canon not in seen and canon not in COUNTRY_CANONICAL:
+    for canon in sorted(set(COUNTRY_REGION) | set(en) | set(COUNTRY_CANONICAL.values())):
+        # Every standard name has a row of its own, as the label the editions print.
+        # Until 2026-09-26 (1라운드 수정) a name was skipped when some retired spelling
+        # pointed to it, so 미국, 영국, 타이, 타이완, 러시아(연방) and 13 more had no row
+        # under the spelling most editions print. A name that is itself a retired
+        # spelling (자이르, 대만) is not listed twice: the source_label uniqueness gate
+        # caught that on 2026-08-26.
+        if canon not in COUNTRY_CANONICAL:
             rows.append(row(canon, canon, "unchanged"))
     blank = [r[1] for r in rows if not r[2]]
     if blank:
@@ -117,6 +118,10 @@ def region_crosswalk(data=None):
     for (sd, sg), parent in sorted(RELEASE_PARENT.items()):
         rows.append(["sigungu", sd, sg, sd, parent,
                      "general district folded into its city total in the release"])
+    # district-table lines the release carries on another district (1라운드 수정,
+    # 2026-09-26: the 화성시 동부출장소 and 마산시 lines were applied but not listed)
+    for (sd, sg), (tsd, tg), rule in SGG_LINE_FOLD:
+        rows.append(["sigungu", sd, sg, tsd, tg, rule])
     for (sd, emd), new in sorted(EMD_RENAME.items()):
         rows.append(["eupmyeondong", sd, emd, sd, new, "sub-district renamed"])
     # 대상 칸(sido, name)은 배포본이 실제로 싣는 이름으로 적는다. SIDO_ALIAS 와
@@ -127,7 +132,7 @@ def region_crosswalk(data=None):
         r[3] = RELEASE_SIDO_NAME.get(r[3], r[3])
         if r[0] in ("sigungu",):
             r[4] = RELEASE_SGG_NAME.get((r[3], r[4]), r[4])
-    for item in list(SIDO_LINEAGE) + list(SGG_LINEAGE):
+    for item in list(SIDO_LINEAGE) + list(SGG_LINEAGE) + list(SGG_SPLIT_LINEAGE):
         rows.append(["lineage", "", "", "", "", json.dumps(item, ensure_ascii=False)])
     _write(os.path.join(data, "crosswalk_region.csv"),
            ["level", "source_sido", "source_name", "sido", "name", "rule"], rows)
@@ -168,8 +173,13 @@ def visa_crosswalk(data=None):
     return rows
 
 
-def language_weights(data=None):
-    """국적 -> 제1언어 비중. `language_demand` 를 검산할 수 있게 한다."""
+def language_weights(data=None, countries=None):
+    """국적 -> 제1언어 비중. `language_demand` 를 검산할 수 있게 한다.
+
+    `countries` is the standard-name vocabulary of crosswalk_country. The shares
+    table also holds a few other spellings of the same countries (마셜제도 beside the
+    data's 마샬군도, 솔로몬제도 beside 솔로몬군도, ...) that no data file uses; they are
+    left out, so every country here has its crosswalk row (1라운드 수정, 2026-09-26)."""
     data = data or RELEASE_DATA
     src = os.path.join(CLEAN, "country_language_shares.json")
     if not os.path.exists(src):
@@ -184,7 +194,12 @@ def language_weights(data=None):
             if r.get("language") and r.get("language_en"):
                 en[r["language"]] = r["language_en"]
     rows = []
+    skipped = sorted(c for c in shares if countries is not None and c not in countries)
+    if skipped:
+        print("     크로스워크에 없는 표기 %d개는 싣지 않는다: %s" % (len(skipped), ", ".join(skipped)))
     for country in sorted(shares):
+        if countries is not None and country not in countries:
+            continue
         items = shares[country] or []
         if not items:
             rows.append([country, "", "", "", "no first-language shares available"])
@@ -201,10 +216,10 @@ def language_weights(data=None):
 
 def build_all(data=None):
     print("crosswalks: 조화 규칙을 표로 내보낸다")
-    country_crosswalk(data)
+    cc = country_crosswalk(data)
     region_crosswalk(data)
     visa_crosswalk(data)
-    language_weights(data)
+    language_weights(data, countries={r[1] for r in cc})
 
 
 if __name__ == "__main__":

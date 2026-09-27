@@ -32,7 +32,20 @@ os.makedirs(OUT_SITE_DATA, exist_ok=True)
 # --- File paths -------------------------------------------------------------
 
 STAY_FILES = {
-    # 2007-2010: 체류외국인 = 등록 + 단기 (no combined file); handled by 'stay_combined' loader
+    # 2006-2010: the edition's own nationality x status table of staying foreigners,
+    # 2장 Ⅱ 「체류외국인 현황」. Until 2026-09-26 (1라운드 수정) these years were composed
+    # as 등록 + 단기 + 거소신고 on the belief that no combined table exists. It does, in
+    # every one of the five editions, and the composition put the F-4 residence reports
+    # on the generic nationality the 거소신고 table uses (중국, 러시아) where the
+    # combined table books them (한국계중국인, 한국계러시아인), and left the 거소신고
+    # table's catch-all column as a country named 기타: 중국 2010 read 231,304 against
+    # the printed 199,802. The composition is kept below as a gate: code by code it
+    # must equal the combined table, which it does in all five years.
+    2006: f"{RAW}/출입국통계연보/2006_출입국통계연보/2장/2-체류외국인현황.xls",
+    2007: f"{RAW}/출입국통계연보/2007_출입국통계연보/2-Ⅱ.체류외국인현황.xls",
+    2008: f"{RAW}/출입국통계연보/2008_출입국통계연보/2장_Ⅱ_체류외국인현황.xls",
+    2009: f"{RAW}/출입국통계연보/2009_출입국통계연보/2장_Ⅱ_체류외국인현황.xls",
+    2010: f"{RAW}/출입국통계연보/2010_출입국통계연보/2장_Ⅱ_체류외국인현황.xls",
     2011: f"{RAW}/출입국통계연보/2011_출입국통계연보/11_2장_Ⅱ_1.국적및체류자격별 체류외국인현황.xls",
     2012: f"{RAW}/출입국통계연보/2012_출입국통계연보/12_2장_Ⅱ_1.국적및체류자격별_체류외국인형황.xlsx",
     2013: f"{RAW}/출입국통계연보/2013_출입국통계연보/13_2장_Ⅱ_1.국적및체류자격별 체류외국인현황.xlsx",
@@ -127,7 +140,9 @@ NATURALIZATION_FILES = {
     "age": f"{RAW}/출입국통계연보/2025_출입국통계연보/2025 4장_Ⅰ_3.연령 및 유형별 국적 처리 현황.xlsx",
 }
 
-# 단기체류외국인: used to compose 체류외국인 for 2006-2010 where no combined file exists
+# 단기체류외국인: the second of the three tables the 2006-2010 staying population was
+# once composed from. Since 2026-09-26 those years are read from the combined table
+# (STAY_FILES); the composition survives only as the gate below the loaders.
 SHORT_FILES = {
     2006: f"{RAW}/출입국통계연보/2006_출입국통계연보/2장/4-가[1].국적및체류자격별.xls",
     2007: f"{RAW}/출입국통계연보/2007_출입국통계연보/2-Ⅳ-1.국적및체류자격별.xls",
@@ -137,8 +152,8 @@ SHORT_FILES = {
 }
 
 # 외국적동포 거소신고 (overseas-Korean residence reports) — the third
-# component of 체류외국인 alongside 등록 + 단기. For 2006-2010 (where stay is
-# composed) these holders are otherwise omitted, undercounting 체류 by ~2-7%.
+# component of 체류외국인 alongside 등록 + 단기, used for the 2006-2010 composition
+# gate only (see STAY_FILES).
 SOJOURN_FILES = {
     2006: f"{RAW}/출입국통계연보/2006_출입국통계연보/4장/가. 외국국적동포 거소신고 현황.xls",
     2007: f"{RAW}/출입국통계연보/2007_출입국통계연보/5-Ⅲ-1.외국적동포거소신고현황.xls",
@@ -823,32 +838,42 @@ reg_long.to_csv(os.path.join(OUT_DATA, "reg_long.csv"), index=False, encoding="u
 print(f"  rows={len(reg_long):,}  countries={reg_long['country'].nunique()}  "
       f"visa codes={reg_long['visa_code'].nunique()}")
 
-print("Loading 단기체류외국인 (for 2006-2010 stay composition)...")
+print("Loading 단기체류외국인 (the 2006-2010 composition gate)...")
 short_long = build_long(SHORT_FILES) if SHORT_FILES else pd.DataFrame(
     columns=["year", "country", "visa_code", "visa_label", "n"]
 )
 
-print("Loading 외국적동포 거소신고 (2006-2010 체류 합성 third component)...")
+print("Loading 외국적동포 거소신고 (the 2006-2010 composition gate)...")
 sojourn_long = build_sojourn_long(SOJOURN_FILES) if SOJOURN_FILES else pd.DataFrame(
     columns=["year", "country", "visa_code", "visa_label", "n"]
 )
 
-print("Loading 체류외국인 (2011+ direct, 2006-2010 = 등록 + 단기 + 거소)...")
+print("Loading 체류외국인 (every year from the edition's own nationality x status table)...")
 stay_direct = build_long(STAY_FILES)
-# Compose 2006-2010 stay = registered + short-term + overseas-Korean sojourn
-early_years = sorted(set(REG_FILES) & set(SHORT_FILES))
-early_years = [y for y in early_years if y not in STAY_FILES]
-if early_years:
-    reg_early = reg_long[reg_long["year"].isin(early_years)]
-    short_early = short_long[short_long["year"].isin(early_years)]
-    sojourn_early = sojourn_long[sojourn_long["year"].isin(early_years)]
-    stay_early = (
-        pd.concat([reg_early, short_early, sojourn_early], ignore_index=True)
-        .groupby(["year", "country", "visa_code", "visa_label"], as_index=False)["n"].sum()
-    )
-    stay_long = pd.concat([stay_early, stay_direct], ignore_index=True)
-else:
-    stay_long = stay_direct
+_missing_stay = sorted(set(REG_FILES) - set(stay_direct["year"].unique()))
+if _missing_stay:
+    raise SystemExit(f"no staying-foreigner table read for {_missing_stay}")
+# GATE (2026-09-26, 1라운드 수정). The staying population of 2006-2010 was composed as
+# registered + short-term + overseas-Korean residence reports until this date. The
+# combined table the editions print is now read instead; the three component tables
+# must still add up to it status by status, so the switch moves people between
+# nationalities (the F-4 holders the residence-report table books under 중국 and
+# 러시아 and its catch-all 기타 column) and never changes a status total.
+_early = sorted(set(REG_FILES) & set(SHORT_FILES) & set(SOJOURN_FILES))
+if _early:
+    _comp = (pd.concat([reg_long[reg_long["year"].isin(_early)],
+                        short_long[short_long["year"].isin(_early)],
+                        sojourn_long[sojourn_long["year"].isin(_early)]], ignore_index=True)
+               .groupby(["year", "visa_code"])["n"].sum())
+    _dir = stay_direct[stay_direct["year"].isin(_early)].groupby(["year", "visa_code"])["n"].sum()
+    _cmp = pd.concat([_comp.rename("composed"), _dir.rename("combined")], axis=1).fillna(0)
+    _off = _cmp[_cmp["composed"] != _cmp["combined"]]
+    if len(_off):
+        raise SystemExit("2006-2010: registered + short-term + residence reports differ "
+                         "from the combined staying table:\n%s" % _off.to_string())
+    print(f"  gate: 등록 + 단기 + 거소신고 = the combined table, status by status, "
+          f"{_early[0]}-{_early[-1]} ({len(_cmp)} year-status cells)")
+stay_long = stay_direct
 
 stay_long.to_csv(os.path.join(OUT_DATA, "stay_long.csv"), index=False, encoding="utf-8-sig")
 print(f"  rows={len(stay_long):,}  countries={stay_long['country'].nunique()}  "
@@ -1834,6 +1859,11 @@ def load_age(year, path):
         gender_total_set = {"총계", "총합계"}
         gender_male_set = {"남성"}
         gender_female_set = {"여성"}
+    # 제3의성 (third sex): the stay table prints it from the 2019 edition (one person
+    # under 오스트레일리아 in 2019, 3-9 a year from 2022). It is carried as gender X,
+    # and a total derived where the edition prints none is M + F + X. Until 2026-09-26
+    # the row was skipped, so 2019's derived total missed that person (1라운드 수정).
+    gender_x_set = {"제3의성"}
 
     body = df.iloc[1:].copy().reset_index(drop=True)
 
@@ -1855,7 +1885,7 @@ def load_age(year, path):
     if not is_legacy:
         body[0] = body[0].ffill()
 
-    all_gender_keys = gender_total_set | gender_male_set | gender_female_set
+    all_gender_keys = gender_total_set | gender_male_set | gender_female_set | gender_x_set
     body = body[body[gender_col].astype(str).str.strip().isin(all_gender_keys)]
 
     body["_country"] = body[country_col].apply(clean_country)
@@ -1869,6 +1899,7 @@ def load_age(year, path):
         if gender_raw in gender_total_set: gender = "T"
         elif gender_raw in gender_male_set: gender = "M"
         elif gender_raw in gender_female_set: gender = "F"
+        elif gender_raw in gender_x_set: gender = "X"
         else: continue
         for col_idx, age_group in age_cols.items():
             val = row[col_idx]
@@ -1897,7 +1928,8 @@ def build_age_long(files):
         return pd.DataFrame(columns=["year", "country", "gender", "age_group", "n"])
     long = pd.concat(parts, ignore_index=True)
     # For years that only ship per-country M+F (2014-2019 country rows have
-    # no 총계 row), derive T = M + F so the JS UI always has a total value.
+    # no 총계 row), derive T = M + F (+ X, the 제3의성 row 2019 prints) so the JS UI
+    # always has a total value.
     # 2020+ already has T from the source file; we only fill missing T rows.
     # drop_duplicates is load-bearing: the source lists several nationality
     # classes that canonicalize to one country (영국 + 영국외지민 + 영국외지시민 +
@@ -1908,7 +1940,7 @@ def build_age_long(files):
     have_t = (long[long["gender"] == "T"][["year", "country", "age_group"]]
               .drop_duplicates().assign(_has_t=True))
     long = long.merge(have_t, on=["year", "country", "age_group"], how="left")
-    needs_t = long[long["_has_t"].isna() & long["gender"].isin(["M", "F"])]
+    needs_t = long[long["_has_t"].isna() & long["gender"].isin(["M", "F", "X"])]
     derived = (
         needs_t.groupby(["year", "country", "age_group"], as_index=False)["n"].sum()
         .assign(gender="T")
@@ -2427,7 +2459,11 @@ def compute_indices(region_df, pop_df):
             iso = 0.0
             for (sido, sg), x_i in g_by_sg.items():
                 if (sido, sg) in pop_idx.index:
-                    t_i = pop_idx.loc[(sido, sg), "total_pop"]
+                    # the district total t_i is Korean + foreign, as in the
+                    # per-nationality isolation above; this line divided by the
+                    # Korean count alone until 2026-09-26 (1라운드 수정). 09's
+                    # build_segregation overwrites the block in any case.
+                    t_i = pop_idx.loc[(sido, sg), "resident_total"]
                     if t_i and t_i > 0:
                         iso += (x_i / Xg) * (x_i / t_i)
             reg_block[reg_name] = {"total": Xg,
@@ -2794,14 +2830,17 @@ REFUGEE_DATA = {
     ],
     "notes_ko": [
         "1994년 난민협약 가입, 2013년 7월 난민법 시행",
-        "누적 신청 122,095건 중 심사완료 65,227건, 심사 진행 27,704건",
+        # 2026-09-26 (1라운드 수정): 원문(p.1)은 심사종결 94,391건(심사결정 65,227 + 직권종료
+        # 18,948 + 자진철회 10,216)과 심사진행 27,704건이다. 65,227 은 1차 심사결정만이라
+        # 진행 건과 더해 누적 신청이 되지 않았다.
+        "누적 신청 122,095건 중 심사종결 94,391건(심사결정 65,227건 포함), 심사 진행 27,704건",
         "보호율 7.4% (난민인정 1,544명 + 인도적체류허가 2,696명), 누적 기준",
         "재신청 11,409건 (전체 신청의 9.4%)",
         "재정착난민 250명 포함 (미얀마 236, 이란 5, 시리아 5, 무국적 3, 아프간 1)",
     ],
     "notes_en": [
         "Refugee Convention signed 1994; Refugee Act effective July 2013",
-        "Of 122,095 cumulative applications: 65,227 reviewed, 27,704 pending",
+        "Of 122,095 cumulative applications: 94,391 closed (65,227 of them by a decision on the merits), 27,704 pending",
         "Protection rate 7.4% (1,544 recognized + 2,696 humanitarian permits), cumulative",
         "11,409 re-applications (9.4% of total)",
         "Includes 250 resettled refugees (Myanmar 236, Iran 5, Syria 5, Stateless 3, Afghan 1)",

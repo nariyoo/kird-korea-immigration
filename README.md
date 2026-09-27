@@ -52,16 +52,16 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `summary_by_sigungu.csv` | a district and a year | 2008-2024 | 4,261 |
 | `summary_by_eupmyeondong.csv` | a sub-district and a year | 2014-2024 | 38,619 |
 | `nationality_by_sigungu.csv` | a district, nationality and year | 2008-2024 | 174,748 |
-| `nationality_by_sido.csv` | a province, nationality and year | 2008-2024 | 25,013 |
-| `nationality_national.csv` | a population, nationality and year | 2006-2024 | 7,283 |
+| `nationality_by_sido.csv` | a province, nationality and year | 2006-2024 | 25,205 |
+| `nationality_national.csv` | a population, nationality and year | 2006-2024 | 7,280 |
 | `visa_by_sigungu.csv` | a district, visa status and year | 2008-2024 | 78,123 |
 | `visa_by_sido.csv` | a province, visa status and year | 2008-2024 | 7,209 |
 | `visa_national.csv` | a population, visa status and year | 2006-2024 | 1,241 |
-| `visa_by_nationality.csv` | a population, nationality, visa and year | 2006-2024 | 238,025 |
-| `age_sex_national.csv` | a population, nationality, age band, sex and year | registered 2009-2024, stay 2011-2024 | 155,903 |
-| `language_demand.csv` | a language, scope, place and year | 2006-2024 | 208,723 |
+| `visa_by_nationality.csv` | a population, nationality, visa and year | 2006-2024 | 239,081 |
+| `age_sex_national.csv` | a population, nationality, age band, sex and year | registered 2009-2024, stay 2011-2024 | 157,101 |
+| `language_demand.csv` | a language, scope, place and year | 2006-2024 | 208,736 |
 | `ethnic_enclaves.csv` | an enclave district, nationality and year | 2008-2024 | 738 |
-| `segregation_by_nationality.csv` | a nationality and year | 2014-2024 | 1,062 |
+| `segregation_by_nationality.csv` | a nationality and year | 2014-2024 | 1,064 |
 | `region_segregation.csv` | a continent of origin and year | 2014-2024 | 121 |
 | `naturalization_annual.csv` | a year and processing route | 2011-2024 | 140 |
 | `naturalization_by_country.csv` | a year, former nationality and route | 2011-2024 | 16,210 |
@@ -69,10 +69,10 @@ carries a `sido` scope, so no level has to be reconstructed from another.
 | `children_by_age.csv` | a district, single year of age and year | 2011-2024 | 63,309 |
 | `multicultural_households.csv` | a sub-district, household category and year | 2016-2024 | 299,791 |
 | `diaspora_residence_by_sido.csv` | a province, nationality and year (F-4 residence reports) | 2008-2024 | 6,168 |
-| `crosswalk_country.csv` | a source nationality label | 2006-2024 | 227 |
-| `crosswalk_region.csv` | a source place name or boundary change | fixed | 64 |
+| `crosswalk_country.csv` | a source nationality label | 2006-2024 | 245 |
+| `crosswalk_region.csv` | a source place name or boundary change | fixed | 73 |
 | `crosswalk_visa.csv` | a source status code | 2006-2024 | 227 |
-| `language_weights.csv` | a nationality and first language | fixed | 4,614 |
+| `language_weights.csv` | a nationality and first language | fixed | 4,516 |
 | `refugee_by_nationality.csv` | a status and nationality, cumulative (deposit only) | 1994-2024 | 30 |
 | `refugee_language_demand.csv` | a status and language, cumulative (deposit only) | 1994-2024 | 60 |
 
@@ -105,7 +105,10 @@ as naturalizations and Korean-born children accumulate, so the choice of definit
 
 **MOJ staying foreigners** (`population = stay` in `nationality_national`, `visa_national`,
 `visa_by_nationality` and `age_sex_national`) are the registered population plus short-term
-sojourners and F-4 residence reports. The national tables carry both bases side by side, and a sum over `n`
+sojourners and F-4 residence reports, read in every year from the yearbook's own nationality x
+status table (for 2006-2010 the 2장 Ⅱ table, which earlier builds composed from three other
+tables and so put the F-4 holders under 중국 and 러시아(연방) instead of 한국계중국인 and
+한국계러시아인). The national tables carry both bases side by side, and a sum over `n`
 that does not filter `population` counts the registered population twice. In `age_sex_national`
 the registered series runs 2009-2024 and the staying series 2011-2024, the first year the yearbook
 prints the staying table by nationality and age; through v1.1.0 that file joined registered
@@ -219,12 +222,16 @@ never altered; only the label a row carries.
 - **부천시 원미구 / 소사구 / 오정구**, general districts abolished 2016 and re-created 2024. All years
   are one 부천시, because the district level exists for only part of the series.
 - **경상남도 마산시, 진해시 → 창원시**, merged July 2010. 2008 and 2009 keep their own city rows,
-  since the post-merger district rows do not exist yet; 진해시 is carried onto 창원시 진해구.
+  since the post-merger district rows do not exist yet; 진해시 is carried onto 창원시 진해구. The
+  MOIS composition of 2010 still lists the three cities (it counts on 1 January); each goes to the
+  gu on its ground (마산시 to 마산합포구 and 마산회원구, the old 창원시 to 성산구 and 의창구,
+  진해시 to 진해구).
 - **세종특별자치시**, created July 2012. The district panel carries 세종시 as one continuous unit
   from 2008; there is no separate 연기군 row. At province level Sejong is counted inside 충청남도
   until 2011, following the source. The 2012-2014 editions still print a residual 연기군 line under 충청남도; both levels count it in 세종.
 - **충청북도 청원군 → 청주시 청원구**, absorbed by Cheongju 2014. Values before 2014 are carried onto
-  청주시 청원구.
+  청주시 청원구, and the MOIS composition of 청원군 goes there whole while 청주시's goes to the
+  city's two gu of the time; in 2014 the two MOIS rows are shared out over the merged city's four gu.
 - **경기도 여주군 → 여주시** (promoted 2013) and **충청남도 당진군 → 당진시** (promoted 2012), county
   to city promotions with no boundary change.
 - **강원도 → 강원특별자치도** (2023) and **전라북도 → 전북특별자치도** (2024), province renames with no
@@ -254,7 +261,9 @@ the residual bin. `national_annual.foreign_total` is the district sum.
 `summary_by_sido.registered_foreigners` carries the yearbook's own province rows, which equal the sum
 of their districts in every province and year from 2008 except 2015, when the 경기도 subtotal is one
 person above its district lines. The province nationality and visa tables and every other province
-count are district sums.
+count are district sums from 2008; for 2006 and 2007, which have no district table,
+`nationality_by_sido` carries the province table those yearbooks print (five named nationalities
+and an Other column).
 
 `resident_pop` is present for every district in every year; where the Ministry of Justice and the
 Ministry of the Interior adopted a boundary change in different years, the population is carried on

@@ -8,11 +8,11 @@
 
     python 02_code/check_published_totals.py
 
-체류외국인은 2011년부터 연감이 국적×체류자격 한 표로 싣는다. 2006-2010년은
-그런 표가 없어 등록 + 단기 + 거소신고를 합쳐 만들었지만, 그 다섯 해도 연감 2장의
-「체류외국인 현황」이 머리 총계를 찍어 두었으므로 그 값과 맞대 본다. 세 표에는
-겹침이 없고, 머리 총계는 세 표 총계의 합과 사람 하나까지 같다(2006: 631,219 +
-249,542 + 29,388 = 910,149). 그래서 이 다섯 해도 같아야 통과한다.
+체류외국인은 모든 해에 연감 2장의 국적×체류자격 표에서 읽는다. 2006-2010년판의
+그 표(2장 Ⅱ 「체류외국인 현황」)는 2026-09-26(1라운드 수정)까지 「없는 표」로 여겨져
+등록 + 단기 + 거소신고를 합쳐 만들었는데, 합계는 맞아도 국적은 틀렸다(거소신고 표의
+중국·러시아와 기타 칸). 이제 그 표를 바로 읽고, stay_country_gate 가 그 다섯 해를
+국적마다 표의 국적별 총계와 맞댄다.
 
 출력: 03_cleaned_data/published_total_check.csv
 """
@@ -29,8 +29,8 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from kird import CLEAN, RAW, RELEASE_DATA, RELEASE_LAST_YEAR   # noqa: E402
 
-# 2006-2010년판에는 국적×체류자격으로 짠 체류외국인 표가 없다. 대신 2장 첫머리의
-# 「체류외국인 현황」이 그 해 총계를 찍어 두었으므로, 합성한 값을 이것과 맞댄다.
+# 2006-2010년판 2장 첫머리의 「체류외국인 현황」. 국적×체류자격 표이고 01 이 그 해의
+# 체류외국인을 이 표에서 읽는다(1라운드 수정, 2026-09-26; 그 전에는 세 표를 합쳤다).
 # 2026-09-26: 이 경로가 code/ 의 부모(04_dataset_release)에서 01_raw_data 를 찾아
 # 늘 「원자료 없음」이었다. kird.RAW 를 쓴다.
 RAWYB = os.path.join(RAW, "출입국통계연보")
@@ -172,12 +172,141 @@ def main():
         print("FAIL: released national total differs from the printed grand total:")
         print(off[["series", "year", "printed", "released"]].to_string(index=False))
         return 1
-    print("GATE OK: every year, composed 2006-2010 staying included, equals the "
+    print("GATE OK: every year, 2006-2010 staying included, equals the "
           "printed grand total (%d series-years)" % len(direct))
     rc = district_gate(ns["REGION_COUNTRY_FILES"])
     rc2 = visa_district_gate()        # run all, so one failure does not hide another
     rc3 = district_level_gate(ns["REGION_COUNTRY_FILES"])
-    return rc or rc2 or rc3
+    rc4 = stay_country_gate()
+    rc5 = early_province_gate()
+    return rc or rc2 or rc3 or rc4 or rc5
+
+
+def _canon(name):
+    """A nationality label as the release spells it: spaces collapsed, enclosing
+    parentheses dropped, retired spellings mapped (kird.COUNTRY_CANONICAL)."""
+    from kird import COUNTRY_CANONICAL
+    c = re.sub(r"\s+", "", str(name).split("\n")[0])
+    if c.startswith("(") and c.endswith(")"):
+        c = c[1:-1]
+    return COUNTRY_CANONICAL.get(c, c)
+
+
+def stay_country_gate():
+    """2006-2010 staying foreigners, nationality by nationality, against the table.
+
+    1라운드 수정 (2026-09-26). These five editions print a nationality x status table
+    of staying foreigners (2장 Ⅱ 「체류외국인 현황」) that the build did not use: it
+    composed the years as registered + short-term + overseas-Korean residence reports,
+    which gives the right total but books the residence reports under the generic
+    nationality their own table prints (중국 2010: 231,304 against the table's 199,802;
+    한국계중국인 377,577 against 409,079) and turned that table's catch-all column into
+    a nationality called 기타 (386-941 a year). Each nationality of
+    nationality_national (population stay) must now equal the row total the table
+    prints for it, the lines that name no nationality included.
+    """
+    nn = pd.read_csv(os.path.join(RELEASE_DATA, "nationality_national.csv"),
+                     encoding="utf-8-sig")
+    nn = nn[nn["population"] == "stay"]
+    off, n_cells = [], 0
+    for year, path in sorted(HEADLINE_STAY.items()):
+        df = pd.read_excel(path, sheet_name=0, header=None)
+        tc = None
+        for i in range(min(8, len(df))):
+            for j, v in enumerate(df.iloc[i].tolist()):
+                if isinstance(v, str) and re.sub(r"\s", "", v) == "총계":
+                    tc = j
+                    break
+            if tc is not None:
+                break
+        if tc is None:
+            off.append((year, "no 총계 column"))
+            continue
+        # the name column: the one left of the totals with the most Korean labels
+        def korean(j):
+            return int(df.iloc[:, j].astype(str).str.contains(r"[가-힣]").sum())
+        nc = max(range(tc), key=korean)
+        want = {}
+        for _, r in df.iterrows():
+            name, v = r.iloc[nc], cell_number(r.iloc[tc])
+            if not isinstance(name, str) or v is None or not re.search(r"[가-힣]", name):
+                continue
+            c = _canon(name)
+            if c.endswith("계") or c in ("총계", "합계"):
+                continue           # the grand total and the continent subtotals
+            want[c] = want.get(c, 0) + int(v)
+        got = nn[nn["year"] == year].groupby("country")["n"].sum().to_dict()
+        for c in sorted(set(want) | set(got)):
+            n_cells += 1
+            if int(want.get(c, 0)) != int(got.get(c, 0)):
+                off.append((year, c, int(want.get(c, 0)), int(got.get(c, 0))))
+    print()
+    print("체류외국인 2006-2010: 국적마다 연보 2장 Ⅱ 표의 총계 대 nationality_national")
+    print("   %d 국적-연도, 어긋남 %d" % (n_cells, len(off)))
+    for o in off[:12]:
+        print("   ", o)
+    if off or not n_cells:
+        print("FAIL: the 2006-2010 staying foreigners differ from the table, nationality "
+              "by nationality")
+        return 1
+    print("GATE OK: 2006-2010 staying foreigners equal the table nationality by nationality")
+    return 0
+
+
+EARLY_PROVINCE = {
+    2006: os.path.join(RAWYB, "2006_출입국통계연보", "2장", "3-나[1].국적및지역별.xls"),
+    2007: os.path.join(RAWYB, "2007_출입국통계연보", "2-Ⅲ-2.국적및지역별.xls"),
+}
+SHORT_SIDO = {"서울": "서울특별시", "부산": "부산광역시", "대구": "대구광역시", "인천": "인천광역시",
+              "광주": "광주광역시", "대전": "대전광역시", "울산": "울산광역시", "경기": "경기도",
+              "강원": "강원도", "충북": "충청북도", "충남": "충청남도", "전북": "전라북도",
+              "전남": "전라남도", "경북": "경상북도", "경남": "경상남도", "제주": "제주특별자치도"}
+
+
+def early_province_gate():
+    """2006-2007 nationality_by_sido against the province table, cell by cell.
+
+    1라운드 수정 (2026-09-26). The 2006 and 2007 editions print no district table,
+    only a province table naming 타이완, 미국, 일본, 필리핀 and 중국 with an Other
+    column. It is now carried as the 2006-2007 rows of nationality_by_sido (Other as
+    기타). The 2006 province rows print each cell as two lines, (거주) and (기타),
+    with no 계 line, so a province's count is their sum; the national row prints a 계
+    line first. Every province and column must match.
+    """
+    ns = pd.read_csv(os.path.join(RELEASE_DATA, "nationality_by_sido.csv"),
+                     encoding="utf-8-sig")
+    off, n_cells = [], 0
+    for year, path in sorted(EARLY_PROVINCE.items()):
+        df = pd.read_excel(path, sheet_name=0, header=None)
+        hr = next(i for i in range(8) if "타이완" in [re.sub(r"\s", "", str(v)) for v in df.iloc[i]])
+        head = [re.sub(r"\s", "", str(v)) for v in df.iloc[hr]]
+        cols = {j: ("기타" if h == "기타" else _canon(h)) for j, h in enumerate(head)
+                if h in ("타이완", "미국", "일본", "필리핀", "중국", "기타")}
+        mk = head.index("구분") if "구분" in head else None
+        for _, r in df.iloc[hr + 1:].iterrows():
+            sd = next((SHORT_SIDO[v] for v in r.tolist() if isinstance(v, str)
+                       and v.strip() in SHORT_SIDO), None)
+            if sd is None:
+                continue
+            stacked = (mk is not None and "\n" in str(r.iloc[mk])
+                       and not str(r.iloc[mk]).split("\n")[0].strip().startswith("계"))
+            for j, c in cols.items():
+                parts = [cell_number(p) or 0 for p in str(r.iloc[j]).split("\n")]
+                v = int(sum(parts)) if stacked else int(parts[0])
+                got = ns[(ns["year"] == year) & (ns["sido"] == sd) & (ns["country"] == c)]["n"].sum()
+                n_cells += 1
+                if int(got) != v:
+                    off.append((year, sd, c, v, int(got)))
+    print()
+    print("시도x국적 2006-2007: 연보 시도 표 대 nationality_by_sido")
+    print("   %d 칸, 어긋남 %d" % (n_cells, len(off)))
+    for o in off[:12]:
+        print("   ", o)
+    if off or n_cells != 2 * 16 * 6:
+        print("FAIL: nationality_by_sido 2006-2007 differs from the province table")
+        return 1
+    print("GATE OK: nationality_by_sido 2006-2007 equals the province table cell by cell")
+    return 0
 
 
 def _pre2014_files(pattern):

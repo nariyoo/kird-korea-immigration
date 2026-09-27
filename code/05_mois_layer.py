@@ -3929,9 +3929,14 @@ def sejong_patches():
     def inject_eupmyeondong():
         print("2) 세종 읍면동 -> eupmyeondong_population.json")
         def collect(rows):
+            # The 2014-2015 parsers emit each category three times, sex = total, M
+            # and F; the 2016+ parser emits the total alone. Only the total is kept.
+            # Until 2026-09-26 (1라운드 수정) all three were summed, so every Sejong
+            # sub-district count in 2014 and 2015 was exactly twice the published one
+            # (조치원읍 2014: 2,282 against 1,141).
             out = {}
             for r in rows:
-                if r.get("sido") != "세종특별자치시":
+                if r.get("sido") != "세종특별자치시" or r.get("sex", "total") != "total":
                     continue
                 d = out.setdefault(r["eupmyeondong"], {})
                 d[r["category"]] = d.get(r["category"], 0) + r["n"]

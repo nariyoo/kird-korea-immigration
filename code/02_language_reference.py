@@ -567,6 +567,14 @@ def build_language_shares():
             "국제연합전문기구": [{"language": "영어", "share": 1.0}],
             "교황청": [{"language": "이탈리아어", "share": 1.0}],
             "기타": [{"language": "기타", "share": 1.0}],
+            # The other lines the yearbook prints without a nationality. They held
+            # people in the released tables (미등록국가 9 / 15 / 32 in the 2014-2016
+            # district tables, 미상 1 in 2019, 한국 3 in 2012) and had no entry, so
+            # they fell out of language demand with nothing in language_weights to
+            # say so (1라운드 수정, 2026-09-26). Same treatment as 무국적.
+            "미등록국가": [{"language": "기타", "share": 1.0}],
+            "미상": [{"language": "기타", "share": 1.0}],
+            "한국": [{"language": "기타", "share": 1.0}],
         }
 
         # 모든 나라를 내보낸다. 전에는 이 고리가 COUNTRY_LANGUAGE(104개) 위를

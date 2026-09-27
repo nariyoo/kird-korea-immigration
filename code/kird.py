@@ -1430,6 +1430,34 @@ SGG_LINEAGE = [
     (("충청남도", "연기군"), ("세종특별자치시", "세종특별자치시")),   # 2012-07-01 세종 출범
 ]
 
+# 시군구 표가 한 줄로 따로 찍지만 배포본이 다른 시군구에 싣는 줄. 코드 조회에는
+# 쓰지 않고 crosswalk_region.csv 에 규칙으로 싣는다(1라운드 수정, 2026-09-26: 화성시
+# 동부출장소와 마산시 줄이 크로스워크에 없었다). 04_reconcile_districts.py 의 FOLD /
+# SUBOFFICE / FOLD_FROM 과 check_published_totals.py 의 LINE_TO 가 이 규칙을 적용한다.
+SGG_LINE_FOLD = [
+    (("경기도", "화성시동부출장소"), ("경기도", "화성시"),
+     "sub-office (출장소) line of the district table, added to its city"),
+    (("경상남도", "마산시"), ("경상남도", "창원시"),
+     "line printed after the 2010 merger (2013, 2014), carried on the 창원시 city line"),
+    (("충청북도", "청원군"), ("충청북도", "청주시 청원구"),
+     "residual line of an abolished district, carried on its successor"),
+    (("충청남도", "당진군"), ("충청남도", "당진시"),
+     "residual line of an abolished district, carried on its successor"),
+    (("경기도", "여주군"), ("경기도", "여주시"),
+     "residual line of an abolished district, carried on its successor"),
+    (("경기도", "포천군"), ("경기도", "포천시"),
+     "residual line of an abolished district (2009, 1 person), carried on its successor"),
+    (("충청남도", "연기군"), ("세종특별자치시", "세종시"),
+     "residual line printed after Sejong's creation (2012-2014), counted in 세종"),
+]
+# 한 시가 여러 구로 나뉜 승계. SGG_LINEAGE 는 1:1 코드 조회용이라 여기 따로 적는다.
+# 2010-07-01 창원·마산·진해 통합의 다섯 구는 옛 시 경계를 따른다. 06_build_summaries.py
+# 의 TRANSITION 이 MOIS 2010 의 세 시 행을 이 구들에 나눈다.
+SGG_SPLIT_LINEAGE = [
+    (("경상남도", "마산시"), (("경상남도", "창원시 마산합포구"), ("경상남도", "창원시 마산회원구"))),
+    (("경상남도", "창원시"), (("경상남도", "창원시 의창구"), ("경상남도", "창원시 성산구"))),
+]
+
 # 자료가 시군구 자리에 쓰는 별칭. 어느 칸을 가리키는 말인가만 옮긴다.
 # 세종은 단층제라 법정동코드에 시군구 행 하나(3611000000)뿐이고 그 이름이 곧 시도명이다.
 SGG_NAME_ALIAS = {

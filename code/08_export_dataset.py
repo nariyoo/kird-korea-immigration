@@ -336,10 +336,10 @@ def export_dataset():
         visa = pd.concat([stay, reg], ignore_index=True)
         visa = visa[["year", "population", "country", "visa_code", "visa_label", "n"]]
         # Collapse rows that differ only by visa_label, summing the counts and
-        # keeping the first label. 2006-2010 F4 comes from two tables (the
-        # short-term table's F-4 column and the 거소신고 table); since 2026-09-26
-        # both carry the label "재외동포", and validate_release checks that each
-        # (year, visa_code) has one label.
+        # keeping the first label. (2006-2010 F4 once came from two tables, the
+        # short-term table's F-4 column and the 거소신고 table; since 2026-09-26 those
+        # years are read from the edition's combined staying table.) validate_release
+        # checks that each (year, visa_code) has one label.
         visa = (visa.groupby(["year", "population", "country", "visa_code"],
                               as_index=False)
                     .agg({"visa_label": "first", "n": "sum"}))
@@ -380,6 +380,20 @@ def export_dataset():
                                                             region["sigungu"])])
         sido_nat = (region_p.groupby(["year", "sido", "country"], as_index=False)["n"]
                           .sum().sort_values(["year", "sido", "country"]))
+        # 2006-2007 (1라운드 수정, 2026-09-26): the yearbook prints no district table
+        # these years, only a province table with five named nationalities (타이완,
+        # 미국, 일본, 필리핀, 중국) and an Other column, which summary_by_sido's
+        # 2006-2007 registered_foreigners and diversity indices already come from.
+        # It was carried nowhere. 03's parse_sido_2006_2013 writes it as printed,
+        # Other as 기타, and it is the only province split those two years have.
+        early_sido = pd.read_csv(os.path.join(PROC, "sido_nationality_2006_2007.csv"),
+                                 encoding="utf-8-sig")
+        if set(early_sido["year"]) & set(sido_nat["year"]):
+            raise SystemExit("nationality_by_sido: the 2006-2007 province table overlaps "
+                             "the district sums")
+        sido_nat = (pd.concat([early_sido[["year", "sido", "country", "n"]], sido_nat],
+                              ignore_index=True)
+                      .sort_values(["year", "sido", "country"]))
         w("nationality_by_sido.csv", add_en(sido_nat.copy(), ["sido", "country"]))
         nat_nat = (visa.groupby(["year", "population", "country"], as_index=False)["n"]
                        .sum().sort_values(["year", "population", "country"]))

@@ -30,7 +30,16 @@ What is checked
     cross-file     district sums reconcile with the sido and national tables
     age bases      age_sex_national carries registered 2009- and stay 2011- as
                    two labelled series, and each sums to nationality_national
-                   for the same population, country and year
+                   for the same population, line and year (the lines that name no
+                   nationality included), with T = M + F + X in every cell
+    crosswalks     every standard nationality name has a row of its own, every
+                   country a data file names has a row, every district-table line
+                   carried on another district is listed, and every nationality
+                   line with people has a language_weights row
+    provinces      the 2006-2007 rows of nationality_by_sido add up to
+                   summary_by_sido and reproduce its indices
+    sub-districts  dependence rates are blank where their component is, and no
+                   district's sub-districts add up to more than its broad_total
     coverage       no README or dictionary line cites a year the data lacks
 
 The Korean count convention, which the indices depend on: `resident_pop` is the
@@ -422,6 +431,24 @@ def check_segregation(d):
     calc = pd.DataFrame(rows)
     if calc.empty:
         return
+    # The rows: every nationality with a national total of 100 or more that year over
+    # the districts the indices use, and no other (1라운드 수정, 2026-09-26: the file
+    # kept an old key set, so 아르헨티나 2018 (101) and 짐바브웨 2023 (105) had none).
+    tots = {}
+    for y, blk in cnt.items():
+        for (sd, sg), cs in blk.items():
+            if (y, sd, sg) not in pop:
+                continue
+            for c, v in cs.items():
+                tots[(y, c)] = tots.get((y, c), 0.0) + v
+    years = set(seg["year"].astype(int))
+    want = {k for k, v in tots.items() if int(k[0]) in years and v >= 100
+            and k[1] not in RESIDUAL_LINES}
+    have = {(int(y), c) for y, c in zip(seg["year"], seg["country"])}
+    want = {(int(y), c) for y, c in want}
+    check(want == have,
+          "segregation: one row per nationality of 100 or more, and no other",
+          "missing %s; extra %s" % (sorted(want - have)[:6], sorted(have - want)[:6]))
     m = seg.merge(calc, on=["year", "country"], how="inner")
     for pub, cc, tol, name in (("dissimilarity_D", "_D", 1.5e-3, "dissimilarity_D"),
                                ("isolation", "_iso", 1.5e-4, "isolation"),
@@ -516,6 +543,9 @@ def check_cross_file(d):
         a_ = a_[~a_["sigungu"].isin(AGG)].assign(
             sido_code=a_["sigungu_code"].map(lambda v: _code(v)[:2]))
         a = a_.groupby(keys)["n"].sum()
+        # the years with a district table; nationality_by_sido's 2006-2007 rows are the
+        # yearbook's province table (check_early_provinces holds them to the summary)
+        b_ = b_[b_["year"].isin(set(a_["year"]))]
         b = b_.assign(sido_code=b_["sido_code"].map(_code)).groupby(keys)["n"].sum()
         j = pd.concat([a.rename("lo"), b.rename("hi")], axis=1).fillna(0)
         gap = (j["lo"] - j["hi"]).abs()
@@ -531,20 +561,26 @@ def check_cross_file(d):
 
 
 # Where the age table and the nationality table of the same edition disagree for
-# a documented reason. Keys are (population, year); the value is the total by
-# which the age table exceeds nationality_national, summed over the countries
-# that differ. Every other (population, year, country) must match exactly.
+# a documented reason. Keys are (population, year, country); the value is the
+# number by which the age table exceeds nationality_national on that line. Every
+# other (population, year, country) must match exactly, the lines that name no
+# nationality (무국적, 기타, 미등록국가, 미상, 한국) included: since 2026-09-26
+# (1라운드 수정) the age file carries them as the status tables do, where it had
+# dropped them (106-337 people a year) and this check had left them out.
 #   stay 2022  The age table lists 홍콩거주난민 (17), which the release folds into
 #              홍콩; the status table has no such row and holds those 17 in its
-#              기타 line (carried since 2026-09-26 as country 기타, which the age
-#              table drops). The status table does not say which statuses they
-#              hold, so they cannot be placed.
-# (stay 2014 used to be here: the 자격없음(0-0) column, 434 persons, was not read
-#  by the status parser. It is now read as visa code X00 and the gap is gone.)
-#   stay 2019  The status table prints one 제3의성 (third sex) person under
-#              오스트레일리아, counted since 2026-09-26; the age table of that edition
-#              has no such row, so its M + F total is one lower.
-AGE_BASE_KNOWN = {("stay", 2022): 17, ("stay", 2019): -1}
+#              기타 line. The status table does not say which statuses they hold,
+#              so they cannot be placed.
+#   stay 2014-2016, 2018  The age table's printed grand total exceeds the sum of
+#              its own rows by 4, 3, 2 and 1 persons (no row, no sex holds them);
+#              the status table of the same edition counts them in its 기타 line.
+# (stay 2014 used to be here for the 자격없음(0-0) column, 434 persons, which the
+#  status parser did not read; it is now visa code X00. stay 2019 used to be here
+#  for one person: the age table's 제3의성 row under 오스트레일리아, which the age
+#  file now carries as gender X.)
+AGE_BASE_KNOWN = {("stay", 2022, "홍콩"): 17, ("stay", 2022, "기타"): -17,
+                  ("stay", 2014, "기타"): -4, ("stay", 2015, "기타"): -3,
+                  ("stay", 2016, "기타"): -2, ("stay", 2018, "기타"): -1}
 
 
 
@@ -581,26 +617,34 @@ def check_age_bases(d):
     if n is None:
         return
     t = (a[a["gender"] == "T"].groupby(["population", "year", "country"])["n"].sum())
-    m = n[~n["country"].isin(RESIDUAL_LINES)].set_index(
-        ["population", "year", "country"])["n"]
+    m = n.set_index(["population", "year", "country"])["n"]
     j = pd.concat([t.rename("age"), m.rename("nat")], axis=1)
     keep = [(p == "registered" and y >= 2009) or (p == "stay" and y >= 2011)
             for p, y, _ in j.index]
     j = j[keep].fillna(0)
     j["gap"] = j["age"] - j["nat"]
     bad = j[j["gap"] != 0]
-    by = bad.groupby(level=[0, 1])["gap"].agg(["sum", "min", "size"])
-    unexplained = []
-    for (p, y), r in by.iterrows():
-        want = AGE_BASE_KNOWN.get((p, int(y)))
-        if want is None or r["sum"] != want or (r["min"] < 0 and want >= 0):
-            unexplained.append("%s %d: %+d over %d countries"
-                               % (p, y, r["sum"], r["size"]))
-    missing = [k for k in AGE_BASE_KNOWN if k not in by.index]
+    unexplained = ["%s %d %s: %+d" % (p, y, c, g) for (p, y, c), g in bad["gap"].items()
+                   if AGE_BASE_KNOWN.get((p, int(y), c)) != g]
+    have = {(p, int(y), c) for p, y, c in bad.index}
+    missing = [k for k in AGE_BASE_KNOWN if k not in have]
     check(not unexplained and not missing,
           "age bases: T summed over ages = nationality_national, per population, "
-          "year and country",
-          "unexplained %s; documented but absent %s" % (unexplained[:4], missing))
+          "year and country, the lines that name no nationality included",
+          "unexplained %s; documented but absent %s" % (unexplained[:6], missing))
+    # T = M + F + X on every line and band, X being the 제3의성 row the stay table
+    # prints from 2019 (1라운드 수정: it was dropped, and 2019's derived total
+    # missed the one person under 오스트레일리아).
+    if "gender" in a.columns:
+        w = a.pivot_table(index=["population", "year", "country", "age_group"],
+                          columns="gender", values="n", aggfunc="sum").fillna(0)
+        parts = [g for g in ("M", "F", "X") if g in w.columns]
+        off = w[w.get("T", 0) != w[parts].sum(axis=1)] if parts else w.iloc[:0]
+        odd = sorted(set(a["gender"].dropna()) - {"T", "M", "F", "X"})
+        check(off.empty and not odd,
+              "age bases: T = M + F + X in every cell (X = 제3의성)",
+              "%d cells differ, e.g. %s; unknown sex codes %s"
+              % (len(off), list(off.index[:3]), odd))
 
 
 def check_country_labels(d):
@@ -702,6 +746,18 @@ def check_naturalization(d):
     ann = d.get("naturalization_annual.csv")
     if ann is None:
         return
+    # One spelling per type across the three files, so they join on `type`. The
+    # annual file printed its trend table's 회복 and 국적취득 (인지) / (재취득) until
+    # 2026-09-26 (1라운드 수정); the panels print 국적회복 and 국적취득(인지) / (재취득).
+    # 귀화 (the annual name for all routes) and the total row are the annual file's own.
+    pt = set()
+    for name in ("naturalization_by_country.csv", "naturalization_by_age.csv"):
+        if d.get(name) is not None:
+            pt |= set(d[name]["type"].unique())
+    if pt:
+        odd = sorted(set(ann["type"].unique()) - pt - {"귀화", "총합계", "총계", "합계", "계"})
+        check(not odd, "naturalization: naturalization_annual names each type as the panels do",
+              "annual-only spellings %s" % odd)
     a = ann[ann["type"] == "귀화"].set_index("year")["n"]
     for name, raw_ok in (("naturalization_by_country.csv", {}),
                          ("naturalization_by_age.csv", {2012: -1})):
@@ -721,9 +777,11 @@ def check_naturalization(d):
     # The cells listed are differences between an edition's detail tables and the
     # newest edition's revised trend table, each read in the raw files (see
     # 07_build_naturalization.py).
-    t2a = {"국적회복": "회복", "국적판정": "국적판정", "국적상실": "국적상실",
-           "국적이탈": "국적이탈", "국적취득(인지)": "국적취득 (인지)",
-           "국적취득(재취득)": "국적취득 (재취득)", "국적선택": "국적선택", "국적보유": "국적보유"}
+    # the three files name a type alike since 2026-09-26 (1라운드 수정); the annual
+    # file had printed the trend table's 회복 and 국적취득 (인지) / (재취득)
+    t2a = {"국적회복": "국적회복", "국적판정": "국적판정", "국적상실": "국적상실",
+           "국적이탈": "국적이탈", "국적취득(인지)": "국적취득(인지)",
+           "국적취득(재취득)": "국적취득(재취득)", "국적선택": "국적선택", "국적보유": "국적보유"}
     known = {("naturalization_by_age.csv", 2012, "국적상실"): 1,
              ("naturalization_by_country.csv", 2013, "국적취득"): -343,
              ("naturalization_by_age.csv", 2013, "국적취득"): -343}
@@ -742,7 +800,7 @@ def check_naturalization(d):
         for (y, t), n in df.groupby(["year", "type"])["n"].sum().items():
             y = int(y)
             if t == "국적취득":
-                ref = A.get((y, "국적취득 (인지)"), 0) + A.get((y, "국적취득 (재취득)"), 0)
+                ref = A.get((y, "국적취득(인지)"), 0) + A.get((y, "국적취득(재취득)"), 0)
             elif t in t2a:
                 ref = A.get((y, t2a[t]))
             else:
@@ -944,6 +1002,165 @@ def check_crosswalk_country(d):
     bad = sorted(g[g > 1].index)
     check(not bad, "crosswalk_country: one standard name per English name",
           "%s" % {e: sorted(set(x.loc[x.country_en == e, "country"])) for e in bad[:3]})
+    # 1라운드 수정 (2026-09-26): every standard name is also a source label of its own,
+    # the spelling the editions print; 미국, 영국, 타이, 타이완, 러시아(연방) and 13 more
+    # appeared only as the target of a retired spelling. And every nationality a data
+    # file carries has its row.
+    std = set(cw["country"]) - set(cw["source_label"])
+    check(not std, "crosswalk_country: every standard name has a row under its own "
+          "spelling", sorted(std)[:8])
+    used = set()
+    for f in ("nationality_national.csv", "nationality_by_sido.csv",
+              "nationality_by_sigungu.csv", "visa_by_nationality.csv",
+              "age_sex_national.csv", "segregation_by_nationality.csv",
+              "language_weights.csv"):
+        if d.get(f) is not None:
+            used |= set(d[f]["country"].dropna())
+    miss = sorted(used - set(cw["country"]))
+    check(not miss, "crosswalk_country: every country a data file names has a row",
+          miss[:8])
+
+
+def check_region_crosswalk(d):
+    """crosswalk_region lists every line the district files carry on another district.
+
+    1라운드 수정 (2026-09-26): the 화성시 동부출장소 line (added to 화성시) and the
+    마산시 line printed after the 2010 merger (carried on the 창원시 city line) were
+    applied in the build and missing from the crosswalk, as was the 2010 split of
+    마산시 and the old 창원시 into the new city's gu.
+    """
+    cr = d.get("crosswalk_region.csv")
+    if cr is None:
+        return
+    rows = {(r.source_sido, str(r.source_name).replace(" ", ""), r.sido, str(r.name).replace(" ", ""))
+            for r in cr[cr["level"] == "sigungu"].itertuples()}
+    want = {("경기도", "화성시동부출장소", "경기도", "화성시"),
+            ("경상남도", "마산시", "경상남도", "창원시"),
+            ("충청북도", "청원군", "충청북도", "청주시청원구"),
+            ("충청남도", "당진군", "충청남도", "당진시"),
+            ("충청남도", "연기군", "세종특별자치시", "세종시")}
+    lin = " ".join(cr.loc[cr["level"] == "lineage", "rule"].astype(str))
+    check(want <= rows and "창원시 마산합포구" in lin and "창원시 성산구" in lin,
+          "crosswalk_region: every district-table line carried on another district, "
+          "and the 2010 Changwon split",
+          "missing %s" % sorted(want - rows))
+
+
+def check_early_provinces(d):
+    """2006-2007: nationality_by_sido carries the province table the yearbook prints
+    (five named nationalities and 기타), and summary_by_sido's counts and diversity
+    indices for those years come from it.
+
+    1라운드 수정 (2026-09-26): the table was carried nowhere, though the indices were
+    built on it, and the 2006 indices were built on the first line of each cell alone
+    (거주 residents; the province rows print (거주)/(기타) with no 계 line), so Seoul
+    counted 36 Americans of 11,890.
+    """
+    ns, ss = d.get("nationality_by_sido.csv"), d.get("summary_by_sido.csv")
+    nb = d.get("nationality_by_sigungu.csv")
+    if ns is None or ss is None:
+        return
+    early = sorted(set(ss["year"].astype(int)) - set(nb["year"].astype(int))) if nb is not None else []
+    if not early:
+        return
+    x = ns[ns["year"].isin(early)]
+    tot = x.groupby(["year", "sido"])["n"].sum()
+    reg = ss[ss["year"].isin(early)].set_index(["year", "sido"])["registered_foreigners"]
+    j = pd.concat([tot.rename("nat"), reg.rename("reg")], axis=1)
+    bad = j[j["nat"].fillna(-1) != j["reg"].fillna(-2)]
+    check(bad.empty and len(j) > 0,
+          "provinces %s: nationality_by_sido sums to summary_by_sido.registered_foreigners"
+          % "-".join(str(y) for y in (early[0], early[-1])),
+          "%d province-years differ, e.g. %s" % (len(bad), bad.head(3).to_dict("index")))
+    rows = []
+    for (y, sd), g in x.groupby(["year", "sido"]):
+        named = [float(v) for c, v in zip(g["country"], g["n"]) if c != "기타" and v > 0]
+        s_ = ss[(ss["year"] == y) & (ss["sido"] == sd)]
+        if s_.empty or not named:
+            continue
+        r = s_.iloc[0]
+        rows.append((y, sd, r["shannon_H"], round(ent(named), 3), r["HHI"],
+                     round(sum((v / sum(named)) ** 2 for v in named), 4),
+                     r["index_base_k"], len(named)))
+    off = [r for r in rows if abs(r[2] - r[3]) > 1e-3 or abs(r[4] - r[5]) > 1e-4 or r[6] != r[7]]
+    check(rows and not off,
+          "provinces 2006-2007: shannon_H, HHI and index_base_k recompute from the named "
+          "nationalities of nationality_by_sido", off[:3])
+
+
+def check_subdistrict_rates(d):
+    """summary_by_eupmyeondong: a dependence rate is the component over non_naturalized
+    where the component is reported, and blank where it is not; the district summaries
+    use the same rule.
+
+    1라운드 수정 (2026-09-26): the sub-district file read a masked component as 0, so
+    3,524 masked cells in 2022-2024 alone gave a rate of 0.0 while the component
+    itself was blank (1,968 of them hid a person or more), and the one masked component
+    under a published subtotal was never recovered, as it is for the districts.
+    """
+    e = d.get("summary_by_eupmyeondong.csv")
+    if e is None:
+        return
+    bad = {}
+    for comp, rate in (("workers", "labor_dependence_pct"),
+                       ("marriage_migrants", "marriage_dependence_pct"),
+                       ("students", "study_dependence_pct")):
+        if comp not in e.columns or rate not in e.columns:
+            continue
+        orphan = e[e[comp].isna() & e[rate].notna()]
+        x = e.dropna(subset=[comp, rate, "non_naturalized"])
+        x = x[x["non_naturalized"] > 0]
+        g = (x[rate] - 100 * x[comp] / x["non_naturalized"]).abs()
+        n_bad = len(orphan) + int((g > 0.006).sum())
+        if n_bad:
+            bad[rate] = n_bad
+    check(not bad,
+          "subdistrict rates: dependence rates recompute and are blank where the component is",
+          "rows off %s" % bad)
+
+
+def check_subdistrict_sums(d):
+    """summary_by_eupmyeondong summed over a district's sub-districts is at most the
+    district's broad_total, wherever MOIS publishes the district directly (MOIS omits
+    or masks some sub-district rows, so the sum can fall short, never exceed).
+
+    1라운드 수정 (2026-09-26): every Sejong sub-district in 2014 and 2015 carried twice
+    its published count (the parser summed the total, male and female rows), which
+    the 0.5% national tolerance of final_qc did not see.
+    """
+    e, s = d.get("summary_by_eupmyeondong.csv"), d.get("summary_by_sigungu.csv")
+    if e is None or s is None or "sigungu_code" not in e.columns:
+        return
+    key = lambda df: df["sigungu_code"].map(lambda v: "" if v != v else str(v).split(".")[0])
+    es = e.assign(_c=key(e)).groupby(["year", "_c"])["broad_total"].sum()
+    direct = s[s["broad_apportioned"].astype(str).str.lower() == "false"]
+    ss = direct.assign(_c=key(direct)).groupby(["year", "_c"])["broad_total"].sum()
+    j = pd.concat([es.rename("emd"), ss.rename("sgg")], axis=1).dropna()
+    over = j[j["emd"] > j["sgg"]]
+    check(len(j) > 0 and over.empty,
+          "subdistrict sums: no district's sub-districts add up to more than its broad_total",
+          "%d district-years over, e.g. %s" % (len(over), over.head(3).to_dict("index")))
+
+
+def check_language_weights(d):
+    """Every nationality line a count file carries has a language_weights row: its
+    first-language shares, or an explicit row saying there are none.
+
+    1라운드 수정 (2026-09-26): 미등록국가 (9, 15 and 32 people in the 2014-2016
+    district tables) had no row, so its people fell out of language_demand with
+    nothing to say so; 미상 and 한국 were in the same state.
+    """
+    lw = d.get("language_weights.csv")
+    if lw is None:
+        return
+    used = set()
+    for f in ("nationality_national.csv", "nationality_by_sido.csv",
+              "nationality_by_sigungu.csv"):
+        if d.get(f) is not None:
+            used |= set(d[f].loc[d[f]["n"] > 0, "country"].dropna())
+    miss = sorted(used - set(lw["country"]))
+    check(not miss, "language_weights: a row for every nationality line with people",
+          miss[:8])
 
 
 def check_region_totals(d):
@@ -1414,6 +1631,11 @@ def main():
     check_one_label_per_code(d)
     check_province_labels(d)
     check_crosswalk_country(d)
+    check_region_crosswalk(d)
+    check_language_weights(d)
+    check_early_provinces(d)
+    check_subdistrict_rates(d)
+    check_subdistrict_sums(d)
     check_region_totals(d)
     check_diaspora_labels(d)
     check_published_residuals(d)
