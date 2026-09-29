@@ -74,14 +74,11 @@ def stage_release():
     minus the four TOP_LEVEL files, which attach_breakdowns() writes into
     <deposit>/data/ instead.
 
-    README.md and LICENSE.txt are the deposit's own curated documents and are NOT
-    the release's copies: the deposit README describes the detailed_data/ split, the
-    wide columns and the data-only scope of the deposit, and LICENSE.txt is the full
-    CC BY text where 04_dataset_release/LICENSE is a two-line pointer. They are
-    seeded once (from the published deposit, falling back to the release) and then
-    left alone, the same rule 08_export_dataset.py applies to the README and
-    CITATION.cff it would otherwise regenerate, so an edit written for the next
-    version survives a rebuild.
+    LICENSE.txt is the deposit's one document: the full CC BY text, where
+    04_dataset_release/LICENSE is a two-line pointer. It is seeded once (from the
+    published deposit, falling back to the release) and then left alone. From V2
+    (2026-09-29) the deposit carries no README; its documentation is the public
+    repository's README.md and DATA_NOTES.md.
     """
     SRC = RELEASE_DATA
     SRC_DTA = os.path.join(RELEASE_DATA, "stata")
@@ -145,9 +142,9 @@ def stage_release():
         os.remove(os.path.join(DEPOSIT_DATA, f))
         print(f"  removed stale {f} (data/ top level)")
 
+    # 2026-09-29: no README in the deposit from V2 on (Nari); the documentation is the
+    # public repository's README.md and DATA_NOTES.md
     for name, sources in (
-            ("README.md", [os.path.join(DEPOSIT_PUBLISHED, "README.md"),
-                           os.path.join(RELEASE, "README.md")]),
             ("LICENSE.txt", [os.path.join(DEPOSIT_PUBLISHED, "LICENSE.txt"),
                              os.path.join(RELEASE, "LICENSE")])):
         dst = os.path.join(DEPOSIT, name)
@@ -974,7 +971,7 @@ def final_qc():
                       dtype=str, keep_default_na=False)
     tables = {p_.strip()[:-4] for f_ in dd_["file"] for p_ in f_.split("/")
               if p_.strip().endswith(".csv")}
-    expected = {"LICENSE.txt", "README.md", "DATA_NOTES.md", "data_dictionary.csv"}
+    expected = {"LICENSE.txt", "data_dictionary.csv"}
     for t in tables:
         sub = "data" if t + ".csv" in TOP_LEVEL else os.path.join("data", "detailed_data")
         expected |= {os.path.normpath(os.path.join(sub, t + e)) for e in (".csv", ".dta")}

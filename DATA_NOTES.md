@@ -1,10 +1,86 @@
 # Data notes
 
-Technical notes for the files in `data/`: how each table is built, how the levels add up, how the indices are defined, and where and why cells are blank. Start with `README.md` and come here when a number needs explaining; `data_dictionary.csv` defines every column.
+Notes for the tables deposited at ICPSR (https://doi.org/10.3886/E249944): how to read them, how each table is built, how the levels add up, how the indices are defined, and where and why cells are blank. `data_dictionary.csv` in the deposit defines every column; `README.md` describes the pipeline.
+
+## Reading the files
+
+| Level | Start here | What it is | Count |
+|---|---|---|---|
+| **sido** (시도) | `summary_by_sido.csv` | provinces and metropolitan cities | 16 (2006-2011) / 17 (2012-) |
+| **sigungu** (시군구) | `summary_by_sigungu.csv` | districts: autonomous gu, cities (si), counties (gun), and the general gu of large cities | ~250 |
+| **eup/myeon/dong** (읍·면·동) | `summary_by_eupmyeondong.csv` | sub-districts (towns and neighborhoods) | ~3,500 |
+
+Begin from the summary file at your level. One row is one place in one year, with
+the headline measures already on it: foreign share, the broad-definition
+composition, settlement type and, at the national, sido and sigungu levels, the
+diversity indices. Use a breakdown file only when you need detail within a place
+(by nationality, visa status, age and sex, language, and so on).
+
+**Join keys.** Join on codes, not names. Each row has `sido_code` (2 digits) and
+`sigungu_code` (5 digits), the 행정안전부 법정동코드 in force on 31 December of the
+row's year, and sub-district rows also have `adm_code`, that year's
+administrative-dong code for joining to GIS boundaries. Names move (인천 남구 became
+미추홀구 in 2018; 군위군 moved from 경상북도 to 대구광역시 in 2023), and the English
+district name `sigungu_en` is not unique on its own: several provinces have a 동구 or
+a 중구, all `Dong-gu` or `Jung-gu`. Join the levels on `(year, sigungu_code)`.
+
+**Read the code columns as text.** The codes are identifiers, and they are blank on
+some rows of some files, so pandas would read them as float in one file and integer
+in another and a join would silently match nothing. Read them as strings:
+```python
+import pandas as pd
+codes = {c: str for c in ("sido_code", "sigungu_code", "adm_code")}
+df = pd.read_csv(path, encoding="utf-8-sig", converters=codes)
+```
+The files are UTF-8 with a byte-order mark, hence `utf-8-sig`. A converter touches
+only its own column, so the counts remain numeric; do not use `keep_default_na=False`
+for the same purpose, since it turns every blank in the file into text. In R,
+`readr::read_csv(path, col_types = cols(sido_code = "c", sigungu_code = "c",
+adm_code = "c"))`. The `.dta` files store the three codes as strings already.
+
+## Usage notes
+
+**Two population definitions.** MOJ registered foreigners (residence over 90 days, with
+a foreign-resident registration) and MOIS broad-definition foreign residents
+(non-naturalized residents, naturalized citizens and their children) are different
+populations. Both appear side by side so a user can pick the base; the MOIS count
+was about 1.7 times the MOJ count nationally in 2024. `resident_pop` counts Korean
+nationals only, and `foreign_share_pct` is `registered_foreigners / resident_pop`.
+
+**Counts aggregate across levels; indices are recomputed.** Counts at one level are
+the sums of the level below. Diversity and segregation indices are computed at each level
+with the unit treated as a whole, so a province's index is not the mean of its
+districts'. When summing a district file up to provinces, group on `year` and the
+first two digits of `sigungu_code`, not on `sido`: the district files label 세종시
+and 군위군 with their 2024 province in every year, while the province files count a
+district in the province it belonged to that year.
+
+**Coverage changes.** District-level MOJ counts start in 2008 and sub-district
+(MOIS) rows in 2014. For 2008-2013 the district tables list only the year's 19
+largest nationalities nationwide by name and fold the rest into an Other line, so counts of
+nationalities and enclave flags should not be compared across 2014. The MOIS
+broad-definition counts exist at the general-gu level only from 2016; for 2008-2015
+they are apportioned from the city total and flagged `broad_apportioned = True`.
+From 2016 MOIS masks every count under 5; a masked cell is filled only where the
+printed totals determine it exactly, and is otherwise blank.
+
+**Status codes.** E-8 meant trainee employment (연수취업) in 2006-2009 and seasonal
+work (계절근로) from 2021; the files code the first as `E8T` and the second as `E8`.
+Marriage migrants hold F-2 until F-6 appears in 2011, so compare F-2 + F-6 across
+that year. F-4 overseas Koreans file a residence report instead of a registration,
+so they are absent from the district and province visa tables by construction; their
+residence reports are in `diaspora_residence_by_sido`.
+
+**Files with more than one population or level.** Filter before summing:
+`population` in `age_sex_national`, `nationality_national`, `visa_national` and
+`visa_by_nationality` (`registered` or `stay`); `category_level` in
+`multicultural_households` (`total`, `subtotal`, `leaf`); `type` in the
+naturalization panels, which mix subtotals with their routes; and `scope` in
+`language_demand`.
 
 ## Files (data/)
 
-The file tables are in `README.md`.
+The file tables are in `README.md` (section 2).
 
 The dataset is organized into **per-level summary files** (one row per place ×
 year, combining every single-value indicator from both MOJ and MOIS) and

@@ -37,11 +37,9 @@ DEPOSIT = os.path.join(RELEASE, "data deposit", "kird_openicpsr_deposit_staging"
 GITHUB = os.path.join(RELEASE, "data deposit", "kird_dataset_github")
 TARGETS = [
     os.path.join(RELEASE, "README.md"),
-    os.path.join(DEPOSIT, "README.md"),
-    # 2026-09-29 (Nari: the deposit README had too much detail): the technical notes
-    # moved to DATA_NOTES.md, which now carries the anchored sentences; the deposit
-    # README keeps the file tables only, like the GitHub README
-    os.path.join(DEPOSIT, "DATA_NOTES.md"),
+    # 2026-09-29: the deposit carries no README from V2 on (Nari). Its documentation is
+    # the public repository's README (the file tables) and DATA_NOTES.md, which carries
+    # the anchored sentences the long deposit README used to carry
     os.path.join(GITHUB, "README.md"),
     os.path.join(GITHUB, "DATA_NOTES.md"),
     # the upload notes: file and variable counts against ICPSR's stated limits
@@ -583,8 +581,7 @@ def refresh(path, F, check):
         lost = sorted(REQUIRED_META - seen)
         if lost:
             problems.append("anchors not found (sentence reworded?): %s" % lost)
-    elif (os.path.basename(os.path.dirname(path)) != os.path.basename(GITHUB)
-          and os.path.normcase(path) != os.path.normcase(os.path.join(DEPOSIT, "README.md"))):
+    elif os.path.normcase(path) != os.path.normcase(os.path.join(GITHUB, "README.md")):
         lost = sorted(REQUIRED - seen)
         if lost:
             problems.append("anchors not found (sentence reworded?): %s" % lost)

@@ -49,6 +49,8 @@ _ARGS = [a for a in sys.argv[1:] if not a.startswith("-")]
 STG = (os.path.abspath(_ARGS[0]) if _ARGS
        else os.path.join(ROOT, "data deposit",
                          "kird_openicpsr_deposit_staging"))
+# 기탁물의 문서(README, DATA_NOTES)는 공개 저장소에 있다 (2026-09-29, V2 부터).
+GH_DOCS = os.path.join(ROOT, "data deposit", "kird_dataset_github")
 # 이전 판과의 대조는 그 zip 이 있을 때만 한다(선택).
 PUBZIP = (os.path.abspath(_ARGS[1]) if len(_ARGS) > 1
           else os.path.join(ROOT, "data deposit",
@@ -106,9 +108,9 @@ def inventory():
         bad = dictionary_vs_deposit(os.path.join(ROOT, "data_dictionary.csv"),
                                     os.path.join(STG, "data_dictionary.csv"))
         check(not bad, "릴리스 사전과 기탁본 사전이 같은 (파일, 변수) 행에서 같다", bad[:4])
-    # 2026-09-29: 기술 노트가 README 에서 DATA_NOTES.md 로 나왔다 (나리: README 가 너무 길다)
-    check(docs == ["DATA_NOTES.md", "LICENSE.txt", "README.md"],
-          "문서는 README, DATA_NOTES, LICENSE 뿐", docs)
+    # 2026-09-29: 기탁물에는 README 를 싣지 않는다 (나리, V2). 문서는 공개 저장소의
+    # README.md 와 DATA_NOTES.md 이고, 아래 문서 검사는 그 둘을 읽는다
+    check(docs == ["LICENSE.txt"], "문서는 LICENSE 뿐 (README 와 노트는 GitHub)", docs)
     check(os.path.exists(os.path.join(STG, "data_dictionary.csv")),
           "data_dictionary.csv 있음")
     # **문서에 없는 파일이 기탁물에 들어가면 안 된다.** 2026-08-31 에 다섯
@@ -116,8 +118,8 @@ def inventory():
     # 안 나온 채로 스테이징에 있었다. 개수 검사도, CSV-DTA 짝 검사도 그것을
     # 못 본다.
     import re as _re
-    _md = io.open(os.path.join(STG, "README.md"), encoding="utf-8").read()
-    _in_readme = set(_re.findall(r"\|\s*([a-z0-9_]+)\.csv\s*\|", _md))
+    _md = io.open(os.path.join(GH_DOCS, "README.md"), encoding="utf-8").read()
+    _in_readme = set(_re.findall(r"\|\s*`?([a-z0-9_]+)\.csv`?\s*\|", _md))
     _undocumented = sorted({os.path.basename(f)[:-4] for f in csvs}
                            - _in_readme)
     check(not _undocumented, "모든 표가 README 의 표에 있다", _undocumented)
@@ -231,10 +233,11 @@ def readme_numbers():
 
 
 def deposit_docs():
-    """README 와 DATA_NOTES 를 이어 붙인 글. 주장 검사는 둘 중 어디에 있든 읽는다."""
+    """공개 저장소의 README 와 DATA_NOTES 를 이어 붙인 글. 주장 검사는 둘 중 어디에
+    있든 읽는다 (2026-09-29부터 기탁물에는 README 가 없다)."""
     out = []
     for nm in ("README.md", "DATA_NOTES.md"):
-        p = os.path.join(STG, nm)
+        p = os.path.join(GH_DOCS, nm)
         if os.path.exists(p):
             out.append(io.open(p, encoding="utf-8").read())
     return "\n\n".join(out)
@@ -548,7 +551,7 @@ def readme_recipe():
     print("== 7. README 의 읽기 요리법")
     import re as _re
     import warnings as _w
-    docs = [os.path.join(STG, "README.md")]
+    docs = [os.path.join(GH_DOCS, "DATA_NOTES.md")]
     rel_readme = os.path.join(ROOT, "README.md")
     if os.path.exists(rel_readme):
         docs.append(rel_readme)
