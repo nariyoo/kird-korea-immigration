@@ -1,6 +1,6 @@
 # KIRD: build pipeline for the spatiotemporal administrative dataset of nationality, residential diversity, and language demand among immigrants in South Korea, 2006–2024
 
-**KIRD** (Korea Immigration and Residential Diversity) is the short name of the dataset;
+**KIRD** (Korea Immigration Regional Dashboard) is the short name of the dataset;
 the openICPSR title is "Spatiotemporal administrative dataset of nationality, residential diversity, and language demand among immigrants in South Korea, 2006–2024".
 
 [![Data](https://img.shields.io/badge/data-openICPSR-b31b1b.svg)](https://doi.org/10.3886/E249944V1)
