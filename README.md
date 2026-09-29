@@ -27,10 +27,13 @@ measure on one basis for all years. The data is deposited on openICPSR.
 
 ## 1. Deposit
 
-The tables are on openICPSR at [doi.org/10.3886/E249944](https://doi.org/10.3886/E249944),
-as CSV and as labeled Stata `.dta`, with `data_dictionary.csv` and a README that documents every
-column in English and Korean. This repository holds the code and the documentation; neither the
-released tables nor the raw ministry workbooks are in it, so start from the deposit.
+The tables are on ICPSR at [doi.org/10.3886/E249944](https://doi.org/10.3886/E249944),
+as CSV and as labeled Stata `.dta`, with `data_dictionary.csv`, which defines every column in
+English and Korean. The documentation is in this repository: this README describes the files and
+the pipeline, and [`DATA_NOTES.md`](DATA_NOTES.md) gives the technical notes table by table (how
+each source quirk is handled, how the levels add up, the index formulas, and where and why cells
+are blank). Neither the released tables nor the raw ministry workbooks are in this repository, so
+start from the deposit.
 Phases 1 and 2 of the pipeline build the 26 tables; phase 3 (`10_stage_deposit.py`) stages
 the deposit, which adds the two refugee tables and, on the four summary files, nationality,
 visa and language counts as wide columns (`nat_*` for the 49 largest nationalities plus

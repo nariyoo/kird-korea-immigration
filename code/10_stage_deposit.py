@@ -974,7 +974,7 @@ def final_qc():
                       dtype=str, keep_default_na=False)
     tables = {p_.strip()[:-4] for f_ in dd_["file"] for p_ in f_.split("/")
               if p_.strip().endswith(".csv")}
-    expected = {"LICENSE.txt", "README.md", "data_dictionary.csv"}
+    expected = {"LICENSE.txt", "README.md", "DATA_NOTES.md", "data_dictionary.csv"}
     for t in tables:
         sub = "data" if t + ".csv" in TOP_LEVEL else os.path.join("data", "detailed_data")
         expected |= {os.path.normpath(os.path.join(sub, t + e)) for e in (".csv", ".dta")}

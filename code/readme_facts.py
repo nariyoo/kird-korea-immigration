@@ -38,7 +38,12 @@ GITHUB = os.path.join(RELEASE, "data deposit", "kird_dataset_github")
 TARGETS = [
     os.path.join(RELEASE, "README.md"),
     os.path.join(DEPOSIT, "README.md"),
+    # 2026-09-29 (Nari: the deposit README had too much detail): the technical notes
+    # moved to DATA_NOTES.md, which now carries the anchored sentences; the deposit
+    # README keeps the file tables only, like the GitHub README
+    os.path.join(DEPOSIT, "DATA_NOTES.md"),
     os.path.join(GITHUB, "README.md"),
+    os.path.join(GITHUB, "DATA_NOTES.md"),
     # the upload notes: file and variable counts against ICPSR's stated limits
     # (2026-09-26, 4차 대조: it said "more than 1,000 columns" against 695)
     os.path.join(RELEASE, "OPENICPSR_METADATA.md"),
@@ -578,7 +583,8 @@ def refresh(path, F, check):
         lost = sorted(REQUIRED_META - seen)
         if lost:
             problems.append("anchors not found (sentence reworded?): %s" % lost)
-    elif os.path.basename(os.path.dirname(path)) != os.path.basename(GITHUB):
+    elif (os.path.basename(os.path.dirname(path)) != os.path.basename(GITHUB)
+          and os.path.normcase(path) != os.path.normcase(os.path.join(DEPOSIT, "README.md"))):
         lost = sorted(REQUIRED - seen)
         if lost:
             problems.append("anchors not found (sentence reworded?): %s" % lost)

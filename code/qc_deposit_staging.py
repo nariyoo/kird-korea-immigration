@@ -106,7 +106,9 @@ def inventory():
         bad = dictionary_vs_deposit(os.path.join(ROOT, "data_dictionary.csv"),
                                     os.path.join(STG, "data_dictionary.csv"))
         check(not bad, "릴리스 사전과 기탁본 사전이 같은 (파일, 변수) 행에서 같다", bad[:4])
-    check(docs == ["LICENSE.txt", "README.md"], "문서는 README 와 LICENSE 뿐", docs)
+    # 2026-09-29: 기술 노트가 README 에서 DATA_NOTES.md 로 나왔다 (나리: README 가 너무 길다)
+    check(docs == ["DATA_NOTES.md", "LICENSE.txt", "README.md"],
+          "문서는 README, DATA_NOTES, LICENSE 뿐", docs)
     check(os.path.exists(os.path.join(STG, "data_dictionary.csv")),
           "data_dictionary.csv 있음")
     # **문서에 없는 파일이 기탁물에 들어가면 안 된다.** 2026-08-31 에 다섯
@@ -228,9 +230,19 @@ def readme_numbers():
     check(rc == 0, "README 의 인용 수가 기탁 파일과 같다", out[-400:] if rc else "")
 
 
+def deposit_docs():
+    """README 와 DATA_NOTES 를 이어 붙인 글. 주장 검사는 둘 중 어디에 있든 읽는다."""
+    out = []
+    for nm in ("README.md", "DATA_NOTES.md"):
+        p = os.path.join(STG, nm)
+        if os.path.exists(p):
+            out.append(io.open(p, encoding="utf-8").read())
+    return "\n\n".join(out)
+
+
 def readme_claims():
     print("== 3. README 의 자료 의존 주장")
-    txt = io.open(os.path.join(STG, "README.md"), encoding="utf-8").read()
+    txt = deposit_docs()
     D = os.path.join(STG, "data") + os.sep
     DD = os.path.join(STG, "data", "detailed_data") + os.sep
     na = pd.read_csv(D + "national_annual.csv", encoding="utf-8-sig")
@@ -515,7 +527,7 @@ def as_a_user():
     # (d) 영문 이름만으로 join 하면 안 된다는 것이 문서에 있는가
     d24 = s[s["year"] == s["year"].max()]
     n_dup = int(d24["sigungu_en"].duplicated().sum())
-    txt = io.open(os.path.join(STG, "README.md"), encoding="utf-8").read()
+    txt = deposit_docs()
     warned = ("sigungu_en" in txt and
               ("not unique" in txt or "on its own" in txt or "동구" in txt))
     check(n_dup == 0 or warned,
