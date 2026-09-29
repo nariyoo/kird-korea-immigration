@@ -3,8 +3,8 @@
 **KIRD** (Korea Immigration Regional Dashboard) is the short name of the dataset;
 the openICPSR title is "Spatiotemporal administrative dataset of nationality, residential diversity, and language demand among immigrants in South Korea, 2006–2024".
 
-[![Data](https://img.shields.io/badge/data-openICPSR-b31b1b.svg)](https://doi.org/10.3886/E249944V1)
-[![DOI](https://img.shields.io/badge/DOI-10.3886%2FE249944V1-informational.svg)](https://doi.org/10.3886/E249944V1)
+[![Data](https://img.shields.io/badge/data-openICPSR-b31b1b.svg)](https://doi.org/10.3886/E249944)
+[![DOI](https://img.shields.io/badge/DOI-10.3886%2FE249944-informational.svg)](https://doi.org/10.3886/E249944)
 [![Licence](https://img.shields.io/badge/licence-CC%20BY%204.0-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
@@ -27,7 +27,7 @@ measure on one basis for all years. The data is deposited on openICPSR.
 
 ## 1. Deposit
 
-The tables are on openICPSR at [doi.org/10.3886/E249944V1](https://doi.org/10.3886/E249944V1),
+The tables are on openICPSR at [doi.org/10.3886/E249944](https://doi.org/10.3886/E249944),
 as CSV and as labeled Stata `.dta`, with `data_dictionary.csv` and a README that documents every
 column in English and Korean. This repository holds the code and the documentation; neither the
 released tables nor the raw ministry workbooks are in it, so start from the deposit.
@@ -312,7 +312,7 @@ tables and shows the same series by year, district and nationality.
 
 Yoo, N. (2026). *Spatiotemporal administrative dataset of nationality, residential diversity, and
 language demand among immigrants in South Korea, 2006-2024* [Data set]. Ann Arbor, MI: openICPSR.
-https://doi.org/10.3886/E249944V1
+https://doi.org/10.3886/E249944
 
 [CITATION.cff](CITATION.cff) holds the machine-readable record. The version belongs in the citation:
 the year coverage and several derived columns differ between versions.

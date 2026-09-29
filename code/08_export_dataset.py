@@ -758,7 +758,7 @@ Known limitations:
 CC BY 4.0. Underlying statistics are public Korean government data.
 
 ## Citation
-Yoo, N. (2026). Spatiotemporal administrative dataset of nationality, residential diversity, and language demand among immigrants in South Korea, 2006–2024 [Data set]. Ann Arbor, MI: openICPSR. https://doi.org/10.3886/E249944V1
+Yoo, N. (2026). Spatiotemporal administrative dataset of nationality, residential diversity, and language demand among immigrants in South Korea, 2006–2024 [Data set]. Ann Arbor, MI: openICPSR. https://doi.org/10.3886/E249944
 """
         # The deposit README was rewritten by hand for openICPSR (DOI, split of data
         # vs code, the 2026 file list). This generated draft is the older Zenodo-era
