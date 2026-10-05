@@ -1,0 +1,191 @@
+# Code
+
+The build and analysis code behind KIRD, for the "Code availability" section. It
+documents the harmonization, the index computation, and the export. The raw
+government source files are not redistributed here, so the scripts do not run end
+to end from a bare checkout; the authoritative outputs are the CSVs deposited on
+ICPSR (study 249944). With the raw inputs in place, `run_pipeline.py` rebuilds the
+released tables, the data dictionary and the four repository figures.
+`raw_input_manifest.csv` lists every input with its size and SHA-256 and the folder
+it goes in: `01_raw_data/` for the ministry files and the Ethnologue dataset, and
+`05_dashboard/data/` for the district and sub-district boundary files. Nothing else
+is read. On 2026-09-26 a copy of this folder and of exactly those files, in an empty
+directory with `KIRD_ROOT` pointing at it, rebuilt every released CSV, the
+dictionary and the figures byte for byte identical to the release.
+
+**Where the code lives.** This folder (`04_dataset_release/code/` in the author's
+working tree) is the canonical copy. The public repository's `code/` and the
+author's `02_code/` are copies written by `sync_public_code.py`, which is not
+itself published.
+
+## Layout
+
+Ten numbered steps plus one unnumbered builder, in three phases. Phase 1 (`01`-`05`,
+with `05` run twice: `--reparse` reads the nineteen raw MOIS editions, the plain
+run assembles the layer) turns the raw yearbooks into the harmonized panel; phase 2
+(`06`-`08`, `build_diaspora_residence`, `09`, `check_published_totals`, plus the
+two figure steps) turns that into the released tables and the repository figures; phase 3 (`10`) stages the
+openICPSR deposit and runs on demand.
+The steps read and write the intermediate JSON and CSV in place, so the order is
+the number in the filename. The unnumbered files are the shared module, the runner, the checkers and helpers the sections
+below describe, and `requirements.txt`.
+
+```
+python run_pipeline.py              # phases 1 and 2
+python run_pipeline.py --phase 1    # raw yearbooks -> dashboard JSON
+python run_pipeline.py --phase 2    # dashboard JSON -> released CSVs
+python run_pipeline.py --phase 3    # released CSVs -> deposit, on demand
+python run_pipeline.py --from 08_export_dataset.py   # resume at a step
+```
+
+`run_pipeline.py` holds the step list and is the contract: a script that is not in
+it is not part of the build. Paths come from `kird.py`, which finds the
+project root from its own location and accepts a `KIRD_ROOT` override:
+
+```
+KIRD_ROOT=/path/to/KIRD python run_pipeline.py
+```
+
+Install with `pip install -r requirements.txt` (Python 3.11 or newer: the pinned
+numpy 2.3.5, scipy 1.16.3, pyproj 3.7.2, libpysal 4.14.1 and esda 2.9.0 require
+it; the release was built on 3.13.9).
+
+## Shared module
+
+`kird.py` holds everything the steps import: the paths, resolved from the project
+root; the reference tables (`COUNTRY_CANONICAL`, `COUNTRY_REGION`,
+`COUNTRY_LANGUAGE`, `LANG_EN_KO`, `SIDO_EN`, `SIDO_EN_SHORT`); the index
+formulas (`shannon`, `incl`, `cont`, `hhi`, `pielou`, `make_record`, `morans_i`);
+and the per-year administrative-code layer. Every step imports the same tables
+and the same formulas, so a district in 2009 and the same district in 2019 are
+measured identically. `SIDO_EN` and `SIDO_EN_SHORT` differ on purpose: the
+released files romanize the provinces with the -do suffix (Gyeonggi-do) and the
+dashboard uses the short English form (Gyeonggi).
+
+The administrative-code layer is what puts `sido_code` and `sigungu_code` on the
+released tables. It reads the 행정안전부 법정동코드 register kept in
+`01_raw_data/행정표준코드/` and gives a province or district name the code the
+government used on 31 December of the row's year, following the register's own
+생성일 / 폐지일 plus a declared lineage for the successions that changed a code
+(인천 남구 to 미추홀구 in 2018, 군위군 from 경상북도 to 대구광역시 in 2023,
+청원군 into 청주시 in 2014, 진해시 into 창원시 in 2010). A name the register
+cannot resolve leaves the cell blank and is reported; no code is ever invented.
+The module also runs from the command line:
+
+```
+python kird.py                 # the resolved paths
+python kird.py --fetch-codes   # download the 법정동코드 register from code.go.kr
+python kird.py --code-table    # rebuild the year-by-year code table as JSON
+python kird.py --admin2024     # rebuild the 2024 boundary anchor table
+```
+
+## Steps
+
+Each step is one stage of the build and holds every section of it; the section
+functions inside a step run in the order the `__main__` block lists them.
+
+| Step | What it does |
+|---|---|
+| `01_parse_yearbooks.py` | The core parser. Reads every MOJ yearbook, harmonizes 2006-2024 across nationality names, visa sub-codes and province and district names, reads the staying foreigners of every year from the edition's own nationality x status table (for 2006-2010 the 2장 Ⅱ table, and it checks that 등록 + 단기 + 거소신고 add up to that table status by status), removes the 2007-2008 category-total duplicates, and checks the national aggregates against the published totals. |
+| `02_language_reference.py` | The language reference tables: the Korean/English label map, and the Ethnologue 24 first-language shares by country. Everything that touches language reads these, so they come first. |
+| `03_extend_panel.py` | The panel, extended: local Moran clusters onto every district-year, the province series back to 2006 with its diversity columns, the national series (undocumented residents, national language demand), one label per country with the language series recomputed on the merged names, the district-by-visa panel, refugee language demand, the 2008-2013 district backfill, and the nationality x age x sex table on both population bases (registered 2006 on, the 2006-2008 editions on the bands they print; staying 2011 on). |
+| `04_reconcile_districts.py` | Boundary changes reconciled onto one label per district, every index recomputed on the reconciled set, all of it put on a top-19-plus-residual basis so the 2013/2014 coverage break does not read as a change in the distribution, and the language block trimmed to the released top 20 per district. |
+| `05_mois_layer.py` | The MOIS tables (행정안전부 외국인주민통계, a broader population definition than MOJ): join keys, the administrative codes on them, the cross-check against the MOJ counts, assembly, the Sejong patches, and packaging as CSV and Parquet. The parsers for the nineteen raw 행정안전부 editions are in the same file, under `python 05_mois_layer.py --reparse`, which the pipeline runs as its own step just before the plain `05_mois_layer.py`. From 2016 MOIS masks every count under 5; the parsers read each sheet as the tree its rows print and carry every masked cell the sheet's identities fix (`MaskTree`: a row's total over its parts, a province, city or district row over the rows under it, chained until nothing moves; the owner's decision of 2026-09-27). |
+| `06_build_summaries.py` | The per-level summaries on the MOJ district grain of roughly 250 districts a year, the MOIS-only sub-district summary with that year's official code, and the four MOIS CSVs. |
+| `07_build_naturalization.py` | Chapter 4 of every edition into the three nationality-processing panels, each checked against the separately published annual totals. |
+| `08_export_dataset.py` | The tidy release CSVs, then `language_demand.csv` on the released basis over the draft the export writes. It also audits the English district names in the boundary file before writing anything, since `sigungu_en` is copied out of that file verbatim; `python 08_export_dataset.py --check-names` runs that audit on its own. |
+| `build_diaspora_residence.py` | The overseas-Korean residence reports (재외동포 거소신고) by province and nationality, 2008-2024, from the yearbook chapter that carries them apart from the registered-foreigner tables, into `diaspora_residence_by_sido.csv`. F-4 holders file a residence report instead of a registration, so they are absent from every visa table below the national level; this is where they are. |
+| `09_finish_release.py` | The single authority for the released schema, the segregation files recomputed over all districts, the bilingual dictionary asserted against the files present, one labeled Stata `.dta` per table, and the integrity audit, which must end `AUDIT CLEAN`. |
+| `10_stage_deposit.py` | The openICPSR deposit: the two refugee files (a cumulative 1994-2024 snapshot, since MOJ publishes refugee outcomes by nationality only cumulatively), the wide summary variants with every place-keyed breakdown pivoted to one column per category, and the deposit gate over the result (`final_qc`), which exits 1 on any failed check so `run_pipeline.py --phase 3` stops there. |
+
+Between 08 and 09, `run_pipeline.py` renames the seven working-name exports to
+their released names and deletes every working-name intermediate, because the
+dictionary in step 09 asserts that it documents exactly the files it finds.
+
+## Where the panel ends
+
+Two cut-offs, both in `kird.py`.
+
+| constant | what it bounds |
+|---|---|
+| `LAST_YEAR` | How far the raw yearbooks are read. The public dashboard shows this much. It is the last year the Ministry of Justice has published. |
+| `RELEASE_LAST_YEAR` | Where this dataset and the deposit end. It is the last year the Ministry of the Interior and Safety has also published. |
+
+The two ministries publish on different schedules. The dashboard can show a year
+that has MOJ counts alone; a released row for that year would carry the
+broad-definition columns empty, so the dataset stops one year earlier. Steps 01
+through 08 build everything to `LAST_YEAR`; `run_pipeline.cut_release_years()`
+then drops every row past `RELEASE_LAST_YEAR` from the release folder in one
+pass, before step 09 recomputes the indices and audits them. Every index is
+computed within a single year, so cutting afterwards leaves the remaining years
+unchanged. When MOIS catches up, raise `RELEASE_LAST_YEAR` and rebuild.
+
+## Checks you can run on the released data
+
+| script | what it does |
+|---|---|
+| `validate_release.py` | Re-derives every published index from the published counts, using the deposited CSVs alone, and every row of `language_demand` from the nationality counts and `language_weights.csv`. It reads either layout: the flat release folder, or the deposit's `data/` plus `data/detailed_data/`. Point it at the folder you downloaded, or at its `data/`; given the top folder of the deposit it goes down to `data/` itself (until 2026-09-27 it looked only one level down and reported 22 files missing there). It also recomputes `summary_by_sido`'s indices from `nationality_by_sido` in every year and `national_annual`'s from the district counts, every index on the top-19-plus-residual basis (HHI and the inclusive H included, since 2026-09-27), and holds the district files' broad-definition columns to the province rows exactly. Since the fifth-round check (2026-09-27) it also re-derives every row of `ethnic_enclaves` (count, LQ, share) and the D and isolation of `region_segregation` from the district counts, holds `language_weights` to one row per standard name of `crosswalk_country`, checks that `age_sex_national` carries every year on the bands its edition prints (registered from 2006), and that `broad_apportioned` is never blank. Since the owner's decisions of 2026-09-27 it also holds the crew status to one code: no file carries E0 (or E0A to E0C), `crosswalk_visa` maps the three 2007-2009 crew columns to E10, E10 has people in every year of every visa file, and the deposit's wide files have no `visa_e0`. |
+| `check_published_totals.py` | Reads the grand-total cell printed in each yearbook and compares it with the national totals in `visa_national.csv`, year by year, for registered and for staying foreigners. Since 2026-09-26 it is a pipeline step and a gate: every year, read from a nationality x status table, must equal the printed total to the person (the national tables carry the yearbook's own 무국적 / 기타 lines for that reason); the 2006-2010 staying foreigners must also equal that table nationality by nationality, and the 2006-2007 rows of `nationality_by_sido` the province table those editions print, cell by cell. Three more gates read the district tables themselves: `nationality_by_sigungu` must sum to the printed total of the district-by-nationality table in every year 2008-2024, every column included (the table's own 무국적, 미등록국가 and 기타 columns, which the district files carry since the final audit of 2026-09-26, and in 2008-2013 the 기타 residual of the unlisted nationalities); from 2014 each district of `nationality_by_sigungu` must equal the line or lines the table prints for it and each province of `nationality_by_sido` the table's own 소계; and `visa_by_sigungu` must sum to the printed total of the district-by-visa table in every year 2008-2024. The only exception is one person in 2015, where the table's own 경기도 rows sum to one less than its 소계. Two more gates (2026-09-27): every nationality, code-less status and province label the raw status and district tables print has a row in the crosswalks (a nationality printed with a space between words, such as 한국계 중국인, a row as printed), and every `source label variant` row of `crosswalk_country` is a label those tables print. Two more since the fourth-round check (2026-09-27): every district label the district-by-nationality and district-by-visa tables print, 2008 on, is carried under its own name that year or has a `crosswalk_region` row (진해시, printed in 2008-2009 and 2011-2012 and carried on 창원시 진해구, had none), and every label the status tables print for a code is the released label or a `crosswalk_visa` row names it for that edition (산업연수 for D-3 through 2012 had none), each row listing exactly the editions that print its label. Two more for the owner's decisions of 2026-09-27. The MOIS gate re-reads the four MOIS sheets the released files come from (1-2 districts, 1-3 sub-districts, 11 household members, 9-2 children by age), settles every masked cell the sheet's own identities fix with code of its own (a total is the sum of its parts; a province, city or district row is the sum of the rows printed under it; repeated until nothing moves), and holds every released cell of `summary_by_sigungu`, `summary_by_eupmyeondong`, `multicultural_households` and `children_by_age`, 2016 on, to the result cell by cell: a printed or settled cell must be carried with that value and a cell left masked must not be; it stops on a fully printed identity that fails or a settled value outside 0-4, and it replaces the 2026-09-27 age-sum gate on `children_by_age`. The crew gate holds the 2007-2009 crew columns (E0A 내항선원, E0B 어선원, E0C 순항선원) to `crosswalk_visa`'s rows edition by edition and `visa_national`'s E10 of those years to the crew columns of the table's grand-total row, and fails on any E0 in a released visa file. `--data <folder>` holds another copy of the release to the same tables (the two gates fail on the release as it stood before the decisions: 456, 2,400 and 2,826 settled cells missing, E0 present and E10 empty in 2007-2009). It needs the raw yearbooks and the MOIS editions. |
+| `readme_facts.py` | Rewrites the numbers the READMEs quote (F-6, F-2 and F-4 counts, national totals, the resident population, the file table of the public repository, the variable count in `OPENICPSR_METADATA.md`) and the file tables of the release and deposit READMEs from the staged files; `10_stage_deposit.py` calls it, and `--check` reports any README that disagrees with the data or has lost the sentence a number belongs to. |
+| `build_raw_manifest.py` | Writes the list of raw input files with size and SHA-256, so a file you download can be checked against the one used here. |
+| `crosswalks.py` | Writes the harmonization rules out as tables: which source spelling became which standard label, and why. |
+| `qc_deposit_staging.py` | Checks the deposit as a reader meets it, not as a formula: every CSV against its `.dta` cell by cell, the README's data-dependent claims against the files, `adm_code` unique within a year and inside its district's code block (so a boundary join stays one-to-one), no float tails on integer columns, and every detail table joining onto its summary with nothing left over, in both directions (every district row with registered foreigners has nationality and visa rows behind it, except the one the 2015 district-by-visa table does not print). Takes the folder you unpacked as its argument. |
+| `qc_independent.py` | A second checker that does not call `validate_release.py`: key uniqueness (including `children_by_age` on `sigungu_code`), one place per `adm_code` a year, sums between levels, value ranges and year continuity. Exits 1 on any must-fix finding. |
+
+## One-time migration script
+
+`migrate_v1_2_0_nationality_columns.py` is the one-time v1.1.0 to v1.2.0 repair that split `n_nationalities` into `index_base_k` and `n_nationalities_observed`, kept so the change between the two versions can be traced. `run_pipeline.py` does not call it and a fresh build does not need it: the steps above already produce the v1.2.0 columns. Its check against the dashboard's `region.json` is skipped, with a printed note, when that file is absent.
+
+## Released filenames
+
+| working name | released name |
+|---|---|
+| `foreign_residents_by_visa.csv` | `visa_by_nationality.csv` |
+| `foreign_residents_by_sigungu.csv` | `nationality_by_sigungu.csv` |
+| `foreign_residents_by_sigungu_visa.csv` | `visa_by_sigungu.csv` |
+| `foreign_residents_by_age_sex.csv` | `age_sex_national.csv` |
+| `national_summary_annual.csv` | `national_annual.csv` |
+| `mois_children_by_age.csv` | `children_by_age.csv` |
+| `mois_multicultural_households.csv` | `multicultural_households.csv` |
+
+The standalone denominator and index tables (`resident_population_by_sigungu`,
+`indices_by_sigungu`, `indices_by_sido`) are no longer released separately; their
+columns are folded into the `summary_by_*` files, one row per place and year.
+
+## Scope of this bundle
+
+This bundle holds the code that produces the deposited data. The working copy
+also carries scripts that write only into the dashboard, among them the KEDI
+international-student series, the refugee dashboard panel, the sub-district
+boundary joins with their geocoder, and the script that writes this bundle. None of those produces a deposited file, so none is published
+here.
+
+## Inputs
+
+Public source files. They are not redistributed here.
+
+- Ministry of Justice, Korea Immigration Service Statistical Yearbooks (2006-2025;
+  the release reads to 2024, the dashboard to 2025)
+- Ministry of the Interior and Safety, Local Government Foreign Resident Status (2006-2024)
+- Ministry of the Interior and Safety, Resident Registration Population (the denominator)
+- The 행정안전부 법정동코드 register (`kird.py --fetch-codes`)
+- District and sub-district boundaries, kept in `05_dashboard/data/`:
+  `korea_sigungu.json` (the district adjacency behind `lisa` and `morans_I_share`),
+  `korea_emd.json` (2024) and `emd_years/korea_emd_<year>.json` (2014-2023), the
+  vuski/admdongkor yearly sub-district snapshots
+- SIL Global, Ethnologue 24 Global Dataset (first-language shares by country), used
+  by `language_demand`, `language_weights` and the refugee language table; licensed
+  by SIL and not redistributed
+
+`requirements.txt` pins every package to the version the release was built with.
+
+## Figures and type
+
+`make_coverage_figure.py` draws `file_coverage.png` and `make_repo_figures.py`
+draws `overview_maps.png`, `moj_vs_mois.png` and `pipeline_flowchart.png`, all
+from what the same run has just built. Both take their colours and type from
+`figstyle.py`, which loads the typeface from `fonts/` (Pretendard Regular and Bold,
+SIL Open Font License 1.1, licence text in `fonts/OFL.txt`), so the figures come
+out the same on any machine and no font has to be installed. If `fonts/` is
+removed, an installed Pretendard is used, and failing that matplotlib's default
+sans-serif with a printed warning; the build does not stop over a font.

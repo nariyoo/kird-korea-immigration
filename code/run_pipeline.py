@@ -1,0 +1,204 @@
+"""Reproducible end-to-end build of the KIRD dataset.
+
+One runner, three phases, ten steps. Phase 1 turns 01_raw_data/ into the
+dashboard JSON in 05_dashboard/data/ and the tidy intermediates in
+03_cleaned_data/; phase 2 turns those into the public release in
+04_dataset_release/; phase 3 stages the openICPSR deposit and runs on demand.
+Splitting phases 1 and 2 across separate runners is what once let steps go
+missing: the release half is not runnable without phase 1, and phase 1 alone does
+not produce a releasable dataset.
+
+Usage:
+    python 04_dataset_release/code/run_pipeline.py              # phases 1 and 2
+    python 04_dataset_release/code/run_pipeline.py --phase 1    # dashboard only
+    python 04_dataset_release/code/run_pipeline.py --phase 2    # release only (phase 1 outputs must exist)
+    python 04_dataset_release/code/run_pipeline.py --phase 3    # deposit staging, on demand
+    python 04_dataset_release/code/run_pipeline.py --from 08_export_dataset.py   # resume at a step
+
+Paths come from kird.py, which finds the project root from its own
+location; set KIRD_ROOT to build a different checkout.
+
+Each step is a standalone script in this directory, numbered for its position,
+and the number is the run order. The only unnumbered files are the shared module
+kird.py, this runner, and requirements.txt. The steps read and write the
+intermediate JSON and CSV in place, so do not reorder them without checking each
+one's inputs.
+"""
+import argparse
+import io
+import os
+import shutil
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from kird import CLEAN, MOIS_SITE, ROOT, RELEASE_DATA, SITE_DATA  # noqa: E402
+
+# ── Phase 1: raw yearbooks → dashboard JSON ──────────────────────────────────
+PHASE1 = [
+    # every yearbook -> by-visa / by-region / by-district / age long tables, plus
+    # the base 05_dashboard/data JSON (indices, region, data, age)
+    "01_parse_yearbooks.py",
+    # the language reference tables: Korean/English labels and the Ethnologue 24
+    # first-language shares. Everything that touches language reads these, so
+    # they come before any of it.
+    "02_language_reference.py",
+    # the panel, extended: spatial clusters, the province series back to 2006,
+    # the national series, one label per country, the visa panel, refugee
+    # language, and the 2008-2013 backfills
+    "03_extend_panel.py",
+    # boundary changes reconciled, every index recomputed on the reconciled set,
+    # and the language block trimmed to the released top 20
+    "04_reconcile_districts.py",
+    # the nineteen raw MOIS foreign resident statistics editions -> 03_cleaned_data/mois_*.csv.
+    # Until 2026-09-25 this ran only by hand ("its output changes only when a new
+    # edition is published"), so a build from raw depended on intermediates the
+    # bundle does not ship. A step may carry arguments after its file name.
+    "05_mois_layer.py --reparse",
+    # the MOIS sibling tables (MOIS foreign resident statistics, a broader population
+    # definition than MOJ): keys, validation, assembly, the Sejong patches,
+    # packaging. Reads the 03_cleaned_data/mois_*.csv that the same file's
+    # --reparse mode writes out of the raw MOIS editions.
+    "05_mois_layer.py",
+]
+
+# ── Phase 2: dashboard JSON → public release ─────────────────────────────────
+PHASE2 = [
+    # the per-level summaries on the MOJ district grain, and the MOIS CSVs
+    "06_build_summaries.py",
+    # nationality processing, read out of chapter 4 of every edition
+    "07_build_naturalization.py",
+    # the tidy release CSVs, then language_demand.csv on the released basis
+    "08_export_dataset.py",
+    # Overseas Korean residence reports. The registered-foreigner sheet has no F-4,
+    # so the district and province status tables show 0 in every year. The reason
+    # is that F-4 holders are kept in a different register, not that there are none.
+    # The yearbook has published them all along, by province and nationality, in a
+    # separate chapter. Found on 2026-08-28 while checking the raw files against the
+    # released files; the script was not registered here, so it **was neither in
+    # the public code nor called by the pipeline** (2026-08-29). It must run before
+    # the audit in 09.
+    "build_diaspora_residence.py",
+    # (the working-name rename runs here, in code below)
+    # the released schema, segregation, the dictionary, Stata, and the audit,
+    # which must end AUDIT CLEAN before anything is uploaded
+    "09_finish_release.py",
+    # Do the national sums equal the totals the yearbook printed (a gate since
+    # 2026-09-26)? This catches the earlier dropping of the '무국적' (stateless)
+    # and '기타' (other) lines.
+    "check_published_totals.py",
+    # The three figures the repository carries. These were run by hand, so two of
+    # them were still the 2026-06 versions. Building them with every data build
+    # keeps them from drifting apart again.
+    "make_coverage_figure.py",
+    # 2026-09-26: the other three are built here too. Before, sync_repo_figures.py
+    # copied the paper figures from 06_paper, and on a machine without that folder
+    # it did nothing and exited with 0.
+    "make_repo_figures.py",
+]
+
+# ── Phase 3: the openICPSR deposit ───────────────────────────────────────────
+# Not run by default: the refugee files, the wide summary variants, and the
+# deposit gate.
+PHASE3 = [
+    "10_stage_deposit.py",
+]
+
+# Working names that export_dataset emits, and the released names they become.
+RENAMES = {
+    "foreign_residents_by_visa.csv": "visa_by_nationality.csv",
+    "foreign_residents_by_sigungu.csv": "nationality_by_sigungu.csv",
+    "foreign_residents_by_sigungu_visa.csv": "visa_by_sigungu.csv",
+    "foreign_residents_by_age_sex.csv": "age_sex_national.csv",
+    "national_summary_annual.csv": "national_annual.csv",
+    # 06_build_summaries writes these two under working names, and until
+    # 2026-09-25 nothing renamed them: the DROP list below deleted them, and the
+    # released children_by_age.csv and multicultural_households.csv were files
+    # no step wrote, left over from an earlier build. Their fixes upstream (the
+    # sub-district codes, the city prefix on 2024's general districts) never
+    # reached them.
+    "mois_children_by_age.csv": "children_by_age.csv",
+    "mois_multicultural_households.csv": "multicultural_households.csv",
+}
+# Intermediates that must not survive into the release folder: build_data_dictionary
+# asserts the dictionary documents exactly the columns of the files it finds there.
+DROP = list(RENAMES) + [
+    "language_demand_draft.csv",
+    "indices_by_sido.csv", "indices_by_sigungu.csv", "resident_population_by_sigungu.csv",
+    "mois_broad_residents_by_eupmyeondong.csv", "mois_broad_residents_by_sigungu.csv",
+    "mois_multicultural_households_by_sigungu.csv",
+]
+RENAME_AFTER = "08_export_dataset.py"   # the rename runs once this step is done
+
+
+def rename_working_files():
+    print("\n===== rename working names -> released names =====", flush=True)
+    for src, dst in RENAMES.items():
+        p = os.path.join(RELEASE_DATA, src)
+        if os.path.exists(p):
+            shutil.copyfile(p, os.path.join(RELEASE_DATA, dst))
+            print(f"  {src} -> {dst}")
+    for f in DROP:
+        p = os.path.join(RELEASE_DATA, f)
+        if os.path.exists(p):
+            os.remove(p)
+            print(f"  removed intermediate {f}")
+
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--phase", type=int, choices=(1, 2, 3))
+    ap.add_argument("--from", dest="start", help="resume at this step filename")
+    args = ap.parse_args()
+
+    steps = ({1: PHASE1, 2: PHASE2, 3: PHASE3}.get(args.phase)
+             or PHASE1 + PHASE2)   # the default build stops at the release
+    if args.start:
+        if args.start not in steps:
+            sys.exit(f"--from {args.start}: not in this phase's step list")
+        steps = steps[steps.index(args.start):]
+
+    missing = [s for s in steps if not os.path.exists(os.path.join(HERE, s.split()[0]))]
+    if missing:
+        sys.exit(f"step scripts missing from {HERE}: {missing}")
+
+    print(f"KIRD build root: {ROOT}")
+    # A fresh checkout has none of the output folders; the steps assume they exist.
+    # Found on 2026-09-26 by building in an empty directory: 06 stopped on a missing
+    # 04_dataset_release/data/.
+    for d in (CLEAN, RELEASE_DATA, os.path.join(RELEASE_DATA, "stata"), SITE_DATA, MOIS_SITE):
+        os.makedirs(d, exist_ok=True)
+    for i, script in enumerate(steps, 1):
+        print(f"\n===== [{i}/{len(steps)}] {script} =====", flush=True)
+        argv = script.split()
+        if subprocess.run([sys.executable, os.path.join(HERE, argv[0])] + argv[1:]).returncode != 0:
+            sys.exit(f"Pipeline FAILED at step {i}: {script}")
+        if script == RENAME_AFTER and args.phase != 1:
+            rename_working_files()
+
+    # The public code copies (04_dataset_release/code and the
+    # kird-korea-immigration clone) were a hand-run sync and drifted twice —
+    # nineteen files on 2026-08-17 and five pipeline steps on 2026-08-24, both
+    # found by accident. Regenerate them every build; committing the two
+    # repositories stays a human act.
+    # This step exists **only in the working tree**. The public bundles
+    # (04_dataset_release/code and kird-korea-immigration) do not include
+    # sync_public_code.py, so running a downloaded bundle as is would end here with
+    # "Pipeline FAILED", even when all forty-one earlier steps succeeded. When the
+    # file is missing, skip the step and say why.
+    sync = os.path.join(HERE, "sync_public_code.py")
+    if not os.path.exists(sync):
+        print("\n===== sync public code copies: skipped =====", flush=True)
+        print("sync_public_code.py is not part of the published bundle; "
+              "it only runs in the authoring tree.", flush=True)
+    else:
+        print("\n===== sync public code copies =====", flush=True)
+        if subprocess.run([sys.executable, sync]).returncode != 0:
+            sys.exit("Pipeline FAILED at the public-code sync")
+    print("\nPipeline complete: 05_dashboard/data/ and 04_dataset_release/ rebuilt.")
+
+
+if __name__ == "__main__":
+    main()
